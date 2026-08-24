@@ -1,6 +1,16 @@
-import { useState, useEffect, useRef } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { getStoragePath, storage } from "@/lib/storage";
+import { useState, useCallback, useEffect, useRef } from "react";
+import {
+  createStorageMaterial,
+  deleteStorageMaterial,
+  listStorageMaterials,
+  updateStorageMaterial,
+  type StorageMaterialRecord,
+} from "@/lib/firebase/repositories/inventory";
+import {
+  buildPrivateStoragePath,
+  createPrivateObjectUrl,
+  uploadPrivateFile,
+} from "@/lib/firebase/storage";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -28,6 +38,19 @@ interface StorageMaterial {
   photo_display_url?: string | null;
   created_at: string;
 }
+
+const toStorageMaterial = (material: StorageMaterialRecord): StorageMaterial => ({
+  id: material.id,
+  name: material.name,
+  category: material.category,
+  section: material.section,
+  quantity: material.quantity,
+  unit: material.unit,
+  min_stock_level: material.minStockLevel,
+  notes: material.notes,
+  photo_url: material.photoUrl,
+  created_at: material.createdAt?.toISOString() ?? "",
+});
 
 interface StorageMaterialsTabProps {
   userId: string;
@@ -57,6 +80,7 @@ const StorageMaterialsTab = ({ userId }: StorageMaterialsTabProps) => {
   const [photoFile, setPhotoFile] = useState<Blob | File | null>(null);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const photoObjectUrlsRef = useRef<string[]>([]);
   
   const [formData, setFormData] = useState({
     name: "",
@@ -71,10 +95,6 @@ const StorageMaterialsTab = ({ userId }: StorageMaterialsTabProps) => {
   const { toast } = useToast();
 
   useEffect(() => {
-    fetchMaterials();
-  }, []);
-
-  useEffect(() => {
     // Extract unique sections from materials and merge with defaults
     const existingSections = materials
       .map(m => m.section)
@@ -83,32 +103,37 @@ const StorageMaterialsTab = ({ userId }: StorageMaterialsTabProps) => {
     setSections(allSections);
   }, [materials]);
 
-  const fetchMaterials = async () => {
-    const { data, error } = await supabase
-      .from("storage_materials")
-      .select("*")
-      .order("category", { ascending: true })
-      .order("name", { ascending: true });
-
-    if (error) {
-      toast({ title: "Error", description: "Failed to fetch materials", variant: "destructive" });
-    } else {
-      const materialsWithSignedUrls = await Promise.all(
-        (data || []).map(async (material) => ({
-          ...material,
-          photo_display_url: material.photo_url
-            ? await storage.createSignedUrl(
-                "storage-material-photos",
-                getStoragePath(material.photo_url, "storage-material-photos"),
-                3600,
-              )
-            : null,
-        })),
+  const fetchMaterials = useCallback(async () => {
+    try {
+      const data = await listStorageMaterials();
+      photoObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      const materialsWithObjectUrls = await Promise.all(
+        data.map(async (material) => {
+          const mapped = toStorageMaterial(material);
+          if (!mapped.photo_url) return { ...mapped, photo_display_url: null };
+          try {
+            const objectUrl = await createPrivateObjectUrl(mapped.photo_url, "image/jpeg");
+            photoObjectUrlsRef.current.push(objectUrl);
+            return { ...mapped, photo_display_url: objectUrl };
+          } catch {
+            return { ...mapped, photo_display_url: null };
+          }
+        }),
       );
-      setMaterials(materialsWithSignedUrls);
+      setMaterials(materialsWithObjectUrls);
+    } catch {
+      toast({ title: "Error", description: "Failed to fetch materials", variant: "destructive" });
     }
     setIsLoading(false);
-  };
+  }, [toast]);
+
+  useEffect(() => {
+    void fetchMaterials();
+    return () => {
+      photoObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      photoObjectUrlsRef.current = [];
+    };
+  }, [fetchMaterials]);
 
   const uploadPhoto = async (): Promise<string | null> => {
     if (!photoFile) return null;
@@ -116,9 +141,9 @@ const StorageMaterialsTab = ({ userId }: StorageMaterialsTabProps) => {
     setIsUploadingPhoto(true);
     try {
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`;
-      const filePath = `materials/${fileName}`;
-      
-      await storage.upload("storage-material-photos", filePath, photoFile, { contentType: "image/jpeg" });
+      const filePath = buildPrivateStoragePath("materials", userId, fileName);
+
+      await uploadPrivateFile(filePath, photoFile, { contentType: "image/jpeg" });
       
       return filePath;
     } catch (error) {
@@ -143,48 +168,40 @@ const StorageMaterialsTab = ({ userId }: StorageMaterialsTabProps) => {
     }
 
     if (editingMaterial) {
-      const { error } = await supabase
-        .from("storage_materials")
-        .update({
+      try {
+        await updateStorageMaterial(editingMaterial.id, {
           name: formData.name,
           category: formData.category,
           section: formData.section || null,
           quantity: formData.quantity,
           unit: formData.unit,
-          min_stock_level: formData.min_stock_level,
+          minStockLevel: formData.min_stock_level,
           notes: formData.notes || null,
-          ...(photoUrl && { photo_url: photoUrl }),
-        })
-        .eq("id", editingMaterial.id);
-
-      if (error) {
-        toast({ title: "Error", description: "Failed to update material", variant: "destructive" });
-      } else {
+          photoUrl: photoUrl ?? editingMaterial.photo_url,
+        });
         toast({ title: "Success", description: "Material updated" });
-        fetchMaterials();
+        await fetchMaterials();
         resetForm();
+      } catch {
+        toast({ title: "Error", description: "Failed to update material", variant: "destructive" });
       }
     } else {
-      const { error } = await supabase
-        .from("storage_materials")
-        .insert({
+      try {
+        await createStorageMaterial({
           name: formData.name,
           category: formData.category,
           section: formData.section || null,
           quantity: formData.quantity,
           unit: formData.unit,
-          min_stock_level: formData.min_stock_level,
+          minStockLevel: formData.min_stock_level,
           notes: formData.notes || null,
-          photo_url: photoUrl,
-          created_by: userId,
+          photoUrl: photoUrl,
         });
-
-      if (error) {
-        toast({ title: "Error", description: "Failed to add material", variant: "destructive" });
-      } else {
         toast({ title: "Success", description: "Material added to storage" });
-        fetchMaterials();
+        await fetchMaterials();
         resetForm();
+      } catch {
+        toast({ title: "Error", description: "Failed to add material", variant: "destructive" });
       }
     }
   };
@@ -207,12 +224,12 @@ const StorageMaterialsTab = ({ userId }: StorageMaterialsTabProps) => {
   };
 
   const handleDelete = async (id: string) => {
-    const { error } = await supabase.from("storage_materials").delete().eq("id", id);
-    if (error) {
-      toast({ title: "Error", description: "Failed to delete material", variant: "destructive" });
-    } else {
+    try {
+      await deleteStorageMaterial(id);
       toast({ title: "Success", description: "Material deleted" });
-      fetchMaterials();
+      await fetchMaterials();
+    } catch {
+      toast({ title: "Error", description: "Failed to delete material", variant: "destructive" });
     }
   };
 

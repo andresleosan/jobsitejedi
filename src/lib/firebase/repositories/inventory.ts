@@ -1,6 +1,7 @@
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -368,6 +369,11 @@ export const updateStorageMaterial = async (id: string, input: StorageMaterialIn
   const updated = await getDoc(reference);
   if (!updated.exists()) throw new Error("Material was not found after update");
   return toMaterial(updated);
+};
+
+export const deleteStorageMaterial = async (id: string): Promise<void> => {
+  await requireManager();
+  await deleteDoc(doc(materialsCollection, requireText(id, "Material id")));
 };
 
 export const listStorageTools = async (availableOnly = false): Promise<StorageToolRecord[]> => {

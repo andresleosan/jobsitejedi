@@ -273,8 +273,11 @@ toquen producción necesitan confirmación explícita del operador.
     entregas/residuos aíslan builder y manager, y las operaciones que descuentan stock quedan
     manager-only hasta implementar una Function privilegiada para builders.
   - La suite Firebase en Emulator queda en 13 archivos y 38 tests aprobados; typecheck y ESLint
-    focalizado pasan. Queda para el siguiente incremento la migración de UI y E2E de estos flujos;
-    la tarea no se aprueba todavía.
+    focalizado pasan. Quedan para el siguiente incremento la migración de UI de herramientas,
+    solicitudes, entregas y residuos, y los E2E específicos; la tarea no se aprueba todavía.
+  - `StorageMaterialsTab` migrada a los repositorios Firebase y Storage privado: CRUD de catálogo,
+    filtros, stock mínimo, fotos con object URLs temporales y cleanup al desmontar; no conserva
+    imports Supabase. Build aprobado y E2E existente de fotos → 1 test aprobado.
 
 ### T-011 — Migrar facturas, reportes y evaluaciones de riesgo
 
