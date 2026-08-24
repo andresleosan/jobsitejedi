@@ -7,6 +7,7 @@ import {
   type User,
 } from "firebase/auth";
 import { firebaseAuth } from "./client";
+import { ensureBuilderRole } from "./functions";
 import type { AppRole, SessionUser } from "./types";
 
 const isAppRole = (value: unknown): value is AppRole =>
@@ -37,6 +38,12 @@ export const normalizeAuthError = (error: unknown): Error => {
       return new Error("Unable to connect to authentication service");
     case "auth/too-many-requests":
       return new Error("Too many attempts. Please try again later");
+    case "functions/permission-denied":
+      return new Error("You do not have permission to perform this action");
+    case "functions/unauthenticated":
+      return new Error("Your authentication session has expired");
+    case "functions/invalid-argument":
+      return new Error("Invalid role request");
     default:
       return new Error("Authentication failed. Please try again");
   }
@@ -110,6 +117,8 @@ export const registerBuilder = async (input: {
       input.password,
     );
     await updateProfile(credential.user, { displayName: input.fullName.trim() });
+    await ensureBuilderRole();
+    await credential.user.getIdToken(true);
     return await toSessionUser(credential.user);
   } catch (error) {
     throw normalizeAuthError(error);

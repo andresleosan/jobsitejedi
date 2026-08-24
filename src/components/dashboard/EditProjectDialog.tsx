@@ -5,7 +5,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { supabase } from "@/integrations/supabase/client";
+import {
+  updateProject,
+  type ProjectRecord,
+} from "@/lib/firebase/repositories/projects";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 
@@ -13,14 +16,7 @@ interface EditProjectDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onProjectUpdated: () => void;
-  project: {
-    id: string;
-    name: string;
-    description: string | null;
-    client_name: string;
-    address: string | null;
-    status: string;
-  } | null;
+  project: ProjectRecord | null;
 }
 
 const EditProjectDialog = ({ open, onOpenChange, onProjectUpdated, project }: EditProjectDialogProps) => {
@@ -39,7 +35,7 @@ const EditProjectDialog = ({ open, onOpenChange, onProjectUpdated, project }: Ed
       setFormData({
         name: project.name,
         description: project.description || "",
-        client_name: project.client_name,
+        client_name: project.clientName,
         address: project.address || "",
         status: project.status || "active",
       });
@@ -60,50 +56,28 @@ const EditProjectDialog = ({ open, onOpenChange, onProjectUpdated, project }: Ed
 
     setIsLoading(true);
     try {
-      // Handle null/undefined status - default to 'active'
-      const currentStatus = project.status || 'active';
-      
-      // Determine if we need to set finished_at
-      const isBecomingFinished = formData.status === "finished" && currentStatus !== "finished";
-      const isBecomingActive = formData.status === "active" && currentStatus === "finished";
-
-      const updateData: any = {
+      const isBecomingFinished = formData.status === "finished" && project.status !== "finished";
+      await updateProject(project.id, {
         name: formData.name,
         description: formData.description || null,
-        client_name: formData.client_name,
+        clientName: formData.client_name,
         address: formData.address || null,
-        status: formData.status,
-      };
-
-      // Set finished_at when moving to finished status
-      if (isBecomingFinished) {
-        updateData.finished_at = new Date().toISOString();
-      }
-      // Clear finished_at when reactivating
-      if (isBecomingActive) {
-        updateData.finished_at = null;
-      }
-
-      const { error } = await supabase
-        .from("projects")
-        .update(updateData)
-        .eq("id", project.id);
-
-      if (error) throw error;
+        status: formData.status as "active" | "finished" | "on_hold",
+      });
 
       toast({
         title: "Project updated",
-        description: isBecomingFinished 
-          ? "Project marked as finished. It will be auto-deleted after 1 month."
+        description: isBecomingFinished
+          ? "Project marked as finished."
           : "Project has been updated successfully",
       });
 
       onOpenChange(false);
       onProjectUpdated();
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: "Error",
-        description: error.message || "Failed to update project",
+        description: error instanceof Error ? error.message : "Failed to update project",
         variant: "destructive",
       });
     } finally {

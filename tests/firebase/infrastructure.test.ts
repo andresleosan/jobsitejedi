@@ -1,9 +1,19 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, test } from "vitest";
-import { firebaseConfig } from "@/lib/firebase/config";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+
+let firebaseConfig: typeof import("@/lib/firebase/config").firebaseConfig;
 
 describe("Firebase local infrastructure", () => {
+  beforeAll(async () => {
+    vi.stubEnv("VITE_FIREBASE_USE_EMULATORS", "true");
+    ({ firebaseConfig } = await import("@/lib/firebase/config"));
+  });
+
+  afterAll(() => {
+    vi.unstubAllEnvs();
+  });
+
   test("uses the local demo Firebase project", () => {
     expect(firebaseConfig.projectId).toBe("demo-jobsite-jedi");
     expect(firebaseConfig.emulators.auth).toBe(9099);

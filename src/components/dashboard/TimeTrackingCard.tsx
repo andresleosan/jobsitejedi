@@ -2,10 +2,11 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Clock, Play, Square } from "lucide-react";
+import type { TimeEntry } from "@/lib/firebase/repositories/timeTracking";
 
 interface TimeTrackingCardProps {
   isClockedIn: boolean;
-  currentTimeEntry: any;
+  currentTimeEntry: TimeEntry | null;
   onClockIn: () => void;
   onClockOut: () => void;
 }
@@ -20,7 +21,8 @@ const TimeTrackingCard = ({ isClockedIn, currentTimeEntry, onClockIn, onClockOut
     }
 
     const updateElapsed = () => {
-      const start = new Date(currentTimeEntry.clock_in).getTime();
+      if (!currentTimeEntry.clockIn) return;
+      const start = currentTimeEntry.clockIn.getTime();
       const now = Date.now();
       const diff = now - start;
 

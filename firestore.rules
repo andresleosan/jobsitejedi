@@ -2,6 +2,84 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isManager() {
+      return isSignedIn() && request.auth.token.role == "manager";
+    }
+
+    function isBuilder() {
+      return isSignedIn() && request.auth.token.role == "builder";
+    }
+
+    function ownsNewDocument(field) {
+      return isBuilder() && request.resource.data[field] == request.auth.uid;
+    }
+
+    function ownsExistingDocument(field) {
+      return isBuilder() && resource.data[field] == request.auth.uid;
+    }
+
+    function ownsUpdatedDocument(field) {
+      return ownsExistingDocument(field) && ownsNewDocument(field);
+    }
+
+    function roleClaimIsImmutable() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(["role"]);
+    }
+
+    match /users/{userId} {
+      allow get, list: if isManager() || (isSignedIn() && request.auth.uid == userId);
+      allow create: if isSignedIn() && request.auth.uid == userId
+        && !request.resource.data.keys().hasAny(["role"]);
+      allow update: if roleClaimIsImmutable() && (
+        isManager() || (isSignedIn() && request.auth.uid == userId)
+      );
+      allow delete: if isManager() || (isSignedIn() && request.auth.uid == userId);
+    }
+
+    match /projects/{projectId} {
+      allow read: if isManager() || ownsExistingDocument("ownerId");
+      allow create: if isManager() || ownsNewDocument("ownerId");
+      allow update: if isManager() || ownsUpdatedDocument("ownerId");
+      allow delete: if isManager() || ownsExistingDocument("ownerId");
+    }
+
+    match /jobs/{jobId} {
+      allow read: if isManager() || ownsExistingDocument("builderId");
+      allow create: if isManager() || ownsNewDocument("builderId");
+      allow update: if isManager() || ownsUpdatedDocument("builderId");
+      allow delete: if isManager() || ownsExistingDocument("builderId");
+    }
+
+    match /jobCompletions/{completionId} {
+      allow read: if isManager() || ownsExistingDocument("builderId");
+      allow create: if isManager() || ownsNewDocument("builderId");
+      allow update: if isManager() || ownsUpdatedDocument("builderId");
+      allow delete: if isManager() || ownsExistingDocument("builderId");
+    }
+
+    match /timeTracking/{entryId} {
+      allow read: if isManager() || ownsExistingDocument("builderId");
+      allow create: if isManager() || ownsNewDocument("builderId");
+      allow update: if isManager() || ownsUpdatedDocument("builderId");
+      allow delete: if isManager() || ownsExistingDocument("builderId");
+    }
+
+    match /projectSwitches/{switchId} {
+      allow read: if isManager() || ownsExistingDocument("builderId");
+      allow create: if isManager() || ownsNewDocument("builderId");
+      allow update: if isManager() || ownsUpdatedDocument("builderId");
+      allow delete: if isManager() || ownsExistingDocument("builderId");
+    }
+
+    match /invitations/{invitationId} {
+      allow read: if isManager();
+      allow write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

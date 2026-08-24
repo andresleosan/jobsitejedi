@@ -2,6 +2,63 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isManager() {
+      return isSignedIn() && request.auth.token.role == "manager";
+    }
+
+    function isBuilder() {
+      return isSignedIn() && request.auth.token.role == "builder";
+    }
+
+    function isValidUpload() {
+      return request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches("(image|application)/.*");
+    }
+
+    match /jobs/{jobId}/{builderId}/{allPaths=**} {
+      allow read: if isManager() || (isBuilder() && request.auth.uid == builderId);
+      allow write: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+    }
+
+    match /jobs/{jobId}/manager/{allPaths=**} {
+      allow read: if isManager() || isBuilder();
+      allow write: if isManager() && isValidUpload();
+    }
+
+    match /dailyReports/{builderId}/{allPaths=**} {
+      allow read: if isManager() || (isBuilder() && request.auth.uid == builderId);
+      allow write: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+    }
+
+    match /invoices/{builderId}/{allPaths=**} {
+      allow read: if isManager() || (isBuilder() && request.auth.uid == builderId);
+      allow write: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+    }
+
+    match /documents/{userId}/{allPaths=**} {
+      allow read: if isManager() || (isSignedIn() && request.auth.uid == userId);
+      allow write: if isManager() || (isSignedIn() && request.auth.uid == userId && isValidUpload());
+    }
+
+    match /materials/{builderId}/{allPaths=**} {
+      allow read: if isManager() || (isBuilder() && request.auth.uid == builderId);
+      allow write: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+    }
+
+    match /rubbish/{builderId}/{allPaths=**} {
+      allow read: if isManager() || (isBuilder() && request.auth.uid == builderId);
+      allow write: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+    }
+
+    match /voiceNotes/{builderId}/{allPaths=**} {
+      allow read: if isManager() || (isBuilder() && request.auth.uid == builderId);
+      allow write: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

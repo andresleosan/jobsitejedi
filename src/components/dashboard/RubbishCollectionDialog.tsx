@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -6,7 +6,6 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { getStoragePath, storage } from "@/lib/storage";
-import { storage } from "@/lib/storage";
 import { Loader2, Camera, Trash2, X, CheckCircle2, Building2, Plus } from "lucide-react";
 import { format } from "date-fns";
 
@@ -39,13 +38,7 @@ const RubbishCollectionDialog = ({ open, onOpenChange, projectId, userId }: Rubb
 
   const MAX_PHOTOS = 10;
 
-  useEffect(() => {
-    if (open && projectId) {
-      fetchProjectName();
-    }
-  }, [open, projectId]);
-
-  const fetchProjectName = async () => {
+  const fetchProjectName = useCallback(async () => {
     if (!projectId) return;
     const { data } = await supabase
       .from("projects")
@@ -55,7 +48,13 @@ const RubbishCollectionDialog = ({ open, onOpenChange, projectId, userId }: Rubb
     if (data) {
       setProjectName(data.name);
     }
-  };
+  }, [projectId]);
+
+  useEffect(() => {
+    if (open && projectId) {
+      void fetchProjectName();
+    }
+  }, [fetchProjectName, open, projectId]);
 
   const fetchMyRequests = async () => {
     setIsLoadingRequests(true);
@@ -80,16 +79,25 @@ const RubbishCollectionDialog = ({ open, onOpenChange, projectId, userId }: Rubb
           ),
         );
 
+        const relatedProject: unknown = r.projects;
+        const projectName =
+          relatedProject &&
+          typeof relatedProject === "object" &&
+          "name" in relatedProject &&
+          typeof relatedProject.name === "string"
+            ? relatedProject.name
+            : "Unknown";
+
         return {
           ...r,
           photo_url: JSON.stringify(signedPhotoUrls.filter((url): url is string => Boolean(url))),
-          project_name: (r.projects as any)?.name || "Unknown",
+          project_name: projectName,
         };
       }));
 
       setMyRequests(mapped);
-    } catch (error: any) {
-      console.error("Error fetching requests:", error);
+    } catch (error) {
+      console.error("Error fetching requests:", error instanceof Error ? error.message : error);
     } finally {
       setIsLoadingRequests(false);
     }
@@ -204,10 +212,10 @@ const RubbishCollectionDialog = ({ open, onOpenChange, projectId, userId }: Rubb
 
       resetForm();
       fetchMyRequests();
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: "Error",
-        description: error.message || "Failed to submit request",
+        description: error instanceof Error ? error.message : "Failed to submit request",
         variant: "destructive",
       });
     } finally {

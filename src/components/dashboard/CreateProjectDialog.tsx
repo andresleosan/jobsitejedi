@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { supabase } from "@/integrations/supabase/client";
+import { createProject } from "@/lib/firebase/repositories/projects";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 
@@ -38,19 +38,12 @@ const CreateProjectDialog = ({ open, onOpenChange, onProjectCreated }: CreatePro
 
     setIsLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user) throw new Error("Not authenticated");
-
-      const { error } = await supabase.from("projects").insert({
+      await createProject({
         name: formData.name,
         description: formData.description,
-        client_name: formData.client_name,
+        clientName: formData.client_name,
         address: formData.address,
-        created_by: user.id,
       });
-
-      if (error) throw error;
 
       toast({
         title: "Project created",
@@ -60,10 +53,10 @@ const CreateProjectDialog = ({ open, onOpenChange, onProjectCreated }: CreatePro
       setFormData({ name: "", description: "", client_name: "", address: "" });
       onOpenChange(false);
       onProjectCreated();
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: "Error",
-        description: error.message || "Failed to create project",
+        description: error instanceof Error ? error.message : "Failed to create project",
         variant: "destructive",
       });
     } finally {

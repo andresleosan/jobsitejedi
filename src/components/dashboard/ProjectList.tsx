@@ -1,11 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
-import { Building2, Clock, DollarSign, Edit } from "lucide-react";
+import { Building2, Edit } from "lucide-react";
 import EditProjectDialog from "./EditProjectDialog";
 import {
   AlertDialog,
@@ -17,64 +16,54 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { listProjects, updateProject, type ProjectRecord } from "@/lib/firebase/repositories/projects";
 import { toast } from "sonner";
 
 interface ProjectListProps {
   onProjectCreated: () => void;
 }
 
-interface Project {
-  id: string;
-  name: string;
-  client_name: string;
-  status: string;
-  created_at: string;
-  description: string | null;
-  address: string | null;
-  total_hours?: number;
-  total_spent?: number;
-  active_jobs?: number;
-  job_status_counts?: { approved: number; waiting_review: number; needs_correction: number };
-}
-
 const ProjectList = ({ onProjectCreated }: ProjectListProps) => {
   const navigate = useNavigate();
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [selectedProject, setSelectedProject] = useState<ProjectRecord | null>(null);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [navigatingToProject, setNavigatingToProject] = useState<string | null>(null);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [loadingStage, setLoadingStage] = useState("");
-  const [projectToFinish, setProjectToFinish] = useState<Project | null>(null);
+  const [projectToFinish, setProjectToFinish] = useState<ProjectRecord | null>(null);
   const [isFinishDialogOpen, setIsFinishDialogOpen] = useState(false);
 
-  const handleEditProject = (project: Project) => {
-    setSelectedProject(project);
-    setIsEditDialogOpen(true);
-  };
-
-  const handleStatusClick = (e: React.MouseEvent, project: Project) => {
-    e.stopPropagation();
-    if (project.status === "active") {
-      setProjectToFinish(project);
-      setIsFinishDialogOpen(true);
+  const fetchProjects = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      setProjects(await listProjects("active"));
+    } catch (error) {
+      console.error("Error fetching projects:", error);
+      toast.error("Failed to load projects");
+    } finally {
+      setIsLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void fetchProjects();
+  }, [fetchProjects, onProjectCreated]);
 
   const handleConfirmFinish = async () => {
     if (!projectToFinish) return;
-    
-    try {
-      const { error } = await supabase
-        .from("projects")
-        .update({ status: "finished" })
-        .eq("id", projectToFinish.id);
 
-      if (error) throw error;
-      
+    try {
+      await updateProject(projectToFinish.id, {
+        name: projectToFinish.name,
+        description: projectToFinish.description,
+        clientName: projectToFinish.clientName,
+        address: projectToFinish.address,
+        status: "finished",
+      });
       toast.success("Project moved to finished projects");
-      fetchProjects();
+      await fetchProjects();
     } catch (error) {
       console.error("Error finishing project:", error);
       toast.error("Failed to update project status");
@@ -84,105 +73,42 @@ const ProjectList = ({ onProjectCreated }: ProjectListProps) => {
     }
   };
 
-  useEffect(() => {
-    fetchProjects();
+  const openProject = (projectId: string) => {
+    if (navigatingToProject) return;
 
-    // Realtime: refresh projects when any job changes
-    const channel = supabase
-      .channel('project-list-jobs')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'jobs' },
-        () => fetchProjects()
-      )
-      .subscribe();
+    setNavigatingToProject(projectId);
+    setLoadingProgress(15);
+    setLoadingStage("Connecting to project...");
+    const stages = [
+      { progress: 35, text: "Loading project data..." },
+      { progress: 70, text: "Preparing dashboard..." },
+      { progress: 100, text: "Almost ready..." },
+    ];
+    let stageIndex = 0;
+    const interval = setInterval(() => {
+      const stage = stages[stageIndex++];
+      if (!stage) {
+        clearInterval(interval);
+        return;
+      }
+      setLoadingProgress(stage.progress);
+      setLoadingStage(stage.text);
+    }, 250);
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [onProjectCreated]);
-
-  const fetchProjects = async () => {
-    setIsLoading(true);
-    try {
-      const { data: projectsData, error } = await supabase
-        .from("projects")
-        .select("*")
-        .eq("status", "active")
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-
-      // Fetch hours and costs for each project
-      const enrichedProjects = await Promise.all(
-        (projectsData || []).map(async (project) => {
-          // Get total hours
-          const { data: timeData } = await supabase
-            .from("time_tracking")
-            .select("clock_in, clock_out")
-            .eq("project_id", project.id);
-
-          let totalHours = 0;
-          if (timeData) {
-            totalHours = timeData.reduce((acc, record) => {
-              if (record.clock_out) {
-                const hours =
-                  (new Date(record.clock_out).getTime() - new Date(record.clock_in).getTime()) /
-                  (1000 * 60 * 60);
-                return acc + hours;
-              }
-              return acc;
-            }, 0);
-          }
-
-          // Get total spent
-          const { data: invoiceData } = await supabase
-            .from("invoices")
-            .select("total_amount")
-            .eq("project_id", project.id);
-
-          const totalSpent = invoiceData?.reduce((acc, inv) => acc + Number(inv.total_amount), 0) || 0;
-
-          // Get job status counts
-          const { data: jobsData } = await supabase
-            .from("jobs")
-            .select("status")
-            .eq("project_id", project.id);
-
-          const counts = { approved: 0, waiting_review: 0, needs_correction: 0 };
-          (jobsData || []).forEach((j: { status: string }) => {
-            if (j.status === "approved") counts.approved++;
-            if (j.status === "waiting_review" || j.status === "pending") counts.waiting_review++;
-            if (j.status === "needs_correction") counts.needs_correction++;
-          });
-          const activeJobs = (jobsData || []).filter((j: { status: string }) => j.status !== "completed").length;
-
-          return {
-            ...project,
-            total_hours: Math.round(totalHours),
-            total_spent: totalSpent,
-            active_jobs: activeJobs,
-            job_status_counts: counts,
-          };
-        })
-      );
-
-      setProjects(enrichedProjects);
-    } catch (error) {
-      console.error("Error fetching projects:", error);
-    } finally {
-      setIsLoading(false);
-    }
+    setTimeout(() => {
+      clearInterval(interval);
+      navigate(`/project/${projectId}`);
+    }, 1000);
   };
 
   if (isLoading) {
-    return <div className="text-center py-8 text-muted-foreground">Loading projects...</div>;
+    return <div className="py-8 text-center text-muted-foreground">Loading projects...</div>;
   }
 
   if (projects.length === 0) {
     return (
-      <div className="text-center py-12">
-        <Building2 className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+      <div className="py-12 text-center">
+        <Building2 className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
         <p className="text-muted-foreground">No projects yet. Create your first project to get started.</p>
       </div>
     );
@@ -195,122 +121,57 @@ const ProjectList = ({ onProjectCreated }: ProjectListProps) => {
           {projects.map((project) => (
             <div
               key={project.id}
-              className="p-4 border rounded-lg hover:shadow-md transition-shadow bg-card cursor-pointer relative"
-              onClick={() => {
-                if (!navigatingToProject) {
-                  setNavigatingToProject(project.id);
-                  setLoadingProgress(0);
-                  setLoadingStage("Initializing...");
-                  
-                  // Simulate loading stages with smooth progress
-                  const stages = [
-                    { progress: 15, text: "Connecting to project..." },
-                    { progress: 35, text: "Loading jobs data..." },
-                    { progress: 55, text: "Fetching time records..." },
-                    { progress: 75, text: "Loading materials..." },
-                    { progress: 90, text: "Preparing dashboard..." },
-                    { progress: 100, text: "Almost ready..." },
-                  ];
-                  
-                  let stageIndex = 0;
-                  const interval = setInterval(() => {
-                    if (stageIndex < stages.length) {
-                      setLoadingProgress(stages[stageIndex].progress);
-                      setLoadingStage(stages[stageIndex].text);
-                      stageIndex++;
-                    } else {
-                      clearInterval(interval);
-                    }
-                  }, 250);
-                  
-                  // Navigate after animation completes
-                  setTimeout(() => {
-                    clearInterval(interval);
-                    setLoadingProgress(100);
-                    setLoadingStage("Ready!");
-                    setTimeout(() => {
-                      navigate(`/project/${project.id}`);
-                    }, 200);
-                  }, 1600);
-                }
-              }}
+              className="relative cursor-pointer rounded-lg border bg-card p-4 transition-shadow hover:shadow-md"
+              onClick={() => openProject(project.id)}
             >
               {navigatingToProject === project.id && (
-                <div className="absolute inset-0 bg-background/95 backdrop-blur-sm flex flex-col items-center justify-center rounded-lg z-10 p-6">
-                  <div className="w-full max-w-xs space-y-4">
-                    {/* Animated building icon */}
-                    <div className="flex justify-center mb-2">
-                      <div className="relative">
-                        <Building2 className="h-8 w-8 text-primary animate-pulse" />
-                        <div className="absolute inset-0 h-8 w-8 bg-primary/20 rounded-full animate-ping" />
-                      </div>
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-lg bg-background/95 p-6 backdrop-blur-sm">
+                  <Building2 className="mb-3 h-8 w-8 animate-pulse text-primary" />
+                  <div className="w-full max-w-xs space-y-2">
+                    <Progress value={loadingProgress} className="h-2 bg-muted" />
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">{loadingStage}</span>
+                      <span className="font-semibold text-primary">{loadingProgress}%</span>
                     </div>
-                    
-                    {/* Progress bar */}
-                    <div className="space-y-2">
-                      <Progress 
-                        value={loadingProgress} 
-                        className="h-2 bg-muted"
-                      />
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs text-muted-foreground font-medium transition-all duration-300">
-                          {loadingStage}
-                        </span>
-                        <span className="text-xs font-semibold text-primary">
-                          {loadingProgress}%
-                        </span>
-                      </div>
-                    </div>
-                    
-                    {/* Project name being loaded */}
-                    <p className="text-sm font-medium text-center text-foreground mt-2">
-                      Opening <span className="text-primary">{project.name}</span>
-                    </p>
                   </div>
+                  <p className="mt-2 text-sm font-medium">Opening {project.name}</p>
                 </div>
               )}
-              <div className="flex items-start justify-between mb-3">
+
+              <div className="mb-3 flex items-start justify-between">
                 <div>
-                  <h3 className="font-semibold text-lg">{project.name}</h3>
-                  <p className="text-sm text-muted-foreground">{project.client_name}</p>
+                  <h3 className="text-lg font-semibold">{project.name}</h3>
+                  <p className="text-sm text-muted-foreground">{project.clientName}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={project.status === "active" ? "default" : "secondary"}>
+                  <Badge
+                    variant={project.status === "active" ? "default" : "secondary"}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (project.status === "active") {
+                        setProjectToFinish(project);
+                        setIsFinishDialogOpen(true);
+                      }
+                    }}
+                  >
                     {project.status}
                   </Badge>
                   <Button
                     variant="outline"
                     size="icon"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleEditProject(project);
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setSelectedProject(project);
+                      setIsEditDialogOpen(true);
                     }}
                   >
                     <Edit className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
-
-              <div className="flex flex-wrap gap-6 text-sm">
-                <div className="flex items-center gap-2">
-                  <Clock className="h-4 w-4 text-muted-foreground" />
-                  <span className="font-medium">{project.total_hours || 0}h</span>
-                  <span className="text-muted-foreground">logged</span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <DollarSign className="h-4 w-4 text-muted-foreground" />
-                  <span className="font-medium">£{project.total_spent?.toFixed(2) || "0.00"}</span>
-                  <span className="text-muted-foreground">spent</span>
-                </div>
-              </div>
-
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                <Badge variant="secondary">Active jobs: {project.active_jobs || 0}</Badge>
-                <Badge variant="outline">To Do: {project.job_status_counts?.approved || 0}</Badge>
-                <Badge variant="outline">Waiting for Review: {project.job_status_counts?.waiting_review || 0}</Badge>
-                <Badge variant="outline">Needs Correction: {project.job_status_counts?.needs_correction || 0}</Badge>
-              </div>
+              <p className="text-xs text-muted-foreground">
+                Job and time metrics will return with the Firebase jobs vertical.
+              </p>
             </div>
           ))}
         </div>
@@ -328,15 +189,12 @@ const ProjectList = ({ onProjectCreated }: ProjectListProps) => {
           <AlertDialogHeader>
             <AlertDialogTitle>Finish Project</AlertDialogTitle>
             <AlertDialogDescription>
-              Would you like to move "{projectToFinish?.name}" to finished projects? 
-              This will mark the project as completed.
+              Would you like to move &quot;{projectToFinish?.name}&quot; to finished projects?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmFinish}>
-              Yes, finish project
-            </AlertDialogAction>
+            <AlertDialogAction onClick={handleConfirmFinish}>Yes, finish project</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

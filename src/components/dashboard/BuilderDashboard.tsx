@@ -1,103 +1,64 @@
-import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { useState, useEffect, useCallback } from "react";
+import { signOut } from "@/lib/firebase/auth";
+import { listProjects, type ProjectRecord } from "@/lib/firebase/repositories/projects";
+import {
+  getActiveTimeEntry,
+  startTimeEntry,
+  stopTimeEntry,
+  switchTimeEntry,
+  type TimeEntry,
+} from "@/lib/firebase/repositories/timeTracking";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { LogOut, Clock, MapPin, Package, FileText } from "lucide-react";
+import { LogOut, Clock, MapPin, Repeat, ListChecks } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import TimeTrackingCard from "./TimeTrackingCard";
-import MaterialUsageDialog from "./MaterialUsageDialog";
-import InvoiceDialog from "./InvoiceDialog";
+import ChangeProjectDialog from "./ChangeProjectDialog";
+import JobsToDoList from "@/components/jobs/JobsToDoList";
 
 interface BuilderDashboardProps {
   userId: string;
 }
 
-interface Project {
-  id: string;
-  name: string;
-  client_name: string;
-  status: string;
-}
-
 const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [isClockedIn, setIsClockedIn] = useState(false);
-  const [currentTimeEntry, setCurrentTimeEntry] = useState<any>(null);
-  const [isMaterialDialogOpen, setIsMaterialDialogOpen] = useState(false);
-  const [isInvoiceDialogOpen, setIsInvoiceDialogOpen] = useState(false);
-  const [userProfile, setUserProfile] = useState<{ full_name: string; role: string } | null>(null);
+  const [currentTimeEntry, setCurrentTimeEntry] = useState<TimeEntry | null>(null);
+  const [isChangeProjectDialogOpen, setIsChangeProjectDialogOpen] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  useEffect(() => {
-    fetchProjects();
-    checkClockInStatus();
-    fetchUserProfile();
-  }, [userId]);
-
-  const fetchUserProfile = async () => {
-    const { data: profileData } = await supabase
-      .from("profiles")
-      .select("full_name")
-      .eq("id", userId)
-      .single();
-
-    const { data: roleData } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", userId)
-      .single();
-
-    if (profileData && roleData) {
-      setUserProfile({
-        full_name: profileData.full_name,
-        role: roleData.role,
-      });
-    }
-  };
-
-  const fetchProjects = async () => {
-    const { data, error } = await supabase
-      .from("projects")
-      .select("*")
-      .eq("status", "active")
-      .order("created_at", { ascending: false });
-
-    if (error) {
+  const fetchProjects = useCallback(async () => {
+    try {
+      const data = await listProjects("active");
+      setProjects(data);
+      if (data.length > 0 && !selectedProjectId) setSelectedProjectId(data[0].id);
+    } catch (error) {
       console.error("Error fetching projects:", error);
       return;
     }
+  }, [selectedProjectId]);
 
-    setProjects(data || []);
-    if (data && data.length > 0 && !selectedProjectId) {
-      setSelectedProjectId(data[0].id);
-    }
-  };
-
-  const checkClockInStatus = async () => {
-    const { data, error } = await supabase
-      .from("time_tracking")
-      .select("*")
-      .eq("user_id", userId)
-      .is("clock_out", null)
-      .order("clock_in", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (error) {
+  const checkClockInStatus = useCallback(async () => {
+    try {
+      const data = await getActiveTimeEntry();
+      if (data) {
+        setIsClockedIn(true);
+        setCurrentTimeEntry(data);
+        setSelectedProjectId(data.projectId);
+      }
+    } catch (error) {
       console.error("Error checking clock in status:", error);
-      return;
     }
+  }, []);
 
-    if (data) {
-      setIsClockedIn(true);
-      setCurrentTimeEntry(data);
-      setSelectedProjectId(data.project_id);
-    }
-  };
+  useEffect(() => {
+    void fetchProjects();
+    void checkClockInStatus();
+  }, [checkClockInStatus, fetchProjects, userId]);
 
   const getLocation = (): Promise<{ lat: number; lng: number }> => {
     return new Promise((resolve, reject) => {
@@ -134,19 +95,7 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
     try {
       const location = await getLocation();
 
-      const { data, error } = await supabase
-        .from("time_tracking")
-        .insert({
-          user_id: userId,
-          project_id: selectedProjectId,
-          clock_in: new Date().toISOString(),
-          location_lat: location.lat,
-          location_lng: location.lng,
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
+      const data = await startTimeEntry({ projectId: selectedProjectId, location });
 
       setIsClockedIn(true);
       setCurrentTimeEntry(data);
@@ -154,10 +103,10 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
         title: "Clocked In",
         description: `Started work on ${projects.find(p => p.id === selectedProjectId)?.name}`,
       });
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: "Error",
-        description: error.message || "Failed to clock in",
+        description: error instanceof Error ? error.message : "Failed to clock in",
         variant: "destructive",
       });
     }
@@ -167,16 +116,7 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
     if (!currentTimeEntry) return;
 
     try {
-      const location = await getLocation();
-
-      const { error } = await supabase
-        .from("time_tracking")
-        .update({
-          clock_out: new Date().toISOString(),
-        })
-        .eq("id", currentTimeEntry.id);
-
-      if (error) throw error;
+      await stopTimeEntry(currentTimeEntry.id);
 
       setIsClockedIn(false);
       setCurrentTimeEntry(null);
@@ -184,10 +124,10 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
         title: "Clocked Out",
         description: "Your time has been recorded",
       });
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: "Error",
-        description: error.message || "Failed to clock out",
+        description: error instanceof Error ? error.message : "Failed to clock out",
         variant: "destructive",
       });
     }
@@ -195,30 +135,32 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
 
   const handleProjectSwitch = async (newProjectId: string) => {
     if (isClockedIn && currentTimeEntry) {
-      // Clock out from current project
-      await handleClockOut();
-      
-      // TODO: Show travel time dialog
-      toast({
-        title: "Project switched",
-        description: "Clock in to start work on the new project",
-      });
+      try {
+        const location = await getLocation();
+        const nextEntry = await switchTimeEntry(newProjectId, { location });
+        setCurrentTimeEntry(nextEntry);
+        setSelectedProjectId(newProjectId);
+        toast({ title: "Project switched", description: "Time tracking continued on the new project" });
+      } catch (error) {
+        toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to switch project", variant: "destructive" });
+      }
+      return;
     }
     setSelectedProjectId(newProjectId);
   };
 
   const handleSignOut = async () => {
     try {
-      await supabase.auth.signOut();
+      await signOut();
       toast({
         title: "Signed out",
         description: "Successfully signed out",
       });
       navigate("/auth");
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: "Error",
-        description: error.message || "Failed to sign out",
+        description: error instanceof Error ? error.message : "Failed to sign out",
         variant: "destructive",
       });
     }
@@ -265,7 +207,7 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
               <SelectContent>
                 {projects.map((project) => (
                   <SelectItem key={project.id} value={project.id}>
-                    {project.name} - {project.client_name}
+                    {project.name} - {project.clientName}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -274,7 +216,7 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
             {selectedProject && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <MapPin className="h-4 w-4" />
-                <span>{selectedProject.client_name}</span>
+                <span>{selectedProject.clientName}</span>
               </div>
             )}
           </CardContent>
@@ -288,42 +230,46 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
           onClockOut={handleClockOut}
         />
 
-        {/* Quick Actions */}
+        {selectedProjectId && <JobsToDoList projectId={selectedProjectId} />}
+
+        {/* Firebase verticals still being migrated */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setIsMaterialDialogOpen(true)}>
+          <Card
+            className={isClockedIn ? "cursor-pointer hover:shadow-md transition-shadow" : "opacity-60"}
+            onClick={() => isClockedIn && setIsChangeProjectDialogOpen(true)}
+          >
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Package className="h-5 w-5 text-primary" />
-                Log Material Usage
+                <Repeat className="h-5 w-5 text-primary" />
+                Change Project
               </CardTitle>
-              <CardDescription>Record materials used today</CardDescription>
+              <CardDescription>{isClockedIn ? "Track travel and continue the active shift" : "Clock in first"}</CardDescription>
             </CardHeader>
           </Card>
 
-          <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setIsInvoiceDialogOpen(true)}>
+          <Card className="opacity-60">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5 text-secondary" />
-                Add Invoice
+                <ListChecks className="h-5 w-5 text-secondary" />
+                Materials and invoices
               </CardTitle>
-              <CardDescription>Upload a new invoice</CardDescription>
+              <CardDescription>Firebase migration pending; the legacy dialogs stay isolated.</CardDescription>
             </CardHeader>
           </Card>
         </div>
       </main>
 
-      <MaterialUsageDialog
-        open={isMaterialDialogOpen}
-        onOpenChange={setIsMaterialDialogOpen}
-        projectId={selectedProjectId}
-        userId={userId}
-      />
-
-      <InvoiceDialog
-        open={isInvoiceDialogOpen}
-        onOpenChange={setIsInvoiceDialogOpen}
-        projectId={selectedProjectId}
-        userId={userId}
+      <ChangeProjectDialog
+        open={isChangeProjectDialogOpen}
+        onOpenChange={setIsChangeProjectDialogOpen}
+        currentProjectId={selectedProjectId}
+        projects={projects}
+        currentTimeEntry={currentTimeEntry}
+        onProjectChanged={(entry) => {
+          setCurrentTimeEntry(entry);
+          setIsClockedIn(true);
+          setSelectedProjectId(entry.projectId);
+        }}
       />
     </div>
   );

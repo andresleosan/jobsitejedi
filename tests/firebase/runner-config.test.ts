@@ -20,4 +20,10 @@ describe("Firebase test runners", () => {
       "--only auth",
     );
   });
+
+  test("provides a frontend typecheck runner", () => {
+    expect(packageJson.scripts.typecheck).toBe(
+      "tsc -p tsconfig.app.json --noEmit",
+    );
+  });
 });
