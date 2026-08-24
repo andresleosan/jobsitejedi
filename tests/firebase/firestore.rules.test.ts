@@ -155,4 +155,37 @@ describe("Firestore authorization rules", () => {
     }));
     await assertFails(getDoc(doc(builderDb(), transfer.path)));
   });
+
+  test("protects material usage, deliveries and rubbish requests", async () => {
+    const usage = doc(managerDb(), "materialUsage/usage-1");
+    await assertSucceeds(setDoc(usage, { usedBy: "builder-1", projectId: "project-1", quantityUsed: 2 }));
+    await assertSucceeds(getDoc(doc(builderDb(), usage.path)));
+    await assertFails(getDoc(doc(otherBuilderDb(), usage.path)));
+    await assertFails(updateDoc(doc(builderDb(), usage.path), { quantityUsed: 1 }));
+
+    const delivery = doc(builderDb(), "materialDeliveryRequests/delivery-1");
+    await assertSucceeds(setDoc(delivery, { userId: "builder-1", projectId: "project-1", status: "pending" }));
+    const deliveryItem = doc(builderDb(), "materialDeliveryItems/delivery-item-1");
+    await assertSucceeds(setDoc(deliveryItem, {
+      requestId: delivery.id,
+      materialId: "material-1",
+      quantity: 3,
+    }));
+    await assertFails(getDoc(doc(otherBuilderDb(), delivery.path)));
+    await assertFails(getDoc(doc(otherBuilderDb(), deliveryItem.path)));
+    await assertSucceeds(updateDoc(doc(managerDb(), delivery.path), { status: "delivered" }));
+
+    const rubbish = doc(builderDb(), "rubbishCollectionRequests/rubbish-1");
+    await assertSucceeds(setDoc(rubbish, {
+      userId: "builder-1",
+      projectId: "project-1",
+      status: "pending",
+      photoPaths: [],
+    }));
+    await assertFails(getDoc(doc(otherBuilderDb(), rubbish.path)));
+    await assertSucceeds(updateDoc(doc(managerDb(), rubbish.path), {
+      status: "resolved",
+      resolvedBy: "manager-1",
+    }));
+  });
 });

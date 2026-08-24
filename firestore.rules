@@ -129,6 +129,33 @@ service cloud.firestore {
       allow update, delete: if isManager();
     }
 
+    match /materialUsage/{usageId} {
+      allow read: if isManager() || (isBuilder() && resource.data.usedBy == request.auth.uid);
+      allow create, update, delete: if isManager();
+    }
+
+    match /materialDeliveryRequests/{requestId} {
+      allow read: if isManager() || (isBuilder() && resource.data.userId == request.auth.uid);
+      allow create: if isBuilder() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isManager();
+    }
+
+    match /materialDeliveryItems/{itemId} {
+      allow read: if isManager() || (
+        isBuilder()
+        && get(/databases/$(database)/documents/materialDeliveryRequests/$(resource.data.requestId)).data.userId == request.auth.uid
+      );
+      allow create: if isBuilder()
+        && get(/databases/$(database)/documents/materialDeliveryRequests/$(request.resource.data.requestId)).data.userId == request.auth.uid;
+      allow update, delete: if isManager();
+    }
+
+    match /rubbishCollectionRequests/{requestId} {
+      allow read: if isManager() || (isBuilder() && resource.data.userId == request.auth.uid);
+      allow create: if isBuilder() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isManager();
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

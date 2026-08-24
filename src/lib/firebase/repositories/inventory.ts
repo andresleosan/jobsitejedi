@@ -9,6 +9,7 @@ import {
   serverTimestamp,
   updateDoc,
   where,
+  writeBatch,
   type DocumentData,
   type Timestamp,
 } from "firebase/firestore";
@@ -88,6 +89,50 @@ export interface ToolCheckoutRecord {
   createdAt: Date | null;
 }
 
+export interface MaterialUsageRecord {
+  id: string;
+  projectId: string;
+  materialId: string;
+  jobId: string | null;
+  quantityUsed: number;
+  usedBy: string;
+  date: string;
+  notes: string | null;
+  createdAt: Date | null;
+}
+
+export interface MaterialDeliveryItemRecord {
+  id: string;
+  requestId: string;
+  materialId: string;
+  quantity: number;
+  createdAt: Date | null;
+}
+
+export interface MaterialDeliveryRequestRecord {
+  id: string;
+  projectId: string;
+  userId: string;
+  status: "pending" | "in_progress" | "delivered" | "rejected";
+  notes: string | null;
+  createdAt: Date | null;
+  resolvedAt: Date | null;
+  resolvedBy: string | null;
+  items: MaterialDeliveryItemRecord[];
+}
+
+export interface RubbishRequestRecord {
+  id: string;
+  userId: string;
+  projectId: string;
+  photoPaths: string[];
+  description: string | null;
+  status: "pending" | "resolved";
+  createdAt: Date | null;
+  resolvedAt: Date | null;
+  resolvedBy: string | null;
+}
+
 export interface StorageMaterialInput {
   name: string;
   category: string;
@@ -114,6 +159,10 @@ const toolsCollection = collection(firebaseDb, "storageTools");
 const requestsCollection = collection(firebaseDb, "toolRequests");
 const checkoutsCollection = collection(firebaseDb, "toolCheckouts");
 const transfersCollection = collection(firebaseDb, "materialTransfers");
+const usageCollection = collection(firebaseDb, "materialUsage");
+const deliveryRequestsCollection = collection(firebaseDb, "materialDeliveryRequests");
+const deliveryItemsCollection = collection(firebaseDb, "materialDeliveryItems");
+const rubbishCollection = collection(firebaseDb, "rubbishCollectionRequests");
 
 const toDate = (value: unknown): Date | null => {
   if (value && typeof value === "object" && "toDate" in value) {
@@ -219,6 +268,50 @@ const toCheckout = (snapshot: { id: string; data: () => DocumentData }): ToolChe
     conditionOnReturn: typeof data.conditionOnReturn === "string" ? data.conditionOnReturn : null,
     notes: typeof data.notes === "string" ? data.notes : null,
     createdAt: toDate(data.createdAt),
+  };
+};
+
+const toUsage = (snapshot: { id: string; data: () => DocumentData }): MaterialUsageRecord => {
+  const data = snapshot.data();
+  return {
+    id: snapshot.id,
+    projectId: String(data.projectId ?? ""),
+    materialId: String(data.materialId ?? ""),
+    jobId: typeof data.jobId === "string" ? data.jobId : null,
+    quantityUsed: Number(data.quantityUsed ?? 0),
+    usedBy: String(data.usedBy ?? ""),
+    date: String(data.date ?? ""),
+    notes: typeof data.notes === "string" ? data.notes : null,
+    createdAt: toDate(data.createdAt),
+  };
+};
+
+const toDeliveryItem = (snapshot: { id: string; data: () => DocumentData }): MaterialDeliveryItemRecord => {
+  const data = snapshot.data();
+  return {
+    id: snapshot.id,
+    requestId: String(data.requestId ?? ""),
+    materialId: String(data.materialId ?? ""),
+    quantity: Number(data.quantity ?? 0),
+    createdAt: toDate(data.createdAt),
+  };
+};
+
+const toRubbish = (snapshot: { id: string; data: () => DocumentData }): RubbishRequestRecord => {
+  const data = snapshot.data();
+  const photoPaths = Array.isArray(data.photoPaths)
+    ? data.photoPaths.filter((path: unknown): path is string => typeof path === "string")
+    : [];
+  return {
+    id: snapshot.id,
+    userId: String(data.userId ?? ""),
+    projectId: String(data.projectId ?? ""),
+    photoPaths,
+    description: typeof data.description === "string" ? data.description : null,
+    status: data.status === "resolved" ? "resolved" : "pending",
+    createdAt: toDate(data.createdAt),
+    resolvedAt: toDate(data.resolvedAt),
+    resolvedBy: typeof data.resolvedBy === "string" ? data.resolvedBy : null,
   };
 };
 
@@ -483,4 +576,182 @@ export const transferMaterial = async (input: {
       transferredAt: serverTimestamp(), notes: input.notes?.trim() || null,
     });
   });
+};
+
+export const recordMaterialUsage = async (input: {
+  projectId: string;
+  materialId: string;
+  quantityUsed: number;
+  date: string;
+  jobId?: string | null;
+  notes?: string | null;
+}) => {
+  await requireManager();
+  const user = requireCurrentUser();
+  assertNonNegative(input.quantityUsed, "Usage quantity");
+  if (input.quantityUsed <= 0) throw new Error("Usage quantity must be greater than zero");
+  const projectId = requireText(input.projectId, "Project id");
+  const materialId = requireText(input.materialId, "Material id");
+  const date = requireText(input.date, "Usage date");
+  const usage = await runTransaction(firebaseDb, async (transaction) => {
+    const materialReference = doc(materialsCollection, materialId);
+    const material = await transaction.get(materialReference);
+    if (!material.exists()) throw new Error("Material was not found");
+    const currentQuantity = Number(material.data().quantity ?? 0);
+    if (currentQuantity < input.quantityUsed) throw new Error("Insufficient material quantity");
+    const usageReference = doc(usageCollection);
+    transaction.update(materialReference, {
+      quantity: currentQuantity - input.quantityUsed,
+      updatedAt: serverTimestamp(),
+    });
+    transaction.set(usageReference, {
+      projectId, materialId, quantityUsed: input.quantityUsed, usedBy: user.uid, date,
+      jobId: input.jobId?.trim() || null, notes: input.notes?.trim() || null,
+      createdAt: serverTimestamp(),
+    });
+    return usageReference;
+  });
+  const created = await getDoc(usage);
+  if (!created.exists()) throw new Error("Material usage was not recorded");
+  return toUsage(created);
+};
+
+export const listMaterialUsage = async (projectId?: string) => {
+  const user = requireCurrentUser();
+  const role = await getCurrentRole();
+  const constraints = role === "manager"
+    ? projectId?.trim() ? [where("projectId", "==", projectId.trim())] : []
+    : [where("usedBy", "==", user.uid)];
+  const snapshots = await getDocs(query(usageCollection, ...constraints));
+  return snapshots.docs.map(toUsage).sort((a, b) =>
+    (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+};
+
+export const createMaterialDeliveryRequest = async (input: {
+  projectId: string;
+  notes?: string | null;
+  items: Array<{ materialId: string; quantity: number }>;
+}) => {
+  const user = requireCurrentUser();
+  if ((await getCurrentRole()) !== "builder") throw new Error("Only builders can request deliveries");
+  if (!input.items.length) throw new Error("At least one delivery item is required");
+  const projectId = requireText(input.projectId, "Project id");
+  const requestReference = doc(deliveryRequestsCollection);
+  const batch = writeBatch(firebaseDb);
+  batch.set(requestReference, {
+    projectId, userId: user.uid, status: "pending", notes: input.notes?.trim() || null,
+    createdAt: serverTimestamp(), resolvedAt: null, resolvedBy: null,
+  });
+  input.items.forEach((item) => {
+    assertNonNegative(item.quantity, "Delivery quantity");
+    if (item.quantity <= 0) throw new Error("Delivery quantity must be greater than zero");
+    batch.set(doc(deliveryItemsCollection), {
+      requestId: requestReference.id,
+      materialId: requireText(item.materialId, "Material id"),
+      quantity: item.quantity,
+      createdAt: serverTimestamp(),
+    });
+  });
+  await batch.commit();
+  return getMaterialDeliveryRequest(requestReference.id);
+};
+
+export const getMaterialDeliveryRequest = async (requestId: string) => {
+  requireCurrentUser();
+  const requestReference = doc(deliveryRequestsCollection, requireText(requestId, "Request id"));
+  const requestSnapshot = await getDoc(requestReference);
+  if (!requestSnapshot.exists()) return null;
+  const itemsSnapshot = await getDocs(query(deliveryItemsCollection, where("requestId", "==", requestSnapshot.id)));
+  const data = requestSnapshot.data();
+  const statuses: MaterialDeliveryRequestRecord["status"][] = ["pending", "in_progress", "delivered", "rejected"];
+  return {
+    id: requestSnapshot.id,
+    projectId: String(data.projectId ?? ""),
+    userId: String(data.userId ?? ""),
+    status: statuses.includes(data.status) ? data.status : "pending",
+    notes: typeof data.notes === "string" ? data.notes : null,
+    createdAt: toDate(data.createdAt),
+    resolvedAt: toDate(data.resolvedAt),
+    resolvedBy: typeof data.resolvedBy === "string" ? data.resolvedBy : null,
+    items: itemsSnapshot.docs.map(toDeliveryItem),
+  } satisfies MaterialDeliveryRequestRecord;
+};
+
+export const listMaterialDeliveryRequests = async () => {
+  const user = requireCurrentUser();
+  const role = await getCurrentRole();
+  const constraints = role === "manager" ? [] : [where("userId", "==", user.uid)];
+  const snapshots = await getDocs(query(deliveryRequestsCollection, ...constraints));
+  const requests = await Promise.all(snapshots.docs.map((snapshot) => getMaterialDeliveryRequest(snapshot.id)));
+  return requests.filter((request): request is MaterialDeliveryRequestRecord => request !== null)
+    .sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+};
+
+export const updateMaterialDeliveryRequest = async (input: {
+  requestId: string;
+  status: MaterialDeliveryRequestRecord["status"];
+}) => {
+  const user = requireCurrentUser();
+  if ((await getCurrentRole()) !== "manager") throw new Error("Manager access is required");
+  const reference = doc(deliveryRequestsCollection, requireText(input.requestId, "Request id"));
+  const current = await getDoc(reference);
+  if (!current.exists()) throw new Error("Delivery request was not found");
+  const currentStatus = current.data().status as MaterialDeliveryRequestRecord["status"];
+  const transitions: Record<MaterialDeliveryRequestRecord["status"], MaterialDeliveryRequestRecord["status"][]> = {
+    pending: ["in_progress", "rejected"], in_progress: ["delivered", "rejected"],
+    delivered: [], rejected: [],
+  };
+  if (!transitions[currentStatus]?.includes(input.status)) throw new Error("Delivery status transition is invalid");
+  await updateDoc(reference, {
+    status: input.status,
+    resolvedAt: input.status === "delivered" || input.status === "rejected" ? serverTimestamp() : null,
+    resolvedBy: input.status === "delivered" || input.status === "rejected" ? user.uid : null,
+  });
+  return getMaterialDeliveryRequest(reference.id);
+};
+
+export const createRubbishRequest = async (input: {
+  projectId: string;
+  photoPaths?: string[];
+  description?: string | null;
+}) => {
+  const user = requireCurrentUser();
+  if ((await getCurrentRole()) !== "builder") throw new Error("Only builders can create rubbish requests");
+  const reference = await addDoc(rubbishCollection, {
+    userId: user.uid,
+    projectId: requireText(input.projectId, "Project id"),
+    photoPaths: (input.photoPaths ?? []).map((path) => requireText(path, "Photo path")),
+    description: input.description?.trim() || null,
+    status: "pending",
+    createdAt: serverTimestamp(),
+    resolvedAt: null,
+    resolvedBy: null,
+  });
+  const created = await getDoc(reference);
+  if (!created.exists()) throw new Error("Rubbish request was not created");
+  return toRubbish(created);
+};
+
+export const listRubbishRequests = async (status?: RubbishRequestRecord["status"]) => {
+  const user = requireCurrentUser();
+  const role = await getCurrentRole();
+  const constraints = role === "manager"
+    ? status ? [where("status", "==", status)] : []
+    : [where("userId", "==", user.uid)];
+  const snapshots = await getDocs(query(rubbishCollection, ...constraints));
+  return snapshots.docs.map(toRubbish).sort((a, b) =>
+    (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+};
+
+export const resolveRubbishRequest = async (requestId: string) => {
+  const user = requireCurrentUser();
+  if ((await getCurrentRole()) !== "manager") throw new Error("Manager access is required");
+  const reference = doc(rubbishCollection, requireText(requestId, "Request id"));
+  const current = await getDoc(reference);
+  if (!current.exists()) throw new Error("Rubbish request was not found");
+  if (current.data().status !== "pending") throw new Error("Rubbish request is already resolved");
+  await updateDoc(reference, { status: "resolved", resolvedAt: serverTimestamp(), resolvedBy: user.uid });
+  const updated = await getDoc(reference);
+  if (!updated.exists()) throw new Error("Rubbish request was not found after resolution");
+  return toRubbish(updated);
 };

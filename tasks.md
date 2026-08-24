@@ -269,8 +269,12 @@ toquen producción necesitan confirmación explícita del operador.
     stock negativo; el alta de transferencias builder queda pendiente de una Function privilegiada.
   - Añadidas reglas Firestore con lectura para usuarios autenticados, gestión de catálogo solo
     para managers y operaciones de builder limitadas a sus propias solicitudes/checkouts.
-  - Quedan para el siguiente incremento la migración de UI y los repositorios de uso de materiales,
-    entregas y residuos; la tarea no se aprueba todavía.
+  - Añadidos `recordMaterialUsage`, solicitudes de entrega con ítems y ciclo de residuos; las
+    entregas/residuos aíslan builder y manager, y las operaciones que descuentan stock quedan
+    manager-only hasta implementar una Function privilegiada para builders.
+  - La suite Firebase en Emulator queda en 13 archivos y 38 tests aprobados; typecheck y ESLint
+    focalizado pasan. Queda para el siguiente incremento la migración de UI y E2E de estos flujos;
+    la tarea no se aprueba todavía.
 
 ### T-011 — Migrar facturas, reportes y evaluaciones de riesgo
 
