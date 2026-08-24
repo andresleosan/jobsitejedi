@@ -1,8 +1,12 @@
-import { describe, expect, test } from "vitest";
-import {
-  buildPrivateStoragePath,
-  getThumbnailPath,
-} from "@/lib/firebase/storage";
+import { beforeAll, describe, expect, test, vi } from "vitest";
+
+let buildPrivateStoragePath: typeof import("@/lib/firebase/storage").buildPrivateStoragePath;
+let getThumbnailPath: typeof import("@/lib/firebase/storage").getThumbnailPath;
+
+beforeAll(async () => {
+  vi.stubEnv("VITE_FIREBASE_USE_EMULATORS", "true");
+  ({ buildPrivateStoragePath, getThumbnailPath } = await import("@/lib/firebase/storage"));
+});
 
 describe("Firebase Storage path helpers", () => {
   test("builds normalized private paths and thumbnails", () => {

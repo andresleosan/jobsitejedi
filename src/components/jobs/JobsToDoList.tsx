@@ -3,8 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, CheckCircle2, Clock, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, ImagePlus, Loader2 } from "lucide-react";
 import { listJobsForProject, type JobRecord, type JobStatus } from "@/lib/firebase/repositories/jobs";
+import JobPhotoDialog from "./JobPhotoDialog";
 
 interface JobsToDoListProps {
   projectId: string;
@@ -22,6 +23,7 @@ export default function JobsToDoList({ projectId }: JobsToDoListProps) {
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [navigating, setNavigating] = useState(false);
+  const [photoJob, setPhotoJob] = useState<JobRecord | null>(null);
   const navigate = useNavigate();
 
   const fetchJobs = useCallback(async () => {
@@ -74,13 +76,34 @@ export default function JobsToDoList({ projectId }: JobsToDoListProps) {
                       <Icon className="h-3 w-3" /> {config.label}
                     </Badge>
                   </div>
+                  <div className="mt-3 flex justify-end border-t pt-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPhotoJob(job)}
+                      aria-label={`Upload photos for ${job.title}`}
+                    >
+                      <ImagePlus className="h-4 w-4" />
+                      Upload evidence
+                    </Button>
+                  </div>
                 </li>
               );
             })}
           </ul>
         )}
-        <p className="mt-3 text-xs text-muted-foreground">Photos and job submissions will return with the next Firebase vertical.</p>
+        <p className="mt-3 text-xs text-muted-foreground">Evidence is stored privately and visible to the assigned builder and managers.</p>
       </CardContent>
+      <JobPhotoDialog
+        open={Boolean(photoJob)}
+        onOpenChange={(open) => {
+          if (!open) setPhotoJob(null);
+        }}
+        job={photoJob}
+        kind="completion"
+        onUploaded={() => void fetchJobs()}
+      />
     </Card>
   );
 }

@@ -50,11 +50,23 @@ service cloud.firestore {
     match /jobs/{jobId} {
       allow read: if isManager() || ownsExistingDocument("builderId");
       allow create: if isManager() || ownsNewDocument("builderId");
-      allow update: if isManager() || ownsUpdatedDocument("builderId");
+      allow update: if isManager() || (
+        ownsUpdatedDocument("builderId")
+        && request.resource.data.status == "waiting_review"
+        && resource.data.status in ["approved", "needs_correction"]
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "updatedAt"])
+      );
       allow delete: if isManager() || ownsExistingDocument("builderId");
     }
 
     match /jobCompletions/{completionId} {
+      allow read: if isManager() || ownsExistingDocument("builderId");
+      allow create: if isManager() || ownsNewDocument("builderId");
+      allow update: if isManager() || ownsUpdatedDocument("builderId");
+      allow delete: if isManager() || ownsExistingDocument("builderId");
+    }
+
+    match /jobPhotos/{photoId} {
       allow read: if isManager() || ownsExistingDocument("builderId");
       allow create: if isManager() || ownsNewDocument("builderId");
       allow update: if isManager() || ownsUpdatedDocument("builderId");
@@ -78,6 +90,43 @@ service cloud.firestore {
     match /invitations/{invitationId} {
       allow read: if isManager();
       allow write: if false;
+    }
+
+    match /storageMaterials/{materialId} {
+      allow read: if isSignedIn();
+      allow write: if isManager();
+    }
+
+    match /storageTools/{toolId} {
+      allow read: if isSignedIn();
+      allow write: if isManager();
+    }
+
+    match /toolRequests/{requestId} {
+      allow read: if isManager() || (isBuilder() && resource.data.requestedBy == request.auth.uid);
+      allow create: if isBuilder() && request.resource.data.requestedBy == request.auth.uid;
+      allow update: if isManager();
+      allow delete: if isManager();
+    }
+
+    match /toolCheckouts/{checkoutId} {
+      allow read: if isManager() || (isBuilder() && resource.data.checkedOutBy == request.auth.uid);
+      allow create: if (isManager() || isBuilder())
+        && request.resource.data.checkedOutBy == request.auth.uid;
+      allow update: if isManager() || (
+        isBuilder()
+        && resource.data.checkedOutBy == request.auth.uid
+        && request.resource.data.checkedOutBy == resource.data.checkedOutBy
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "returnedAt", "returnedBy", "conditionOnReturn", "notes"
+        ])
+      );
+      allow delete: if isManager();
+    }
+
+    match /materialTransfers/{transferId} {
+      allow read, create: if isManager();
+      allow update, delete: if isManager();
     }
 
     match /{document=**} {

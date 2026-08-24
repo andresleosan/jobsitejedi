@@ -82,6 +82,24 @@ npm.cmd --prefix functions run build
 La suite Firebase debe ejecutarse contra emuladores. La suite E2E debe cubrir como mínimo
 login, roles, proyectos, trabajos, fotos, inventario, facturas y reportes.
 
+## Criterio visual para la vertical de fotos (T-008)
+
+Como no existe `BRIEF.md`, esta vertical conserva la identidad activa de BuildTrack Pro y
+la aterriza al trabajo de obra:
+
+- **Paleta:** tokens semánticos existentes (`primary` para acción de captura, `secondary`
+  para contexto, `destructive` para eliminación, `muted` para metadatos y `background`
+  para superficie); evita introducir una paleta decorativa que no aparece en el producto.
+- **Tipografía:** la tipografía actual del sistema; títulos compactos para identificar el
+  trabajo y texto pequeño solo para nombre, tipo y estado del archivo.
+- **Layout:** tarjeta de trabajo primero, galería de evidencia después; la carga funciona
+  en una columna en móvil y en una rejilla corta en pantallas anchas.
+- **Elemento firma:** cada trabajo muestra una tira de evidencia visual con thumbnail y
+  estado de privacidad, de modo que el builder ve el avance del trabajo sin abrir una ruta
+  técnica ni una URL pública.
+- **Piso de calidad:** foco visible, `aria-label` en acciones de archivo, feedback de carga
+  y error, y respeto de `prefers-reduced-motion` mediante transiciones no esenciales.
+
 ## Migración
 
 Se usará migración incremental por verticales:

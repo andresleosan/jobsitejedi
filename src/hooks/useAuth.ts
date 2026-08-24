@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   registerBuilder,
+  registerWithInvitation,
   signIn,
   signOut,
   subscribeToAuth,
@@ -25,6 +26,7 @@ export const useAuth = () => {
     isLoading,
     signIn,
     registerBuilder,
+    registerWithInvitation,
     signOut,
   };
 };

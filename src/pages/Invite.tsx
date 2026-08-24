@@ -8,11 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
-import type { InvitationOperations } from "@/lib/firebase/types";
+import { invitationOperations } from "@/lib/firebase/functions";
 import QRCode from "qrcode";
-
-// Task 7 will provide the Cloud Functions-backed implementation.
-const invitationOperations: InvitationOperations | null = null;
 
 const Invite = () => {
   const [isLoading, setIsLoading] = useState(true);
@@ -63,15 +60,6 @@ const Invite = () => {
   const generateInvitation = async () => {
     setIsGenerating(true);
     try {
-      if (!invitationOperations) {
-        toast({
-          title: "Invitations unavailable",
-          description: "Invitation creation will be available after the Firebase Function migration.",
-          variant: "destructive",
-        });
-        return;
-      }
-
       const invitation = await invitationOperations.createInvitation({ role });
       const signupUrl = `${window.location.origin}/auth?code=${encodeURIComponent(invitation.code)}`;
       const qrDataUrl = await QRCode.toDataURL(signupUrl, {

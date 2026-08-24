@@ -11,7 +11,7 @@ import { z } from "zod";
 import { Badge } from "@/components/ui/badge";
 import { QRScannerDialog } from "@/components/auth/QRScannerDialog";
 import { useAuth } from "@/hooks/useAuth";
-import type { InvitationOperations } from "@/lib/firebase/types";
+import { invitationOperations } from "@/lib/firebase/functions";
 
 // Validation schemas
 const signInSchema = z.object({
@@ -38,9 +38,6 @@ interface InvitationData {
   errorMessage: string | null;
 }
 
-// Task 7 will provide the Cloud Functions-backed implementation.
-const invitationOperations: InvitationOperations | null = null;
-
 const Auth = () => {
   const [searchParams] = useSearchParams();
   const invitationCodeFromUrl = searchParams.get("code");
@@ -62,7 +59,7 @@ const Auth = () => {
     user,
     isLoading: isAuthLoading,
     signIn,
-    registerBuilder,
+    registerWithInvitation,
   } = useAuth();
 
   useEffect(() => {
@@ -86,13 +83,6 @@ const Auth = () => {
     setIsValidatingCode(true);
     setCodeError(null);
 
-    if (!invitationOperations) {
-      setInvitationData(null);
-      setCodeError("Invitation validation will be available after the Firebase Function migration.");
-      setIsValidatingCode(false);
-      return;
-    }
-    
     try {
       const result = await invitationOperations.validateInvitationCode(code.trim().toUpperCase());
 
@@ -124,15 +114,6 @@ const Auth = () => {
       return;
     }
 
-    if (invitationData.role !== "builder") {
-      toast({
-        title: "Manager registration unavailable",
-        description: "Manager accounts remain behind the Firebase Function workflow.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     // Validate input with Zod
     const validationResult = signUpSchema.safeParse({ email, password, fullName, phone });
     if (!validationResult.success) {
@@ -149,15 +130,16 @@ const Auth = () => {
 
     setIsLoading(true);
     try {
-      await registerBuilder({
+      await registerWithInvitation({
         email: validatedData.email,
         password: validatedData.password,
         fullName: validatedData.fullName,
+        invitationId: invitationData.invitationId,
       });
 
       toast({
         title: "Account created!",
-        description: "Welcome to BuildTrack Pro as a builder",
+        description: `Welcome to BuildTrack Pro as a ${invitationData.role}`,
       });
       navigate("/dashboard");
     } catch (error) {

@@ -7,7 +7,7 @@ import {
   type User,
 } from "firebase/auth";
 import { firebaseAuth } from "./client";
-import { ensureBuilderRole } from "./functions";
+import { ensureBuilderRole, invitationOperations } from "./functions";
 import type { AppRole, SessionUser } from "./types";
 
 const isAppRole = (value: unknown): value is AppRole =>
@@ -118,6 +118,30 @@ export const registerBuilder = async (input: {
     );
     await updateProfile(credential.user, { displayName: input.fullName.trim() });
     await ensureBuilderRole();
+    await credential.user.getIdToken(true);
+    return await toSessionUser(credential.user);
+  } catch (error) {
+    throw normalizeAuthError(error);
+  }
+};
+
+export const registerWithInvitation = async (input: {
+  email: string;
+  password: string;
+  fullName: string;
+  invitationId: string;
+}): Promise<SessionUser> => {
+  validateRegistrationInput(input);
+  if (!input.invitationId.trim()) throw new Error("Invitation is required");
+
+  try {
+    const credential = await createUserWithEmailAndPassword(
+      firebaseAuth,
+      input.email.trim().toLowerCase(),
+      input.password,
+    );
+    await updateProfile(credential.user, { displayName: input.fullName.trim() });
+    await invitationOperations.consumeInvitation({ invitationId: input.invitationId.trim(), userId: credential.user.uid });
     await credential.user.getIdToken(true);
     return await toSessionUser(credential.user);
   } catch (error) {

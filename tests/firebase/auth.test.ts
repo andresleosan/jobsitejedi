@@ -12,6 +12,7 @@ let signIn: typeof import("@/lib/firebase/auth").signIn;
 let signOut: typeof import("@/lib/firebase/auth").signOut;
 let subscribeToAuth: typeof import("@/lib/firebase/auth").subscribeToAuth;
 let assignUserRole: typeof import("@/lib/firebase/functions").assignUserRole;
+let invitationOperations: typeof import("@/lib/firebase/functions").invitationOperations;
 
 describe("Firebase Auth adapter", () => {
   beforeAll(async () => {
@@ -23,7 +24,7 @@ describe("Firebase Auth adapter", () => {
       signOut,
       subscribeToAuth,
     } = await import("@/lib/firebase/auth"));
-    ({ assignUserRole } = await import("@/lib/firebase/functions"));
+    ({ assignUserRole, invitationOperations } = await import("@/lib/firebase/functions"));
   });
 
   beforeEach(async () => {
@@ -71,6 +72,24 @@ describe("Firebase Auth adapter", () => {
     await expect(signIn(credentials.email, credentials.password)).rejects.toThrow(
       "Invalid email or password",
     );
+  });
+
+  test("returns a safe response for an invalid invitation code", async () => {
+    await expect(invitationOperations.validateInvitationCode("not-a-code")).resolves.toEqual({
+      valid: false,
+      role: "builder",
+      invitationId: "",
+      errorMessage: "Invitation code is invalid or expired",
+    });
+  });
+
+  test("rejects a builder attempting to create an invitation", async () => {
+    const credentials = makeCredentials("invitation-denial");
+    await registerBuilder(credentials);
+
+    await expect(
+      invitationOperations.createInvitation({ role: "builder" }),
+    ).rejects.toMatchObject({ code: "functions/permission-denied" });
   });
 
   test("signs out the current user", async () => {

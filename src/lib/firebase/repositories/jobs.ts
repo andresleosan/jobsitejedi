@@ -1,10 +1,12 @@
 import {
   addDoc,
   collection,
+  doc,
   getDoc,
   getDocs,
   query,
   serverTimestamp,
+  updateDoc,
   where,
   type DocumentData,
   type Timestamp,
@@ -29,6 +31,9 @@ export interface JobRecord {
   status: JobStatus;
   createdAt: Date | null;
   updatedAt: Date | null;
+  reviewNotes: string | null;
+  reviewedBy: string | null;
+  reviewedAt: Date | null;
 };
 
 export interface JobInput {
@@ -70,6 +75,9 @@ const toJob = (snapshot: { id: string; data: () => DocumentData }): JobRecord =>
     status,
     createdAt: toDate(data.createdAt),
     updatedAt: toDate(data.updatedAt),
+    reviewNotes: typeof data.reviewNotes === "string" ? data.reviewNotes : null,
+    reviewedBy: typeof data.reviewedBy === "string" ? data.reviewedBy : null,
+    reviewedAt: toDate(data.reviewedAt),
   };
 };
 
@@ -132,4 +140,63 @@ export const listJobsForProject = async (
 export const listJobSections = async (projectId: string): Promise<string[]> => {
   const jobs = await listJobsForProject(projectId, []);
   return [...new Set(jobs.map((job) => job.section).filter((section): section is string => Boolean(section)))].sort();
+};
+
+export const listJobsForManager = async (
+  statuses: JobStatus[] = ["waiting_review", "needs_correction", "completed"],
+): Promise<JobRecord[]> => {
+  const role = await getCurrentRole();
+  if (role !== "manager") throw new Error("Manager access is required");
+  const constraints = statuses.length > 0 ? [where("status", "in", statuses)] : [];
+  const snapshots = await getDocs(query(jobsCollection, ...constraints));
+  return snapshots.docs
+    .map(toJob)
+    .sort((left, right) => (right.updatedAt?.getTime() ?? 0) - (left.updatedAt?.getTime() ?? 0));
+};
+
+export const submitJobForReview = async (jobId: string): Promise<JobRecord> => {
+  const user = requireCurrentUser();
+  const role = await getCurrentRole();
+  if (role !== "builder") throw new Error("Only builders can submit jobs for review");
+  const job = await getDoc(doc(jobsCollection, jobId.trim()));
+  if (!job.exists()) throw new Error("Job was not found");
+  if (job.data().builderId !== user.uid) throw new Error("You can only submit your own job");
+
+  await updateDoc(job.ref, {
+    status: "waiting_review",
+    updatedAt: serverTimestamp(),
+  });
+  const updated = await getDoc(job.ref);
+  if (!updated.exists()) throw new Error("Job was not found after submission");
+  return toJob(updated);
+};
+
+export const reviewJob = async (
+  jobId: string,
+  status: "completed" | "needs_correction",
+  reviewNotes?: string | null,
+): Promise<JobRecord> => {
+  const user = requireCurrentUser();
+  const role = await getCurrentRole();
+  if (role !== "manager") throw new Error("Manager access is required");
+  if (status !== "completed" && status !== "needs_correction") {
+    throw new Error("Review status is invalid");
+  }
+
+  const job = doc(jobsCollection, jobId.trim());
+  const current = await getDoc(job);
+  if (!current.exists()) throw new Error("Job was not found");
+  if (current.data().status !== "waiting_review") {
+    throw new Error("Only jobs waiting for review can be reviewed");
+  }
+  await updateDoc(job, {
+    status,
+    reviewNotes: reviewNotes?.trim() || null,
+    reviewedBy: user.uid,
+    reviewedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  const updated = await getDoc(job);
+  if (!updated.exists()) throw new Error("Job was not found after review");
+  return toJob(updated);
 };

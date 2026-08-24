@@ -16,6 +16,7 @@
     "test:firebase": "vitest run --no-file-parallelism --dir tests/firebase",
     "test:firebase:emulator": "npm run build:functions && firebase emulators:exec --only auth,firestore,functions,storage --project demo-jobsite-jedi \"npm run test:firebase\"",
     "test:e2e:firebase": "playwright test --config=playwright.firebase.config.ts",
+    "test:e2e:firebase:emulator": "npm run build:functions && firebase emulators:exec --only auth,firestore,functions,storage --project demo-jobsite-jedi \"npm run test:e2e:firebase\"",
     "test:provider-guard": "vitest run tests/provider-guard.test.ts",
     "preview": "vite preview"
   },

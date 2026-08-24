@@ -21,42 +21,50 @@ service firebase.storage {
 
     match /jobs/{jobId}/{builderId}/{allPaths=**} {
       allow read: if isManager() || (isBuilder() && request.auth.uid == builderId);
-      allow write: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+      allow create, update: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+      allow delete: if isManager() || (isBuilder() && request.auth.uid == builderId);
     }
 
     match /jobs/{jobId}/manager/{allPaths=**} {
       allow read: if isManager() || isBuilder();
-      allow write: if isManager() && isValidUpload();
+      allow create, update: if isManager() && isValidUpload();
+      allow delete: if isManager();
     }
 
     match /dailyReports/{builderId}/{allPaths=**} {
       allow read: if isManager() || (isBuilder() && request.auth.uid == builderId);
-      allow write: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+      allow create, update: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+      allow delete: if isManager() || (isBuilder() && request.auth.uid == builderId);
     }
 
     match /invoices/{builderId}/{allPaths=**} {
       allow read: if isManager() || (isBuilder() && request.auth.uid == builderId);
-      allow write: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+      allow create, update: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+      allow delete: if isManager() || (isBuilder() && request.auth.uid == builderId);
     }
 
     match /documents/{userId}/{allPaths=**} {
       allow read: if isManager() || (isSignedIn() && request.auth.uid == userId);
-      allow write: if isManager() || (isSignedIn() && request.auth.uid == userId && isValidUpload());
+      allow create, update: if isManager() || (isSignedIn() && request.auth.uid == userId && isValidUpload());
+      allow delete: if isManager() || (isSignedIn() && request.auth.uid == userId);
     }
 
     match /materials/{builderId}/{allPaths=**} {
       allow read: if isManager() || (isBuilder() && request.auth.uid == builderId);
-      allow write: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+      allow create, update: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+      allow delete: if isManager() || (isBuilder() && request.auth.uid == builderId);
     }
 
     match /rubbish/{builderId}/{allPaths=**} {
       allow read: if isManager() || (isBuilder() && request.auth.uid == builderId);
-      allow write: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+      allow create, update: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+      allow delete: if isManager() || (isBuilder() && request.auth.uid == builderId);
     }
 
     match /voiceNotes/{builderId}/{allPaths=**} {
       allow read: if isManager() || (isBuilder() && request.auth.uid == builderId);
-      allow write: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+      allow create, update: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
+      allow delete: if isManager() || (isBuilder() && request.auth.uid == builderId);
     }
 
     match /{allPaths=**} {

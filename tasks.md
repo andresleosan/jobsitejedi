@@ -192,31 +192,85 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-008 — Migrar la primera vertical de fotos
 
-- **Prioridad:** P1 · **Estado:** pendiente · **Depende de:** T-005, T-007
+- **Prioridad:** P1 · **Estado:** aprobada · **Depende de:** T-005, T-007
 - Migrar creación, edición, revisión y completado de trabajos a Firebase Storage.
 - Mantener miniaturas, descarga y manejo de errores.
 - Verificar que las rutas antiguas no se conviertan accidentalmente en URLs públicas.
 - **Aceptación:** E2E de carga, vista, descarga y rechazo de foto ajena.
+- **Avance 2026-08-24:**
+  - Añadido `src/lib/firebase/repositories/jobPhotos.ts` para crear referencias
+    `jobPhotos`, subir original + thumbnail, listar, generar object URLs privados y borrar
+    archivos/referencias.
+  - Las rutas quedan ligadas al `jobId`, `builderId`, tipo de foto y nombre saneado; un
+    builder no puede operar sobre jobs ajenos y los archivos no generan URLs públicas.
+  - Reglas Firestore para `jobPhotos` y reglas Storage separan create/update/delete,
+    evitando leer `request.resource` durante un borrado.
+  - Suite específica Storage + repositorio → 2 archivos, 7 tests aprobados; suite Firebase
+    completa → 12 archivos, 33 tests aprobados. Typecheck, ESLint focalizado y build pasan.
+  - Añadido `JobPhotoDialog` e integrado en `JobsToDoList`: selección de hasta 10 imágenes,
+    preview, thumbnail, progreso, galería privada, borrado autorizado y feedback accesible.
+  - La UI cubre evidencia de completado para builders y `ManagerJobReviewPanel` permite
+    revisar fotos privadas y decidir `completed`/`needs_correction`.
+  - `/managers` ya valida rol Firebase y monta el dashboard manager Firebase; las rutas
+    antiguas de manager dejan de bloquear esta vertical.
+  - Las reglas limitan al builder a enviar solo `approved/needs_correction` a
+    `waiting_review`; el manager es quien decide el cierre. Suite Firebase → 12 archivos,
+    33 tests aprobados.
+  - Añadida `tests/job-photos.firebase.spec.ts` y el script
+    `npm.cmd run test:e2e:firebase:emulator`: 1 E2E aprobado contra Auth, Functions,
+    Firestore y Storage Emulator. Cubre login aislado, carga de original + thumbnail,
+    descarga privada mediante object URL, galería visible y envío a `waiting_review`.
+  - La primera corrida detectó que el router importaba Supabase legacy sin variables y dejaba
+    la pantalla en blanco; el entorno E2E ahora inyecta endpoints placeholder sin credenciales
+    ni llamadas remotas. La segunda detectó un selector que no respetaba el `aria-label`; se
+    corrigió el test para usar el nombre accesible. La UI Supabase heredada de dominios fuera
+    de fotos no se modifica todavía.
 
 ## Fase 4 — Funciones y dominios restantes
 
 ### T-009 — Implementar Cloud Functions privilegiadas
 
-- **Prioridad:** P1 · **Estado:** pendiente · **Depende de:** T-003, T-004
+- **Prioridad:** P1 · **Estado:** en-progreso · **Depende de:** T-003, T-004
 - Implementar invitaciones, asignación de roles, procesamiento de facturas,
   extracción de Excel y limpieza programada.
 - Validar entradas, rol, rutas, timeouts, reintentos finitos y errores seguros.
 - No conectar APIs de pago sin confirmación de costo y configuración de límites.
 - **Pruebas:** manager permitido, builder rechazado, payload inválido e idempotencia.
 - **Aceptación:** `functions` tiene tests ejecutables y ningún secreto aparece en logs.
+- **Avance 2026-08-24:**
+  - Implementado el primer slice de invitaciones: `createManagerInvitation`,
+    `validateInvitationCode` y `consumeInvitation` en Functions, con código aleatorio de
+    12 caracteres, hash SHA-256 persistido, expiración de 5 minutos y consumo de un solo uso.
+  - La creación y asignación de rol exigen claim manager; la validación no revela si un código
+    falló por inexistencia, expiración o estado usado; los writes directos a `invitations` siguen
+    bloqueados por Firestore Rules.
+  - Conectadas `Invite.tsx`, `Auth.tsx` y el dashboard manager al cliente callable Firebase;
+    la cuenta creada consume la invitación y recibe el rol server-side.
+  - Añadidas pruebas de código inválido y rechazo builder→crear invitación.
+  - La prueba `tests/firebase/functions.test.ts` cubre en Emulator el camino feliz
+    manager→crear invitación→builder consumir, asignación server-side del rol y segundo consumo
+    rechazado; `npm.cmd run test:firebase:emulator` queda en 13 archivos y 37 tests aprobados.
+  - El slice de invitaciones queda funcional, pero T-009 sigue en progreso hasta cubrir facturas,
+    extracción de Excel y limpieza programada, además de endurecer reintentos/timeouts y el manejo
+    compensatorio si falla la asignación de claims después de crear una cuenta.
 
 ### T-010 — Migrar inventario, herramientas y solicitudes
 
-- **Prioridad:** P1 · **Estado:** pendiente · **Depende de:** T-005, T-009
+- **Prioridad:** P1 · **Estado:** en-progreso · **Depende de:** T-005, T-009
 - Crear repositorios para materiales, uso, entregas, herramientas, checkouts y residuos.
 - Cubrir transiciones de estado, cantidades y operaciones manager-only.
 - Reemplazar listeners `postgres_changes` por listeners Firestore con cleanup.
 - **Aceptación:** escenarios builder/manager pasan con reglas y repositorios tipados.
+- **Avance 2026-08-24:**
+  - Añadido `src/lib/firebase/repositories/inventory.ts` con modelos tipados para materiales,
+    herramientas, solicitudes, checkouts y transferencias.
+  - Los checkouts y transferencias usan transacciones Firestore: un tool no puede prestarse dos
+    veces a la vez, una devolución repetida falla y una transferencia manager-only no puede dejar
+    stock negativo; el alta de transferencias builder queda pendiente de una Function privilegiada.
+  - Añadidas reglas Firestore con lectura para usuarios autenticados, gestión de catálogo solo
+    para managers y operaciones de builder limitadas a sus propias solicitudes/checkouts.
+  - Quedan para el siguiente incremento la migración de UI y los repositorios de uso de materiales,
+    entregas y residuos; la tarea no se aprueba todavía.
 
 ### T-011 — Migrar facturas, reportes y evaluaciones de riesgo
 
@@ -262,8 +316,8 @@ toquen producción necesitan confirmación explícita del operador.
     dependencia real de `useEffect` en `RubbishCollectionDialog.tsx`.
   - `npm.cmd run typecheck` → aprobado.
   - ESLint focalizado de los módulos tocados y `git diff --check` → aprobados.
-  - `npm.cmd run build` → aprobado; `npm.cmd run lint` todavía falla con 127 errores y
-    29 avisos históricos fuera de este lote y se seguirá cerrando por dominio.
+  - `npm.cmd run build` → aprobado; `npm.cmd run lint` todavía falla con 116 errores y
+    26 avisos históricos fuera de este lote y se seguirá cerrando por dominio.
 
 ### T-015 — Completar QA automatizado
 
