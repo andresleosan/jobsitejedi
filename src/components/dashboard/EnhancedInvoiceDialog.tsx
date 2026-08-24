@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
+import { storage } from "@/lib/storage";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Upload, Sparkles } from "lucide-react";
 import { z } from "zod";
@@ -83,16 +84,7 @@ const EnhancedInvoiceDialog = ({ open, onOpenChange, projectId, userId }: Enhanc
     try {
       // Upload image to Supabase Storage
       const fileName = `${Date.now()}-${selectedImage.name}`;
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from("invoices")
-        .upload(fileName, selectedImage);
-
-      if (uploadError) throw uploadError;
-
-      // Get public URL
-      const { data: { publicUrl } } = supabase.storage
-        .from("invoices")
-        .getPublicUrl(fileName);
+      await storage.upload("invoices", fileName, selectedImage);
 
       // Call edge function to process invoice
       const { data, error } = await supabase.functions.invoke("process-invoice", {
@@ -169,14 +161,10 @@ const EnhancedInvoiceDialog = ({ open, onOpenChange, projectId, userId }: Enhanc
       
       if (selectedImage) {
         const fileName = `${Date.now()}-${selectedImage.name}`;
-        const { error: uploadError } = await supabase.storage
-          .from("invoices")
-          .upload(fileName, selectedImage, {
-            cacheControl: '3600',
-            upsert: false
-          });
-
-        if (uploadError) throw uploadError;
+        await storage.upload("invoices", fileName, selectedImage, {
+          cacheControl: '3600',
+          upsert: false
+        });
 
         // Store the file path (not signed URL) so we can generate signed URLs later
         imageUrl = fileName;

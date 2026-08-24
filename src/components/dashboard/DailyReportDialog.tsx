@@ -5,6 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { storage } from "@/lib/storage";
 import { Loader2, Upload, X, Image as ImageIcon } from "lucide-react";
 
 interface DailyReportDialogProps {
@@ -81,21 +82,13 @@ const DailyReportDialog = ({ open, onOpenChange, projectId, userId }: DailyRepor
           const fileExt = photo.name.split('.').pop();
           const fileName = `${userId}/${report.id}/${Date.now()}_${index}.${fileExt}`;
 
-          const { error: uploadError } = await supabase.storage
-            .from("daily-report-photos")
-            .upload(fileName, photo);
-
-          if (uploadError) throw uploadError;
-
-          const { data: { publicUrl } } = supabase.storage
-            .from("daily-report-photos")
-            .getPublicUrl(fileName);
+          await storage.upload("daily-report-photos", fileName, photo);
 
           return supabase
             .from("daily_report_photos")
             .insert({
               report_id: report.id,
-              photo_url: publicUrl,
+              photo_url: fileName,
             });
         });
 

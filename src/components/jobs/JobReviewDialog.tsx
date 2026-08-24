@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
+import { storage } from "@/lib/storage";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Download, CheckCircle, XCircle, Users, Clock, Package } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -72,20 +73,15 @@ export const JobReviewDialog = ({ open, onOpenChange, jobId, onReviewed }: JobRe
       for (const photo of allPhotos) {
         // Try thumbnail first for faster loading
         const thumbPath = getThumbnailPath(photo.photo_url);
-        let { data: signedData } = await supabase.storage
-          .from("job-completion-photos")
-          .createSignedUrl(thumbPath, 3600);
+        let signedUrl = await storage.createSignedUrl("job-completion-photos", thumbPath, 3600);
         
         // Fall back to original if thumbnail doesn't exist
-        if (!signedData?.signedUrl) {
-          const originalResult = await supabase.storage
-            .from("job-completion-photos")
-            .createSignedUrl(photo.photo_url, 3600);
-          signedData = originalResult.data;
+        if (!signedUrl) {
+          signedUrl = await storage.createSignedUrl("job-completion-photos", photo.photo_url, 3600);
         }
         
-        if (signedData?.signedUrl) {
-          urls[photo.id] = signedData.signedUrl;
+        if (signedUrl) {
+          urls[photo.id] = signedUrl;
         }
       }
       
@@ -157,11 +153,7 @@ export const JobReviewDialog = ({ open, onOpenChange, jobId, onReviewed }: JobRe
 
   const downloadPhoto = async (photoUrl: string) => {
     try {
-      const { data, error } = await supabase.storage
-        .from("job-completion-photos")
-        .download(photoUrl);
-
-      if (error) throw error;
+      const data = await storage.download("job-completion-photos", photoUrl);
 
       const url = URL.createObjectURL(data);
       const a = document.createElement("a");

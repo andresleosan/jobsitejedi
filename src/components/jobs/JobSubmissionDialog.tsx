@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
+import { storage } from "@/lib/storage";
 import { useToast } from "@/hooks/use-toast";
 import { Camera, Upload, X, Loader2, Users } from "lucide-react";
 import { CameraCapture } from "./CameraCapture";
@@ -212,18 +213,12 @@ export const JobSubmissionDialog = ({ open, onOpenChange, jobId, projectId, onSu
         const thumbPath = getThumbnailPath(fileName);
         
         // Upload original photo
-        const { error: uploadError } = await supabase.storage
-          .from("job-completion-photos")
-          .upload(fileName, photo);
-
-        if (uploadError) throw uploadError;
+        await storage.upload("job-completion-photos", fileName, photo);
 
         // Create and upload thumbnail
         try {
           const thumbnail = await createThumbnail(photo, 150, 0.6);
-          await supabase.storage
-            .from("job-completion-photos")
-            .upload(thumbPath, thumbnail, { contentType: "image/jpeg" });
+          await storage.upload("job-completion-photos", thumbPath, thumbnail, { contentType: "image/jpeg" });
         } catch (thumbError) {
           console.warn("Thumbnail creation failed, continuing with original:", thumbError);
         }

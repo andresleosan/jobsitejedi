@@ -18,6 +18,7 @@ import { ManagerFeedbackDialog } from "@/components/jobs/ManagerFeedbackDialog";
 import { BulkJobUploadDialog } from "@/components/jobs/BulkJobUploadDialog";
 import { JobCard } from "@/components/jobs/JobCard";
 import { getThumbnailPath } from "@/lib/imageUtils";
+import { getStoragePath, storage } from "@/lib/storage";
 
 export default function ProjectDetails() {
   const { projectId } = useParams();
@@ -396,21 +397,14 @@ export default function ProjectDetails() {
             for (const photo of photos || []) {
               // Try to get thumbnail first, fall back to original
               const thumbPath = getThumbnailPath(photo.photo_url);
-              let { data: signedData } = await supabase
-                .storage
-                .from("job-completion-photos")
-                .createSignedUrl(thumbPath, 3600);
-              
+              let signedUrl = await storage.createSignedUrl("job-completion-photos", thumbPath, 3600);
+
               // If thumbnail doesn't exist, use original
-              if (!signedData?.signedUrl) {
-                const originalResult = await supabase
-                  .storage
-                  .from("job-completion-photos")
-                  .createSignedUrl(photo.photo_url, 3600);
-                signedData = originalResult.data;
+              if (!signedUrl) {
+                signedUrl = await storage.createSignedUrl("job-completion-photos", photo.photo_url, 3600);
               }
-              
-              if (signedData?.signedUrl) urls.push(signedData.signedUrl);
+
+              if (signedUrl) urls.push(signedUrl);
             }
             if (urls.length > 0) urlsMap[job.id] = urls;
           }
@@ -434,33 +428,19 @@ export default function ProjectDetails() {
         if (managerPhotos && managerPhotos.length > 0) {
           const urls: string[] = [];
           for (const photo of managerPhotos) {
-            // Extract just the path if it's a full URL
-            let photoPath = photo.photo_url;
-            if (photoPath.includes('/storage/v1/object/')) {
-              const parts = photoPath.split('/job-photos/');
-              if (parts[1]) {
-                photoPath = decodeURIComponent(parts[1]);
-              }
-            }
-            
+            const photoPath = getStoragePath(photo.photo_url, "job-photos");
+
             // Try thumbnail first
             const thumbPath = getThumbnailPath(photoPath);
-            let { data: signedData } = await supabase
-              .storage
-              .from("job-photos")
-              .createSignedUrl(thumbPath, 3600);
-            
+            let signedUrl = await storage.createSignedUrl("job-photos", thumbPath, 3600);
+
             // Fall back to original if thumbnail doesn't exist
-            if (!signedData?.signedUrl) {
-              const originalResult = await supabase
-                .storage
-                .from("job-photos")
-                .createSignedUrl(photoPath, 3600);
-              signedData = originalResult.data;
+            if (!signedUrl) {
+              signedUrl = await storage.createSignedUrl("job-photos", photoPath, 3600);
             }
-            
-            if (signedData?.signedUrl) {
-              urls.push(signedData.signedUrl);
+
+            if (signedUrl) {
+              urls.push(signedUrl);
             }
           }
           if (urls.length > 0) managerPhotoUrls[job.id] = urls;
@@ -561,20 +541,9 @@ export default function ProjectDetails() {
   const downloadPhoto = async (photoPath: string, bucket: string = "job-completion-photos") => {
     try {
       // Extract just the path if it's a full URL
-      let cleanPath = photoPath;
-      if (photoPath.includes('/storage/v1/object/')) {
-        const bucketName = bucket === "job-photos" ? "job-photos" : "job-completion-photos";
-        const parts = photoPath.split(`/${bucketName}/`);
-        if (parts[1]) {
-          cleanPath = decodeURIComponent(parts[1]);
-        }
-      }
+      const cleanPath = getStoragePath(photoPath, bucket);
 
-      const { data, error } = await supabase.storage
-        .from(bucket)
-        .download(cleanPath);
-
-      if (error) throw error;
+      const data = await storage.download(bucket, cleanPath);
 
       const url = URL.createObjectURL(data);
       const a = document.createElement("a");

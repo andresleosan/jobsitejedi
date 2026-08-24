@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
+import { storage } from "@/lib/storage";
 import { useToast } from "@/hooks/use-toast";
 import { Camera, Upload, X, Loader2, Plus } from "lucide-react";
 import { CameraCapture } from "./CameraCapture";
@@ -110,11 +111,7 @@ export const CreateJobDialog = ({ open, onOpenChange, projectId, onJobCreated }:
       // Upload photos if any
       for (const photo of photos) {
         const fileName = `${job.id}/${Date.now()}-${photo.name}`;
-        const { error: uploadError } = await supabase.storage
-          .from("job-photos")
-          .upload(fileName, photo);
-
-        if (uploadError) throw uploadError;
+        await storage.upload("job-photos", fileName, photo);
 
         // Save photo reference
         const { error: photoError } = await supabase

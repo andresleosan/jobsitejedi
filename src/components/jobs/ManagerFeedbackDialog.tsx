@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
+import { storage } from "@/lib/storage";
 import { useToast } from "@/hooks/use-toast";
 import { Camera, Upload, X, Loader2 } from "lucide-react";
 import { CameraCapture } from "./CameraCapture";
@@ -64,27 +65,17 @@ export const ManagerFeedbackDialog = ({ open, onOpenChange, jobId, onSubmitted }
         const thumbPath = getThumbnailPath(fileName);
         
         // Upload original photo
-        const { error: uploadError } = await supabase.storage
-          .from("job-photos")
-          .upload(fileName, photo);
-
-        if (uploadError) throw uploadError;
+        await storage.upload("job-photos", fileName, photo);
 
         // Create and upload thumbnail
         try {
           const thumbnail = await createThumbnail(photo, 150, 0.6);
-          await supabase.storage
-            .from("job-photos")
-            .upload(thumbPath, thumbnail, { contentType: "image/jpeg" });
+          await storage.upload("job-photos", thumbPath, thumbnail, { contentType: "image/jpeg" });
         } catch (thumbError) {
           console.warn("Thumbnail creation failed, continuing with original:", thumbError);
         }
 
-        const { data: { publicUrl } } = supabase.storage
-          .from("job-photos")
-          .getPublicUrl(fileName);
-
-        photoUrls.push(publicUrl);
+        photoUrls.push(fileName);
       }
 
       // Update job with feedback and change status to needs_correction

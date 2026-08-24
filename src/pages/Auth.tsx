@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,6 +10,8 @@ import { Loader2, HardHat, QrCode, AlertTriangle, Camera } from "lucide-react";
 import { z } from "zod";
 import { Badge } from "@/components/ui/badge";
 import { QRScannerDialog } from "@/components/auth/QRScannerDialog";
+import { useAuth } from "@/hooks/useAuth";
+import type { InvitationOperations } from "@/lib/firebase/types";
 
 // Validation schemas
 const signInSchema = z.object({
@@ -33,9 +34,12 @@ const signUpSchema = z.object({
 interface InvitationData {
   valid: boolean;
   role: "builder" | "manager";
-  invitation_id: string;
-  error_message: string | null;
+  invitationId: string;
+  errorMessage: string | null;
 }
+
+// Task 7 will provide the Cloud Functions-backed implementation.
+const invitationOperations: InvitationOperations | null = null;
 
 const Auth = () => {
   const [searchParams] = useSearchParams();
@@ -54,16 +58,16 @@ const Auth = () => {
   const [showQRScanner, setShowQRScanner] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
+  const {
+    user,
+    isLoading: isAuthLoading,
+    signIn,
+    registerBuilder,
+  } = useAuth();
 
   useEffect(() => {
-    const checkUser = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        navigate("/dashboard");
-      }
-    };
-    checkUser();
-  }, [navigate]);
+    if (!isAuthLoading && user) navigate("/dashboard");
+  }, [isAuthLoading, navigate, user]);
 
   // Validate invitation code from URL
   useEffect(() => {
@@ -81,24 +85,25 @@ const Auth = () => {
 
     setIsValidatingCode(true);
     setCodeError(null);
+
+    if (!invitationOperations) {
+      setInvitationData(null);
+      setCodeError("Invitation validation will be available after the Firebase Function migration.");
+      setIsValidatingCode(false);
+      return;
+    }
     
     try {
-      const { data, error } = await supabase.rpc("validate_invitation_code", {
-        invitation_code: code.trim().toUpperCase(),
-      });
+      const result = await invitationOperations.validateInvitationCode(code.trim().toUpperCase());
 
-      if (error) throw error;
-
-      const result = data?.[0] as InvitationData | undefined;
-      
       if (result?.valid) {
         setInvitationData(result);
         setCodeError(null);
       } else {
         setInvitationData(null);
-        setCodeError(result?.error_message || "Invalid invitation code");
+        setCodeError(result?.errorMessage || "Invalid invitation code");
       }
-    } catch (error: any) {
+    } catch {
       setInvitationData(null);
       setCodeError("Failed to validate invitation code");
     } finally {
@@ -114,6 +119,15 @@ const Auth = () => {
       toast({
         title: "Invalid Invitation",
         description: "You need a valid QR code invitation to sign up. Please contact a manager.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (invitationData.role !== "builder") {
+      toast({
+        title: "Manager registration unavailable",
+        description: "Manager accounts remain behind the Firebase Function workflow.",
         variant: "destructive",
       });
       return;
@@ -135,44 +149,21 @@ const Auth = () => {
 
     setIsLoading(true);
     try {
-      const { data: authData, error: signUpError } = await supabase.auth.signUp({
+      await registerBuilder({
         email: validatedData.email,
         password: validatedData.password,
-        options: {
-          data: {
-            full_name: validatedData.fullName,
-            phone: validatedData.phone || "",
-          },
-          emailRedirectTo: `${window.location.origin}/dashboard`,
-        },
+        fullName: validatedData.fullName,
       });
 
-      if (signUpError) throw signUpError;
-
-      if (authData.user) {
-        // Add role to user_roles table
-        const { error: roleError } = await supabase
-          .from("user_roles")
-          .insert({ user_id: authData.user.id, role: invitationData.role });
-
-        if (roleError) throw roleError;
-
-        // Mark invitation as used
-        await supabase.rpc("use_invitation", {
-          invitation_id: invitationData.invitation_id,
-          user_id: authData.user.id,
-        });
-
-        toast({
-          title: "Account created!",
-          description: `Welcome to BuildTrack Pro as a ${invitationData.role}`,
-        });
-        navigate("/dashboard");
-      }
-    } catch (error: any) {
+      toast({
+        title: "Account created!",
+        description: "Welcome to BuildTrack Pro as a builder",
+      });
+      navigate("/dashboard");
+    } catch (error) {
       toast({
         title: "Sign up failed",
-        description: error.message,
+        description: error instanceof Error ? error.message : "Unable to create account",
         variant: "destructive",
       });
     } finally {
@@ -199,22 +190,17 @@ const Auth = () => {
 
     setIsLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: validatedData.email,
-        password: validatedData.password,
-      });
-
-      if (error) throw error;
+      await signIn(validatedData.email, validatedData.password);
 
       toast({
         title: "Welcome back!",
         description: "Successfully signed in",
       });
       navigate("/dashboard");
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: "Sign in failed",
-        description: error.message,
+        description: error instanceof Error ? error.message : "Unable to sign in",
         variant: "destructive",
       });
     } finally {

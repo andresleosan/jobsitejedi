@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
+import { storage } from "@/lib/storage";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, FileText, Upload, Trash2, ExternalLink, Users } from "lucide-react";
 import { format } from "date-fns";
@@ -155,16 +156,7 @@ const ManagerRiskAssessmentDialog = ({ open, onOpenChange, userId }: ManagerRisk
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
       const filePath = `risk-assessments/${fileName}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from("documents")
-        .upload(filePath, file);
-
-      if (uploadError) throw uploadError;
-
-      // Get public URL
-      const { data: urlData } = supabase.storage
-        .from("documents")
-        .getPublicUrl(filePath);
+      await storage.upload("documents", filePath, file);
 
       // Create risk assessment record
       const { error: insertError } = await supabase
@@ -172,7 +164,7 @@ const ManagerRiskAssessmentDialog = ({ open, onOpenChange, userId }: ManagerRisk
         .insert({
           title: title.trim(),
           project_id: selectedProjectId,
-          pdf_url: urlData.publicUrl,
+          pdf_url: filePath,
           uploaded_by: userId,
         });
 

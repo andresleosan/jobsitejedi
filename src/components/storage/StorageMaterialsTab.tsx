@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { getStoragePath, storage } from "@/lib/storage";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,6 +25,7 @@ interface StorageMaterial {
   min_stock_level: number;
   notes: string | null;
   photo_url: string | null;
+  photo_display_url?: string | null;
   created_at: string;
 }
 
@@ -91,7 +93,19 @@ const StorageMaterialsTab = ({ userId }: StorageMaterialsTabProps) => {
     if (error) {
       toast({ title: "Error", description: "Failed to fetch materials", variant: "destructive" });
     } else {
-      setMaterials(data || []);
+      const materialsWithSignedUrls = await Promise.all(
+        (data || []).map(async (material) => ({
+          ...material,
+          photo_display_url: material.photo_url
+            ? await storage.createSignedUrl(
+                "storage-material-photos",
+                getStoragePath(material.photo_url, "storage-material-photos"),
+                3600,
+              )
+            : null,
+        })),
+      );
+      setMaterials(materialsWithSignedUrls);
     }
     setIsLoading(false);
   };
@@ -104,17 +118,9 @@ const StorageMaterialsTab = ({ userId }: StorageMaterialsTabProps) => {
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`;
       const filePath = `materials/${fileName}`;
       
-      const { error: uploadError } = await supabase.storage
-        .from("storage-material-photos")
-        .upload(filePath, photoFile, { contentType: "image/jpeg" });
+      await storage.upload("storage-material-photos", filePath, photoFile, { contentType: "image/jpeg" });
       
-      if (uploadError) throw uploadError;
-      
-      const { data } = supabase.storage
-        .from("storage-material-photos")
-        .getPublicUrl(filePath);
-      
-      return data.publicUrl;
+      return filePath;
     } catch (error) {
       console.error("Error uploading photo:", error);
       toast({ title: "Error", description: "Failed to upload photo", variant: "destructive" });
@@ -195,7 +201,7 @@ const StorageMaterialsTab = ({ userId }: StorageMaterialsTabProps) => {
       notes: material.notes || "",
     });
     if (material.photo_url) {
-      setPhotoPreview(material.photo_url);
+       setPhotoPreview(material.photo_display_url || null);
     }
     setIsDialogOpen(true);
   };
@@ -583,9 +589,9 @@ const StorageMaterialsTab = ({ userId }: StorageMaterialsTabProps) => {
                         {sectionMaterials.map((material) => (
                           <TableRow key={material.id}>
                             <TableCell>
-                              {material.photo_url ? (
-                                <img 
-                                  src={material.photo_url} 
+                               {material.photo_url && material.photo_display_url ? (
+                                 <img
+                                   src={material.photo_display_url}
                                   alt={material.name}
                                   className="h-8 w-8 rounded object-cover"
                                 />

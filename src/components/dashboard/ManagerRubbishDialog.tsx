@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { getStoragePath, storage } from "@/lib/storage";
 import { Loader2, Trash2, CheckCircle2, Clock, User, Building2, Image } from "lucide-react";
 import { format } from "date-fns";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -68,11 +69,24 @@ const ManagerRubbishDialog = ({ open, onOpenChange }: ManagerRubbishDialogProps)
         profiles?.forEach(p => profilesMap.set(p.id, p.full_name));
       }
 
-      const mapped = data?.map(r => ({
-        ...r,
-        project_name: (r.projects as any)?.name || "Unknown",
-        builder_name: profilesMap.get(r.user_id) || "Unknown",
-      })) || [];
+      const mapped = await Promise.all((data || []).map(async (r) => {
+        const signedPhotoUrls = await Promise.all(
+          parsePhotoUrls(r.photo_url).map((photoPath) =>
+            storage.createSignedUrl(
+              "rubbish-photos",
+              getStoragePath(photoPath, "rubbish-photos"),
+              3600,
+            ),
+          ),
+        );
+
+        return {
+          ...r,
+          photo_url: JSON.stringify(signedPhotoUrls.filter((url): url is string => Boolean(url))),
+          project_name: (r.projects as any)?.name || "Unknown",
+          builder_name: profilesMap.get(r.user_id) || "Unknown",
+        };
+      }));
 
       setRequests(mapped);
     } catch (error: any) {

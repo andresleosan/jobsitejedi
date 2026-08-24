@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { supabase } from "@/integrations/supabase/client";
+import { storage } from "@/lib/storage";
 import { Loader2, ExternalLink, Download, FileText, User, Calendar, Building2 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
@@ -110,8 +111,7 @@ const InvoicesDetailDialog = ({ open, onOpenChange }: InvoicesDetailDialogProps)
   };
 
   const getSignedUrl = async (path: string) => {
-    const { data } = await supabase.storage.from("invoices").createSignedUrl(path, 3600);
-    return data?.signedUrl;
+    return storage.createSignedUrl("invoices", path, 3600);
   };
 
   const handleViewImage = async (imageUrl: string) => {

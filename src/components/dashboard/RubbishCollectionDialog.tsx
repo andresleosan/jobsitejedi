@@ -5,6 +5,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { getStoragePath, storage } from "@/lib/storage";
+import { storage } from "@/lib/storage";
 import { Loader2, Camera, Trash2, X, CheckCircle2, Building2, Plus } from "lucide-react";
 import { format } from "date-fns";
 
@@ -67,10 +69,23 @@ const RubbishCollectionDialog = ({ open, onOpenChange, projectId, userId }: Rubb
 
       if (error) throw error;
 
-      const mapped = requests?.map(r => ({
-        ...r,
-        project_name: (r.projects as any)?.name || "Unknown"
-      })) || [];
+      const mapped = await Promise.all((requests || []).map(async (r) => {
+        const signedPhotoUrls = await Promise.all(
+          parsePhotoUrls(r.photo_url).map((photoPath) =>
+            storage.createSignedUrl(
+              "rubbish-photos",
+              getStoragePath(photoPath, "rubbish-photos"),
+              3600,
+            ),
+          ),
+        );
+
+        return {
+          ...r,
+          photo_url: JSON.stringify(signedPhotoUrls.filter((url): url is string => Boolean(url))),
+          project_name: (r.projects as any)?.name || "Unknown",
+        };
+      }));
 
       setMyRequests(mapped);
     } catch (error: any) {
@@ -162,17 +177,9 @@ const RubbishCollectionDialog = ({ open, onOpenChange, projectId, userId }: Rubb
         const fileExt = photo.name.split('.').pop();
         const fileName = `${userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
         
-        const { error: uploadError } = await supabase.storage
-          .from("rubbish-photos")
-          .upload(fileName, photo);
+        await storage.upload("rubbish-photos", fileName, photo);
 
-        if (uploadError) throw uploadError;
-
-        const { data: { publicUrl } } = supabase.storage
-          .from("rubbish-photos")
-          .getPublicUrl(fileName);
-
-        uploadedUrls.push(publicUrl);
+        uploadedUrls.push(fileName);
       }
 
       // Store URLs as JSON array string

@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
@@ -8,43 +7,40 @@ import { ArrowLeft, QrCode, Users, HardHat, Clock, Loader2, Copy, Check, Refresh
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { useAuth } from "@/hooks/useAuth";
+import type { InvitationOperations } from "@/lib/firebase/types";
+import QRCode from "qrcode";
+
+// Task 7 will provide the Cloud Functions-backed implementation.
+const invitationOperations: InvitationOperations | null = null;
 
 const Invite = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [role, setRole] = useState<"builder" | "manager">("builder");
   const [invitationCode, setInvitationCode] = useState<string | null>(null);
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<Date | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<number>(0);
   const [copied, setCopied] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { user, isLoading: isAuthLoading } = useAuth();
 
   // Check auth and role
   useEffect(() => {
-    const checkAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        navigate("/auth");
-        return;
-      }
+    if (isAuthLoading) return;
+    if (!user) {
+      navigate("/auth");
+      return;
+    }
+    if (user.role !== "manager") {
+      navigate("/builders");
+      return;
+    }
 
-      const { data: roleData } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", session.user.id)
-        .maybeSingle();
-
-      if (!roleData || roleData.role !== "manager") {
-        navigate("/builders");
-        return;
-      }
-
-      setIsLoading(false);
-    };
-
-    checkAuth();
-  }, [navigate]);
+    setIsLoading(false);
+  }, [isAuthLoading, navigate, user]);
 
   // Timer countdown
   useEffect(() => {
@@ -56,6 +52,7 @@ const Invite = () => {
 
       if (remaining === 0) {
         setInvitationCode(null);
+        setQrCodeDataUrl(null);
         setExpiresAt(null);
       }
     }, 1000);
@@ -66,36 +63,36 @@ const Invite = () => {
   const generateInvitation = async () => {
     setIsGenerating(true);
     try {
-      // Generate a random code
-      const code = crypto.randomUUID().replace(/-/g, "").substring(0, 12).toUpperCase();
-      const expires = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
-
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        throw new Error("Not authenticated");
+      if (!invitationOperations) {
+        toast({
+          title: "Invitations unavailable",
+          description: "Invitation creation will be available after the Firebase Function migration.",
+          variant: "destructive",
+        });
+        return;
       }
 
-      const { error } = await supabase.from("invitations").insert({
-        code,
-        role,
-        created_by: session.user.id,
-        expires_at: expires.toISOString(),
+      const invitation = await invitationOperations.createInvitation({ role });
+      const signupUrl = `${window.location.origin}/auth?code=${encodeURIComponent(invitation.code)}`;
+      const qrDataUrl = await QRCode.toDataURL(signupUrl, {
+        errorCorrectionLevel: "M",
+        margin: 1,
+        width: 300,
       });
 
-      if (error) throw error;
-
-      setInvitationCode(code);
-      setExpiresAt(expires);
+      setInvitationCode(invitation.code);
+      setQrCodeDataUrl(qrDataUrl);
+      setExpiresAt(invitation.expiresAt);
       setTimeRemaining(300); // 5 minutes in seconds
 
       toast({
         title: "Invitation created!",
         description: `Valid for 5 minutes for ${role} role`,
       });
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: "Failed to generate invitation",
-        description: error.message,
+        description: error instanceof Error ? error.message : "Unable to generate invitation",
         variant: "destructive",
       });
     } finally {
@@ -121,12 +118,6 @@ const Invite = () => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
-
-  const generateQRCodeUrl = (code: string) => {
-    const signupUrl = `${window.location.origin}/auth?code=${code}`;
-    // Using QR Code API
-    return `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(signupUrl)}&bgcolor=ffffff&color=000000&format=svg`;
   };
 
   if (isLoading) {
@@ -215,7 +206,7 @@ const Invite = () => {
                 <div className="flex justify-center">
                   <div className="relative p-4 bg-white rounded-2xl shadow-lg">
                     <img
-                      src={generateQRCodeUrl(invitationCode)}
+                      src={qrCodeDataUrl ?? ""}
                       alt="Invitation QR Code"
                       className="w-64 h-64"
                     />
@@ -254,9 +245,10 @@ const Invite = () => {
 
                 {/* Generate New Button */}
                 <Button 
-                  onClick={() => {
-                    setInvitationCode(null);
-                    setExpiresAt(null);
+                   onClick={() => {
+                     setInvitationCode(null);
+                     setQrCodeDataUrl(null);
+                     setExpiresAt(null);
                   }}
                   variant="outline"
                   className="w-full"

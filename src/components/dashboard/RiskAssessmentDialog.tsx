@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
+import { getStoragePath, storage } from "@/lib/storage";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, FileText, Check, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -114,8 +115,18 @@ const RiskAssessmentDialog = ({ open, onOpenChange, projectId, userId }: RiskAss
     }
   };
 
-  const openPdf = (url: string) => {
-    window.open(url, "_blank");
+  const openPdf = async (url: string) => {
+    const path = getStoragePath(url, "documents");
+    const signedUrl = await storage.createSignedUrl("documents", path, 3600);
+    if (signedUrl) {
+      window.open(signedUrl, "_blank");
+    } else {
+      toast({
+        title: "Error",
+        description: "Failed to open risk assessment",
+        variant: "destructive",
+      });
+    }
   };
 
   return (

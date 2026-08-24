@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
+import { storage } from "@/lib/storage";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Plus, Upload, Camera, X } from "lucide-react";
 import { CameraCapture } from "./CameraCapture";
@@ -75,12 +76,10 @@ export const EditJobDialog = ({ open, onOpenChange, job, onJobUpdated }: EditJob
     if (data) {
       const photosWithUrls = await Promise.all(
         data.map(async (photo) => {
-          const { data: signedData } = await supabase.storage
-            .from("job-photos")
-            .createSignedUrl(photo.photo_url, 3600);
+          const signedUrl = await storage.createSignedUrl("job-photos", photo.photo_url, 3600);
           return {
             id: photo.id,
-            url: signedData?.signedUrl || "",
+            url: signedUrl || "",
           };
         })
       );
@@ -163,18 +162,12 @@ export const EditJobDialog = ({ open, onOpenChange, job, onJobUpdated }: EditJob
       const thumbFileName = `${job.id}/thumbs/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
 
       // Upload original
-      const { error: uploadError } = await supabase.storage
-        .from("job-photos")
-        .upload(fileName, photo.file);
-
-      if (uploadError) throw uploadError;
+      await storage.upload("job-photos", fileName, photo.file);
 
       // Create and upload thumbnail
       try {
         const thumbnail = await createThumbnail(photo.file);
-        await supabase.storage
-          .from("job-photos")
-          .upload(thumbFileName, thumbnail);
+        await storage.upload("job-photos", thumbFileName, thumbnail);
       } catch (thumbError) {
         console.error("Failed to create thumbnail:", thumbError);
       }

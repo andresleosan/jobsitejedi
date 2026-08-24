@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Image, X, Loader2, Download } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { getStoragePath, storage } from "@/lib/storage";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { getThumbnailPath } from "@/lib/imageUtils";
@@ -26,14 +26,7 @@ export const ManagerReferencePhotosDialog = ({
   const { toast } = useToast();
 
   const extractPhotoPath = (photoUrl: string) => {
-    // Extract just the path if it's a full URL
-    if (photoUrl.includes('/storage/v1/object/')) {
-      const parts = photoUrl.split('/job-photos/');
-      if (parts[1]) {
-        return decodeURIComponent(parts[1]);
-      }
-    }
-    return photoUrl;
+    return getStoragePath(photoUrl, "job-photos");
   };
 
   useEffect(() => {
@@ -51,20 +44,15 @@ export const ManagerReferencePhotosDialog = ({
         
         // Try thumbnail first for faster loading
         const thumbPath = getThumbnailPath(photoPath);
-        let { data, error } = await supabase.storage
-          .from('job-photos')
-          .createSignedUrl(thumbPath, 3600);
+        let signedUrl = await storage.createSignedUrl("job-photos", thumbPath, 3600);
 
         // Fall back to original if thumbnail doesn't exist
-        if (!data?.signedUrl || error) {
-          const originalResult = await supabase.storage
-            .from('job-photos')
-            .createSignedUrl(photoPath, 3600);
-          data = originalResult.data;
+        if (!signedUrl) {
+          signedUrl = await storage.createSignedUrl("job-photos", photoPath, 3600);
         }
 
-        if (data?.signedUrl) {
-          urls[photo.id] = data.signedUrl;
+        if (signedUrl) {
+          urls[photo.id] = signedUrl;
         }
       }
 
@@ -82,11 +70,7 @@ export const ManagerReferencePhotosDialog = ({
       setDownloading(photo.id);
       const photoPath = extractPhotoPath(photo.photo_url);
       
-      const { data, error } = await supabase.storage
-        .from("job-photos")
-        .download(photoPath);
-
-      if (error) throw error;
+      const data = await storage.download("job-photos", photoPath);
 
       const url = URL.createObjectURL(data);
       const a = document.createElement("a");
