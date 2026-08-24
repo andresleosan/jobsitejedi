@@ -1,5 +1,12 @@
 import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import {
+  createStorageTool,
+  deleteStorageTool,
+  subscribeToStorageTools,
+  updateStorageTool,
+  type StorageToolRecord,
+  type ToolStatus,
+} from "@/lib/firebase/repositories/inventory";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -22,6 +29,18 @@ interface StorageTool {
   notes: string | null;
   created_at: string;
 }
+
+const toStorageTool = (tool: StorageToolRecord): StorageTool => ({
+  id: tool.id,
+  name: tool.name,
+  category: tool.category,
+  section: tool.section,
+  serial_number: tool.serialNumber,
+  condition: tool.condition ?? "good",
+  status: tool.status,
+  notes: tool.notes,
+  created_at: tool.createdAt?.toISOString() ?? "",
+});
 
 interface StorageToolsTabProps {
   userId: string;
@@ -54,39 +73,23 @@ const StorageToolsTab = ({ userId }: StorageToolsTabProps) => {
   const { toast } = useToast();
 
   useEffect(() => {
-    fetchTools();
-
-    // Real-time subscription for tool updates
-    const channel = supabase
-      .channel('storage-tools-changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'storage_tools' },
-        () => {
-          fetchTools();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
-
-  const fetchTools = async () => {
-    const { data, error } = await supabase
-      .from("storage_tools")
-      .select("*")
-      .order("category", { ascending: true })
-      .order("name", { ascending: true });
-
-    if (error) {
-      toast({ title: "Error", description: "Failed to fetch tools", variant: "destructive" });
-    } else {
-      setTools(data || []);
+    if (!userId.trim()) {
+      setIsLoading(false);
+      return;
     }
-    setIsLoading(false);
-  };
+    const unsubscribe = subscribeToStorageTools(
+      (records) => {
+        setTools(records.map(toStorageTool));
+        setIsLoading(false);
+      },
+      () => {
+        toast({ title: "Error", description: "Failed to fetch tools", variant: "destructive" });
+        setIsLoading(false);
+      },
+    );
+
+    return unsubscribe;
+  }, [toast, userId]);
 
   const handleSubmit = async () => {
     if (!formData.name.trim()) {
@@ -95,44 +98,36 @@ const StorageToolsTab = ({ userId }: StorageToolsTabProps) => {
     }
 
     if (editingTool) {
-      const { error } = await supabase
-        .from("storage_tools")
-        .update({
+      try {
+        await updateStorageTool(editingTool.id, {
           name: formData.name,
           category: formData.category,
           section: formData.section || null,
-          serial_number: formData.serial_number || null,
-          condition: formData.condition,
-          status: formData.status,
+          serialNumber: formData.serial_number || null,
+          condition: formData.condition || null,
+          status: formData.status as ToolStatus,
           notes: formData.notes || null,
-        })
-        .eq("id", editingTool.id);
-
-      if (error) {
-        toast({ title: "Error", description: "Failed to update tool", variant: "destructive" });
-      } else {
+        });
         toast({ title: "Success", description: "Tool updated" });
         resetForm();
+      } catch {
+        toast({ title: "Error", description: "Failed to update tool", variant: "destructive" });
       }
     } else {
-      const { error } = await supabase
-        .from("storage_tools")
-        .insert({
+      try {
+        await createStorageTool({
           name: formData.name,
           category: formData.category,
           section: formData.section || null,
-          serial_number: formData.serial_number || null,
-          condition: formData.condition,
-          status: formData.status,
+          serialNumber: formData.serial_number || null,
+          condition: formData.condition || null,
+          status: formData.status as ToolStatus,
           notes: formData.notes || null,
-          created_by: userId,
         });
-
-      if (error) {
-        toast({ title: "Error", description: "Failed to add tool", variant: "destructive" });
-      } else {
         toast({ title: "Success", description: "Tool added to storage" });
         resetForm();
+      } catch {
+        toast({ title: "Error", description: "Failed to add tool", variant: "destructive" });
       }
     }
   };
@@ -152,11 +147,11 @@ const StorageToolsTab = ({ userId }: StorageToolsTabProps) => {
   };
 
   const handleDelete = async (id: string) => {
-    const { error } = await supabase.from("storage_tools").delete().eq("id", id);
-    if (error) {
-      toast({ title: "Error", description: "Failed to delete tool", variant: "destructive" });
-    } else {
+    try {
+      await deleteStorageTool(id);
       toast({ title: "Success", description: "Tool deleted" });
+    } catch {
+      toast({ title: "Error", description: "Failed to delete tool", variant: "destructive" });
     }
   };
 

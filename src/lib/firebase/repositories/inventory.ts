@@ -5,6 +5,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   query,
   runTransaction,
   serverTimestamp,
@@ -384,6 +385,24 @@ export const listStorageTools = async (availableOnly = false): Promise<StorageTo
   return snapshots.docs.map(toTool).sort((a, b) => a.name.localeCompare(b.name));
 };
 
+export const subscribeToStorageTools = (
+  onChange: (tools: StorageToolRecord[]) => void,
+  onError: (error: Error) => void,
+  availableOnly = false,
+): (() => void) => {
+  requireCurrentUser();
+  const source = availableOnly
+    ? query(toolsCollection, where("status", "==", "available"))
+    : toolsCollection;
+  return onSnapshot(
+    source,
+    (snapshot) => {
+      onChange(snapshot.docs.map(toTool).sort((a, b) => a.name.localeCompare(b.name)));
+    },
+    (error) => onError(error instanceof Error ? error : new Error("Unable to load tools")),
+  );
+};
+
 export const createStorageTool = async (input: StorageToolInput) => {
   await requireManager();
   const user = requireCurrentUser();
@@ -422,6 +441,16 @@ export const updateStorageTool = async (id: string, input: StorageToolInput) => 
   const updated = await getDoc(reference);
   if (!updated.exists()) throw new Error("Tool was not found after update");
   return toTool(updated);
+};
+
+export const deleteStorageTool = async (id: string): Promise<void> => {
+  await requireManager();
+  const reference = doc(toolsCollection, requireText(id, "Tool id"));
+  const current = await getDoc(reference);
+  if (current.exists() && current.data().status === "checked_out") {
+    throw new Error("A checked out tool cannot be deleted");
+  }
+  await deleteDoc(reference);
 };
 
 export const createToolRequest = async (input: {

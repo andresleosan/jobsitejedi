@@ -278,6 +278,10 @@ toquen producción necesitan confirmación explícita del operador.
   - `StorageMaterialsTab` migrada a los repositorios Firebase y Storage privado: CRUD de catálogo,
     filtros, stock mínimo, fotos con object URLs temporales y cleanup al desmontar; no conserva
     imports Supabase. Build aprobado y E2E existente de fotos → 1 test aprobado.
+  - `StorageToolsTab` migrada a Firestore mediante `subscribeToStorageTools` con cleanup, y a
+    repositorio tipado para altas, ediciones y borrado seguro; no conserva imports Supabase ni
+    listeners `postgres_changes`. Typecheck, ESLint focalizado, build y Emulator Firebase (13
+    archivos, 38 tests) aprobados. Falta cubrir esta UI con E2E específico.
 
 ### T-011 — Migrar facturas, reportes y evaluaciones de riesgo
 
