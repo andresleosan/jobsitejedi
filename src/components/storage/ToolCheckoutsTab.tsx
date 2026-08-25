@@ -1,143 +1,113 @@
-import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { useEffect, useMemo, useState } from "react";
+import { format } from "date-fns";
+import { CheckCircle, Clock, Loader2, RotateCcw } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, RotateCcw, Clock, CheckCircle } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { format } from "date-fns";
+import {
+  returnTool,
+  subscribeToStorageTools,
+  subscribeToToolCheckouts,
+  type StorageToolRecord,
+  type ToolCheckoutRecord,
+} from "@/lib/firebase/repositories/inventory";
+import { listProjects, type ProjectRecord } from "@/lib/firebase/repositories/projects";
 
-interface ToolCheckout {
-  id: string;
-  tool_id: string;
-  project_id: string;
-  checked_out_by: string;
-  checked_out_at: string;
-  expected_return_date: string | null;
-  returned_at: string | null;
-  returned_by: string | null;
-  condition_on_return: string | null;
-  notes: string | null;
-  storage_tools?: {
-    name: string;
-    category: string;
-    serial_number: string | null;
-  } | null;
-  projects?: {
-    name: string;
-  } | null;
-}
+type CheckoutFilter = "active" | "returned" | "all";
+
+const formatDateTime = (value: Date | null) => value ? format(value, "MMM d, yyyy h:mm a") : "-";
+const shortUserId = (value: string) => value.length > 12 ? `${value.slice(0, 8)}…` : value;
+
 const ToolCheckoutsTab = () => {
-  const [checkouts, setCheckouts] = useState<ToolCheckout[]>([]);
+  const [checkouts, setCheckouts] = useState<ToolCheckoutRecord[]>([]);
+  const [tools, setTools] = useState<StorageToolRecord[]>([]);
+  const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [filter, setFilter] = useState<string>("active");
+  const [busyCheckoutId, setBusyCheckoutId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<CheckoutFilter>("active");
   const { toast } = useToast();
 
   useEffect(() => {
-    fetchCheckouts();
+    let disposed = false;
+    let unsubscribeCheckouts = () => undefined;
+    const unsubscribeTools = subscribeToStorageTools(
+      setTools,
+      () => toast({ title: "Error", description: "Failed to load tool details", variant: "destructive" }),
+    );
 
-    // Real-time subscription for checkout updates
-    const channel = supabase
-      .channel('tool-checkouts-changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'tool_checkouts' },
-        () => {
-          fetchCheckouts();
+    void listProjects()
+      .then((records) => {
+        if (!disposed) setProjects(records);
+      })
+      .catch(() => toast({ title: "Error", description: "Failed to load project details", variant: "destructive" }));
+
+    void subscribeToToolCheckouts(
+      (records) => {
+        if (!disposed) {
+          setCheckouts(records);
+          setIsLoading(false);
         }
-      )
-      .subscribe();
+      },
+      () => {
+        if (!disposed) setIsLoading(false);
+        toast({ title: "Error", description: "Failed to fetch checkouts", variant: "destructive" });
+      },
+    ).then((unsubscribe) => {
+      if (disposed) unsubscribe();
+      else unsubscribeCheckouts = unsubscribe;
+    }).catch(() => {
+      if (!disposed) setIsLoading(false);
+      toast({ title: "Error", description: "Failed to fetch checkouts", variant: "destructive" });
+    });
 
     return () => {
-      supabase.removeChannel(channel);
+      disposed = true;
+      unsubscribeTools();
+      unsubscribeCheckouts();
     };
-  }, [filter]);
+  }, [toast]);
 
-  const fetchCheckouts = async () => {
-    let query = supabase
-      .from("tool_checkouts")
-      .select(`
-        *,
-        storage_tools (name, category, serial_number),
-        projects (name)
-      `)
-      .order("checked_out_at", { ascending: false });
+  const toolById = useMemo(() => new Map(tools.map((tool) => [tool.id, tool])), [tools]);
+  const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
+  const visibleCheckouts = checkouts.filter((checkout) =>
+    filter === "all" || (filter === "active" ? !checkout.returnedAt : Boolean(checkout.returnedAt)));
+  const activeCount = checkouts.filter((checkout) => !checkout.returnedAt).length;
 
-    if (filter === "active") {
-      query = query.is("returned_at", null);
-    } else if (filter === "returned") {
-      query = query.not("returned_at", "is", null);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      console.error("Error fetching checkouts:", error);
-      toast({ title: "Error", description: "Failed to fetch checkouts", variant: "destructive" });
-    } else {
-      setCheckouts(data || []);
-    }
-    setIsLoading(false);
-  };
-
-  const handleReturn = async (checkout: ToolCheckout) => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return;
-
-    // Update checkout record
-    const { error: checkoutError } = await supabase
-      .from("tool_checkouts")
-      .update({
-        returned_at: new Date().toISOString(),
-        returned_by: session.user.id,
-        condition_on_return: "good",
-      })
-      .eq("id", checkout.id);
-
-    if (checkoutError) {
-      toast({ title: "Error", description: "Failed to return tool", variant: "destructive" });
-      return;
-    }
-
-    // Update tool status back to available
-    const { error: toolError } = await supabase
-      .from("storage_tools")
-      .update({ status: "available" })
-      .eq("id", checkout.tool_id);
-
-    if (toolError) {
-      toast({ title: "Warning", description: "Tool returned but status not updated", variant: "destructive" });
-    } else {
-      toast({ title: "Success", description: "Tool returned to storage" });
+  const handleReturn = async (checkout: ToolCheckoutRecord) => {
+    setBusyCheckoutId(checkout.id);
+    try {
+      await returnTool({ checkoutId: checkout.id, conditionOnReturn: "good" });
+      toast({ title: "Tool returned", description: "The tool is available in storage again." });
+    } catch {
+      toast({ title: "Return failed", description: "The tool could not be returned.", variant: "destructive" });
+    } finally {
+      setBusyCheckoutId(null);
     }
   };
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-12">
+      <div className="flex items-center justify-center py-12" role="status" aria-label="Loading tool checkouts">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
 
-  const activeCount = checkouts.filter(c => !c.returned_at).length;
-
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <CardTitle className="flex flex-wrap items-center gap-2">
               <Clock className="h-5 w-5" />
               Tool Checkouts
-              {activeCount > 0 && (
-                <Badge variant="destructive">{activeCount} Active</Badge>
-              )}
+              {activeCount > 0 && <Badge variant="destructive">{activeCount} Active</Badge>}
             </CardTitle>
-            <Select value={filter} onValueChange={setFilter}>
-              <SelectTrigger className="w-[150px]">
+            <Select value={filter} onValueChange={(value) => setFilter(value as CheckoutFilter)}>
+              <SelectTrigger className="w-full sm:w-[150px]" aria-label="Filter tool checkouts">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -149,10 +119,10 @@ const ToolCheckoutsTab = () => {
           </div>
         </CardHeader>
         <CardContent>
-          {checkouts.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">No checkouts found</p>
+          {visibleCheckouts.length === 0 ? (
+            <p className="py-8 text-center text-muted-foreground">No checkouts found</p>
           ) : (
-            <div className="rounded-lg border overflow-hidden">
+            <div className="overflow-x-auto rounded-lg border">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -166,59 +136,52 @@ const ToolCheckoutsTab = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {checkouts.map((checkout) => (
-                    <TableRow key={checkout.id}>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{checkout.storage_tools?.name}</p>
+                  {visibleCheckouts.map((checkout) => {
+                    const tool = toolById.get(checkout.toolId);
+                    const project = projectById.get(checkout.projectId);
+                    return (
+                      <TableRow key={checkout.id}>
+                        <TableCell>
+                          <p className="font-medium">{tool?.name || "Unknown tool"}</p>
                           <p className="text-xs text-muted-foreground">
-                            {checkout.storage_tools?.category}
-                            {checkout.storage_tools?.serial_number && ` • ${checkout.storage_tools.serial_number}`}
+                            {tool?.category || "Uncategorized"}{tool?.serialNumber ? ` · ${tool.serialNumber}` : ""}
                           </p>
-                        </div>
-                      </TableCell>
-                      <TableCell>{checkout.projects?.name}</TableCell>
-                      <TableCell>-</TableCell>
-                      <TableCell>
-                        {format(new Date(checkout.checked_out_at), "MMM d, yyyy h:mm a")}
-                      </TableCell>
-                      <TableCell>
-                        {checkout.expected_return_date
-                          ? format(new Date(checkout.expected_return_date), "MMM d, yyyy")
-                          : "-"}
-                      </TableCell>
-                      <TableCell>
-                        {checkout.returned_at ? (
-                          <Badge className="bg-green-500">
-                            <CheckCircle className="h-3 w-3 mr-1" />
-                            Returned
-                          </Badge>
-                        ) : (
-                          <Badge variant="destructive">
-                            <Clock className="h-3 w-3 mr-1" />
-                            Checked Out
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {!checkout.returned_at && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleReturn(checkout)}
-                          >
-                            <RotateCcw className="h-4 w-4 mr-1" />
-                            Return
-                          </Button>
-                        )}
-                        {checkout.returned_at && (
-                          <span className="text-sm text-muted-foreground">
-                            {format(new Date(checkout.returned_at), "MMM d, h:mm a")}
-                          </span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        </TableCell>
+                        <TableCell>{project?.name || checkout.projectId}</TableCell>
+                        <TableCell>{checkout.checkedOutByName || shortUserId(checkout.checkedOutBy)}</TableCell>
+                        <TableCell>{formatDateTime(checkout.checkedOutAt)}</TableCell>
+                        <TableCell>
+                          {checkout.expectedReturnDate
+                            ? format(new Date(`${checkout.expectedReturnDate}T00:00:00`), "MMM d, yyyy")
+                            : "-"}
+                        </TableCell>
+                        <TableCell>
+                          {checkout.returnedAt ? (
+                            <Badge className="bg-green-600"><CheckCircle className="mr-1 h-3 w-3" />Returned</Badge>
+                          ) : (
+                            <Badge variant="destructive"><Clock className="mr-1 h-3 w-3" />Checked Out</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {!checkout.returnedAt ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={busyCheckoutId === checkout.id}
+                              onClick={() => void handleReturn(checkout)}
+                            >
+                              {busyCheckoutId === checkout.id
+                                ? <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                                : <RotateCcw className="mr-1 h-4 w-4" />}
+                              Return
+                            </Button>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">{formatDateTime(checkout.returnedAt)}</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>

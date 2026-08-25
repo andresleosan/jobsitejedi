@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { BriefcaseBusiness, LogOut, Plus, Users } from "lucide-react";
+import { BriefcaseBusiness, LogOut, Plus, Users, Warehouse } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
@@ -98,16 +98,24 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
                 <CardTitle>Projects</CardTitle>
                 <CardDescription>Manage Firebase projects and their active work.</CardDescription>
               </div>
-              <Button onClick={() => setIsCreateProjectOpen(true)}>
-                <Plus className="h-4 w-4" />
-                New project
-              </Button>
-              <Button variant="outline" asChild>
-                <Link to="/invite">
-                  <Users className="h-4 w-4" />
-                  Invite member
-                </Link>
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => setIsCreateProjectOpen(true)}>
+                  <Plus className="h-4 w-4" />
+                  New project
+                </Button>
+                <Button variant="outline" asChild>
+                  <Link to="/storage">
+                    <Warehouse className="h-4 w-4" />
+                    Storage
+                  </Link>
+                </Button>
+                <Button variant="outline" asChild>
+                  <Link to="/invite">
+                    <Users className="h-4 w-4" />
+                    Invite member
+                  </Link>
+                </Button>
+              </div>
             </div>
           </CardHeader>
           <CardContent>

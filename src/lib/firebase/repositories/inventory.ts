@@ -61,6 +61,7 @@ export interface ToolRequestRecord {
   toolId: string;
   projectId: string;
   requestedBy: string;
+  requestedByName: string | null;
   requestedAt: Date | null;
   status: ToolRequestStatus;
   notes: string | null;
@@ -73,6 +74,7 @@ export interface ToolRequestRecord {
   returnedBy: string | null;
   returnedAt: Date | null;
   rejectionReason: string | null;
+  checkoutId: string | null;
   createdAt: Date | null;
   updatedAt: Date | null;
 }
@@ -82,6 +84,9 @@ export interface ToolCheckoutRecord {
   toolId: string;
   projectId: string;
   checkedOutBy: string;
+  checkedOutByName: string | null;
+  issuedBy: string;
+  toolRequestId: string | null;
   checkedOutAt: Date | null;
   expectedReturnDate: string | null;
   returnedAt: Date | null;
@@ -239,6 +244,7 @@ const toRequest = (snapshot: { id: string; data: () => DocumentData }): ToolRequ
     toolId: String(data.toolId ?? ""),
     projectId: String(data.projectId ?? ""),
     requestedBy: String(data.requestedBy ?? ""),
+    requestedByName: typeof data.requestedByName === "string" ? data.requestedByName : null,
     requestedAt: toDate(data.requestedAt),
     status: statuses.includes(data.status) ? data.status : "pending",
     notes: typeof data.notes === "string" ? data.notes : null,
@@ -251,6 +257,7 @@ const toRequest = (snapshot: { id: string; data: () => DocumentData }): ToolRequ
     returnedBy: typeof data.returnedBy === "string" ? data.returnedBy : null,
     returnedAt: toDate(data.returnedAt),
     rejectionReason: typeof data.rejectionReason === "string" ? data.rejectionReason : null,
+    checkoutId: typeof data.checkoutId === "string" ? data.checkoutId : null,
     createdAt: toDate(data.createdAt),
     updatedAt: toDate(data.updatedAt),
   };
@@ -263,6 +270,9 @@ const toCheckout = (snapshot: { id: string; data: () => DocumentData }): ToolChe
     toolId: String(data.toolId ?? ""),
     projectId: String(data.projectId ?? ""),
     checkedOutBy: String(data.checkedOutBy ?? ""),
+    checkedOutByName: typeof data.checkedOutByName === "string" ? data.checkedOutByName : null,
+    issuedBy: String(data.issuedBy ?? ""),
+    toolRequestId: typeof data.toolRequestId === "string" ? data.toolRequestId : null,
     checkedOutAt: toDate(data.checkedOutAt),
     expectedReturnDate: typeof data.expectedReturnDate === "string" ? data.expectedReturnDate : null,
     returnedAt: toDate(data.returnedAt),
@@ -466,9 +476,10 @@ export const createToolRequest = async (input: {
   if (!tool.exists() || tool.data().status !== "available") throw new Error("Tool is not available");
   const reference = await addDoc(requestsCollection, {
     toolId, projectId, requestedBy: user.uid, requestedAt: serverTimestamp(), status: "pending",
+    requestedByName: user.displayName?.trim() || null,
     notes: input.notes?.trim() || null, approvedBy: null, approvedAt: null, pickedUpBy: null,
     pickedUpAt: null, deliveredBy: null, deliveredAt: null, returnedBy: null, returnedAt: null,
-    rejectionReason: null, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    rejectionReason: null, checkoutId: null, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
   });
   const created = await getDoc(reference);
   if (!created.exists()) throw new Error("Tool request was not created");
@@ -486,6 +497,34 @@ export const listToolRequests = async (statuses?: ToolRequestStatus[]) => {
     (b.requestedAt?.getTime() ?? 0) - (a.requestedAt?.getTime() ?? 0));
 };
 
+export const subscribeToToolRequests = async (
+  onChange: (requests: ToolRequestRecord[]) => void,
+  onError: (error: Error) => void,
+  options: { scope: "mine" | "all"; statuses?: ToolRequestStatus[] },
+): Promise<() => void> => {
+  const user = requireCurrentUser();
+  const statuses = [...new Set(options.statuses ?? [])];
+  if (statuses.length > 10) throw new Error("Too many request statuses");
+  if (options.scope === "all") await requireManager();
+  const source = options.scope === "mine"
+    ? query(requestsCollection, where("requestedBy", "==", user.uid))
+    : statuses.length > 0
+      ? query(requestsCollection, where("status", "in", statuses))
+      : requestsCollection;
+
+  return onSnapshot(
+    source,
+    (snapshot) => {
+      const records = snapshot.docs
+        .map(toRequest)
+        .filter((request) => options.scope === "all" || statuses.length === 0 || statuses.includes(request.status))
+        .sort((a, b) => (b.requestedAt?.getTime() ?? 0) - (a.requestedAt?.getTime() ?? 0));
+      onChange(records);
+    },
+    (error) => onError(error instanceof Error ? error : new Error("Unable to load tool requests")),
+  );
+};
+
 export const updateToolRequest = async (input: {
   requestId: string;
   status: ToolRequestStatus;
@@ -498,10 +537,13 @@ export const updateToolRequest = async (input: {
   if (!current.exists()) throw new Error("Tool request was not found");
   const currentStatus = current.data().status as ToolRequestStatus;
   const transitions: Record<ToolRequestStatus, ToolRequestStatus[]> = {
-    pending: ["approved", "rejected"], approved: ["picked_up", "rejected"],
-    picked_up: ["delivered", "returned"], delivered: ["returned"], rejected: [], returned: [],
+    pending: ["approved", "rejected"], approved: ["rejected"],
+    picked_up: ["delivered"], delivered: [], rejected: [], returned: [],
   };
   if (!transitions[currentStatus]?.includes(input.status)) throw new Error("Tool request status transition is invalid");
+  if (input.status === "delivered" && typeof current.data().checkoutId !== "string") {
+    throw new Error("The tool request has no checkout");
+  }
   const now = serverTimestamp();
   const update: Record<string, unknown> = { status: input.status, updatedAt: now };
   if (input.status === "approved") { update.approvedBy = user.uid; update.approvedAt = now; }
@@ -515,15 +557,68 @@ export const updateToolRequest = async (input: {
   return toRequest(updated);
 };
 
+export const checkOutToolRequest = async (input: {
+  requestId: string;
+  expectedReturnDate?: string | null;
+  notes?: string | null;
+}) => {
+  await requireManager();
+  const manager = requireCurrentUser();
+  const requestReference = doc(requestsCollection, requireText(input.requestId, "Request id"));
+  const checkoutReference = doc(checkoutsCollection);
+
+  await runTransaction(firebaseDb, async (transaction) => {
+    const request = await transaction.get(requestReference);
+    if (!request.exists()) throw new Error("Tool request was not found");
+    const requestData = request.data();
+    if (requestData.status !== "approved") throw new Error("Only an approved request can be checked out");
+
+    const toolReference = doc(toolsCollection, requireText(String(requestData.toolId ?? ""), "Tool id"));
+    const tool = await transaction.get(toolReference);
+    if (!tool.exists() || tool.data().status !== "available") throw new Error("Tool is not available");
+
+    const now = serverTimestamp();
+    transaction.update(requestReference, {
+      status: "picked_up",
+      pickedUpBy: manager.uid,
+      pickedUpAt: now,
+      checkoutId: checkoutReference.id,
+      updatedAt: now,
+    });
+    transaction.update(toolReference, { status: "checked_out", updatedAt: now });
+    transaction.set(checkoutReference, {
+      toolId: requestData.toolId,
+      projectId: requestData.projectId,
+      checkedOutBy: requestData.requestedBy,
+      checkedOutByName: typeof requestData.requestedByName === "string" ? requestData.requestedByName : null,
+      issuedBy: manager.uid,
+      toolRequestId: requestReference.id,
+      checkedOutAt: now,
+      expectedReturnDate: input.expectedReturnDate?.trim() || null,
+      returnedAt: null,
+      returnedBy: null,
+      conditionOnReturn: null,
+      notes: input.notes?.trim() || requestData.notes || null,
+      createdAt: now,
+    });
+  });
+
+  const [request, checkout] = await Promise.all([
+    getDoc(requestReference),
+    getDoc(checkoutReference),
+  ]);
+  if (!request.exists() || !checkout.exists()) throw new Error("Tool checkout was not created");
+  return { request: toRequest(request), checkout: toCheckout(checkout) };
+};
+
 export const checkoutTool = async (input: {
   toolId: string;
   projectId: string;
   expectedReturnDate?: string | null;
   notes?: string | null;
 }) => {
+  await requireManager();
   const user = requireCurrentUser();
-  const role = await getCurrentRole();
-  if (role !== "builder" && role !== "manager") throw new Error("A valid role is required");
   const toolId = requireText(input.toolId, "Tool id");
   const projectId = requireText(input.projectId, "Project id");
   const checkout = await runTransaction(firebaseDb, async (transaction) => {
@@ -533,7 +628,8 @@ export const checkoutTool = async (input: {
     const checkoutReference = doc(checkoutsCollection);
     transaction.set(toolReference, { status: "checked_out", updatedAt: serverTimestamp() }, { merge: true });
     transaction.set(checkoutReference, {
-      toolId, projectId, checkedOutBy: user.uid, checkedOutAt: serverTimestamp(),
+      toolId, projectId, checkedOutBy: user.uid, checkedOutByName: user.displayName?.trim() || null,
+      issuedBy: user.uid, toolRequestId: null, checkedOutAt: serverTimestamp(),
       expectedReturnDate: input.expectedReturnDate?.trim() || null, returnedAt: null,
       returnedBy: null, conditionOnReturn: null, notes: input.notes?.trim() || null,
       createdAt: serverTimestamp(),
@@ -556,29 +652,59 @@ export const listToolCheckouts = async (activeOnly = false) => {
     (b.checkedOutAt?.getTime() ?? 0) - (a.checkedOutAt?.getTime() ?? 0));
 };
 
+export const subscribeToToolCheckouts = async (
+  onChange: (checkouts: ToolCheckoutRecord[]) => void,
+  onError: (error: Error) => void,
+): Promise<() => void> => {
+  await requireManager();
+  return onSnapshot(
+    checkoutsCollection,
+    (snapshot) => {
+      onChange(snapshot.docs.map(toCheckout).sort((a, b) =>
+        (b.checkedOutAt?.getTime() ?? 0) - (a.checkedOutAt?.getTime() ?? 0)));
+    },
+    (error) => onError(error instanceof Error ? error : new Error("Unable to load tool checkouts")),
+  );
+};
+
 export const returnTool = async (input: {
   checkoutId: string;
   conditionOnReturn?: string | null;
   notes?: string | null;
 }) => {
+  await requireManager();
   const user = requireCurrentUser();
-  const role = await getCurrentRole();
   const checkoutReference = doc(checkoutsCollection, requireText(input.checkoutId, "Checkout id"));
   await runTransaction(firebaseDb, async (transaction) => {
     const checkout = await transaction.get(checkoutReference);
     if (!checkout.exists()) throw new Error("Tool checkout was not found");
     const data = checkout.data();
     if (data.returnedAt) throw new Error("Tool checkout was already returned");
-    if (role !== "manager" && data.checkedOutBy !== user.uid) throw new Error("You can only return your own checkout");
     const toolReference = doc(toolsCollection, String(data.toolId));
     const tool = await transaction.get(toolReference);
     if (!tool.exists()) throw new Error("Tool was not found");
+    const requestReference = typeof data.toolRequestId === "string"
+      ? doc(requestsCollection, data.toolRequestId)
+      : null;
+    const request = requestReference ? await transaction.get(requestReference) : null;
+    if (request && (!request.exists() || !["picked_up", "delivered"].includes(request.data().status))) {
+      throw new Error("Linked tool request cannot be returned");
+    }
+    const now = serverTimestamp();
     transaction.update(checkoutReference, {
-      returnedAt: serverTimestamp(), returnedBy: user.uid,
+      returnedAt: now, returnedBy: user.uid,
       conditionOnReturn: input.conditionOnReturn?.trim() || null,
       notes: input.notes?.trim() || data.notes || null,
     });
-    transaction.update(toolReference, { status: "available", updatedAt: serverTimestamp() });
+    transaction.update(toolReference, { status: "available", updatedAt: now });
+    if (requestReference) {
+      transaction.update(requestReference, {
+        status: "returned",
+        returnedBy: user.uid,
+        returnedAt: now,
+        updatedAt: now,
+      });
+    }
   });
   const updated = await getDoc(checkoutReference);
   if (!updated.exists()) throw new Error("Tool checkout was not found after return");

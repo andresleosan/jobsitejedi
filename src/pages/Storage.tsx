@@ -1,6 +1,5 @@
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -10,46 +9,30 @@ import StorageMaterialsTab from "@/components/storage/StorageMaterialsTab";
 import StorageToolsTab from "@/components/storage/StorageToolsTab";
 import ToolCheckoutsTab from "@/components/storage/ToolCheckoutsTab";
 import ToolRequestsManagement from "@/components/storage/ToolRequestsManagement";
+import { useAuth } from "@/hooks/useAuth";
 
 const Storage = () => {
-  const [isLoading, setIsLoading] = useState(true);
-  const [userId, setUserId] = useState<string | null>(null);
+  const { user, isLoading } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
   useEffect(() => {
-    checkAuth();
-  }, []);
-
-  const checkAuth = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    
-    if (!session) {
+    if (isLoading) return;
+    if (!user) {
       navigate("/auth");
       return;
     }
-
-    const { data: roleData } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", session.user.id)
-      .maybeSingle();
-
-    if (!roleData || roleData.role !== "manager") {
+    if (user.role !== "manager") {
       toast({
         title: "Access Denied",
         description: "Only managers can access storage management",
         variant: "destructive",
       });
       navigate("/builders");
-      return;
     }
+  }, [isLoading, navigate, toast, user]);
 
-    setUserId(session.user.id);
-    setIsLoading(false);
-  };
-
-  if (isLoading) {
+  if (isLoading || !user || user.role !== "manager") {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -98,15 +81,15 @@ const Storage = () => {
           </TabsList>
 
           <TabsContent value="materials">
-            {userId && <StorageMaterialsTab userId={userId} />}
+            <StorageMaterialsTab userId={user.id} />
           </TabsContent>
 
           <TabsContent value="tools">
-            {userId && <StorageToolsTab userId={userId} />}
+            <StorageToolsTab userId={user.id} />
           </TabsContent>
 
           <TabsContent value="requests">
-            <ToolRequestsManagement />
+            <ToolRequestsManagement managerName={user.fullName || "Manager"} />
           </TabsContent>
 
           <TabsContent value="checkouts">

@@ -30,6 +30,13 @@ service cloud.firestore {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(["role"]);
     }
 
+    function validToolRequestTransition() {
+      return (resource.data.status == "pending" && request.resource.data.status in ["approved", "rejected"])
+        || (resource.data.status == "approved" && request.resource.data.status in ["picked_up", "rejected"])
+        || (resource.data.status == "picked_up" && request.resource.data.status in ["delivered", "returned"])
+        || (resource.data.status == "delivered" && request.resource.data.status == "returned");
+    }
+
     match /users/{userId} {
       allow get, list: if isManager() || (isSignedIn() && request.auth.uid == userId);
       allow create: if isSignedIn() && request.auth.uid == userId
@@ -104,24 +111,35 @@ service cloud.firestore {
 
     match /toolRequests/{requestId} {
       allow read: if isManager() || (isBuilder() && resource.data.requestedBy == request.auth.uid);
-      allow create: if isBuilder() && request.resource.data.requestedBy == request.auth.uid;
-      allow update: if isManager();
+      allow create: if isBuilder()
+        && request.resource.data.keys().hasOnly([
+          "toolId", "projectId", "requestedBy", "requestedByName", "requestedAt", "status",
+          "notes", "approvedBy", "approvedAt", "pickedUpBy", "pickedUpAt", "deliveredBy",
+          "deliveredAt", "returnedBy", "returnedAt", "rejectionReason", "checkoutId",
+          "createdAt", "updatedAt"
+        ])
+        && request.resource.data.requestedBy == request.auth.uid
+        && request.resource.data.status == "pending"
+        && request.resource.data.approvedBy == null
+        && request.resource.data.pickedUpBy == null
+        && request.resource.data.deliveredBy == null
+        && request.resource.data.returnedBy == null
+        && request.resource.data.checkoutId == null
+        && exists(/databases/$(database)/documents/storageTools/$(request.resource.data.toolId))
+        && get(/databases/$(database)/documents/storageTools/$(request.resource.data.toolId)).data.status == "available"
+        && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
+        && get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.ownerId == request.auth.uid;
+      allow update: if isManager()
+        && request.resource.data.toolId == resource.data.toolId
+        && request.resource.data.projectId == resource.data.projectId
+        && request.resource.data.requestedBy == resource.data.requestedBy
+        && validToolRequestTransition();
       allow delete: if isManager();
     }
 
     match /toolCheckouts/{checkoutId} {
       allow read: if isManager() || (isBuilder() && resource.data.checkedOutBy == request.auth.uid);
-      allow create: if (isManager() || isBuilder())
-        && request.resource.data.checkedOutBy == request.auth.uid;
-      allow update: if isManager() || (
-        isBuilder()
-        && resource.data.checkedOutBy == request.auth.uid
-        && request.resource.data.checkedOutBy == resource.data.checkedOutBy
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          "returnedAt", "returnedBy", "conditionOnReturn", "notes"
-        ])
-      );
-      allow delete: if isManager();
+      allow create, update, delete: if isManager();
     }
 
     match /materialTransfers/{transferId} {

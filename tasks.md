@@ -282,6 +282,16 @@ toquen producción necesitan confirmación explícita del operador.
     repositorio tipado para altas, ediciones y borrado seguro; no conserva imports Supabase ni
     listeners `postgres_changes`. Typecheck, ESLint focalizado, build y Emulator Firebase (13
     archivos, 38 tests) aprobados. Falta cubrir esta UI con E2E específico.
+  - `Storage`, `ToolRequestDialog`, `ToolRequestsManagement` y `ToolCheckoutsTab` migrados al flujo
+    Firebase. Builder solicita desde su dashboard y manager aprueba, entrega y recibe desde
+    Storage; todos los listeners Firestore liberan su suscripción al desmontar.
+  - Checkout y devolución vinculados a la solicitud se ejecutan en transacciones atómicas: se
+    valida disponibilidad, se conserva el destinatario original, se sincronizan tool/request/
+    checkout y las operaciones quedan restringidas a manager tanto en repositorio como en reglas.
+  - Reglas de solicitudes endurecidas con claves permitidas, proyecto perteneciente al builder,
+    estado inicial obligatorio y transiciones válidas. Emulator Firebase: 13 archivos/38 tests;
+    E2E de fotos e inventario: 2/2; typecheck, ESLint focalizado y build aprobados.
+  - Queda pendiente migrar las UI de entregas de materiales y residuos; T-010 continúa en progreso.
 
 ### T-011 — Migrar facturas, reportes y evaluaciones de riesgo
 
@@ -348,6 +358,21 @@ toquen producción necesitan confirmación explícita del operador.
 - Comparar métricas antes/después; no optimizar por intuición.
 - **Aceptación:** existe reporte de medición y el bundle/tiempo de carga mejora sin cambiar
   comportamiento funcional.
+
+### T-019 — Cerrar vulnerabilidades de dependencias
+
+- **Prioridad:** P0 · **Estado:** en-progreso · **Depende de:** T-011, T-014
+- Sustituir `xlsx`, usado por reportes y carga masiva, por una alternativa mantenida o aislar su
+  procesamiento con límites y validaciones equivalentes; la versión actual no tiene fix publicado.
+- Evaluar la migración controlada a React Router 7 para cerrar los avisos moderados restantes.
+- Clasificar y corregir las rutas transitivas de `brace-expansion`, `minimatch` y `picomatch`,
+  separando tooling de dependencias runtime cuando corresponda.
+- No ejecutar `npm audit fix --force`: cualquier salto mayor debe pasar pruebas de regresión.
+- **Aceptación:** `npm audit --omit=dev` no reporta vulnerabilidades altas/críticas, o existe una
+  excepción temporal documentada con exposición, mitigación, responsable y fecha de retirada.
+- **Avance 2026-08-25:** `react-router-dom` actualizado de 6.30.1 a 6.30.6; se eliminaron los
+  avisos altos de XSS/open redirect sin cambiar de major. Persisten 4 avisos altos y 2 moderados,
+  por lo que esta tarea bloquea el gate de producción, aunque no el siguiente incremento local.
 
 ## Fase 7 — Release controlado
 

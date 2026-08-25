@@ -1,15 +1,22 @@
-import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useToast } from "@/hooks/use-toast";
-import { Loader2, Wrench, Search, Plus, Clock, CheckCircle, Truck, Package } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
+import { CheckCircle, Clock, Loader2, Package, Plus, Search, Truck, Wrench } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
+import {
+  createToolRequest,
+  subscribeToStorageTools,
+  subscribeToToolRequests,
+  type StorageToolRecord,
+  type ToolRequestRecord,
+  type ToolRequestStatus,
+} from "@/lib/firebase/repositories/inventory";
 
 interface ToolRequestDialogProps {
   open: boolean;
@@ -19,163 +26,106 @@ interface ToolRequestDialogProps {
   projectName?: string;
 }
 
-interface StorageTool {
-  id: string;
-  name: string;
-  category: string;
-  status: string;
-  condition: string;
-  serial_number: string | null;
-  section: string | null;
-}
+const getStatusBadge = (status: ToolRequestStatus) => {
+  switch (status) {
+    case "pending":
+      return <Badge variant="secondary"><Clock className="mr-1 h-3 w-3" />Pending</Badge>;
+    case "approved":
+      return <Badge className="bg-sky-600"><CheckCircle className="mr-1 h-3 w-3" />Approved</Badge>;
+    case "picked_up":
+      return <Badge className="bg-orange-600"><Truck className="mr-1 h-3 w-3" />Picked Up</Badge>;
+    case "delivered":
+      return <Badge className="bg-blue-600"><Package className="mr-1 h-3 w-3" />Delivered</Badge>;
+    case "returned":
+      return <Badge className="bg-green-600"><CheckCircle className="mr-1 h-3 w-3" />Returned</Badge>;
+    case "rejected":
+      return <Badge variant="destructive">Rejected</Badge>;
+  }
+};
 
-interface ToolRequest {
-  id: string;
-  tool_id: string;
-  project_id: string;
-  requested_by: string;
-  requested_at: string;
-  status: string;
-  notes: string | null;
-  approved_by: string | null;
-  approved_at: string | null;
-  picked_up_by: string | null;
-  picked_up_at: string | null;
-  delivered_at: string | null;
-  delivered_by: string | null;
-  storage_tools?: {
-    name: string;
-    category: string;
-    serial_number: string | null;
-  } | null;
-  projects?: {
-    name: string;
-  } | null;
-}
-
-const ToolRequestDialog = ({ open, onOpenChange, projectId, userId, projectName }: ToolRequestDialogProps) => {
-  const [tools, setTools] = useState<StorageTool[]>([]);
-  const [myRequests, setMyRequests] = useState<ToolRequest[]>([]);
+const ToolRequestDialog = ({
+  open,
+  onOpenChange,
+  projectId,
+  userId,
+  projectName,
+}: ToolRequestDialogProps) => {
+  const [tools, setTools] = useState<StorageToolRecord[]>([]);
+  const [myRequests, setMyRequests] = useState<ToolRequestRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedTool, setSelectedTool] = useState<StorageTool | null>(null);
+  const [selectedTool, setSelectedTool] = useState<StorageToolRecord | null>(null);
   const [notes, setNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState("request");
   const { toast } = useToast();
 
   useEffect(() => {
-    if (open) {
-      fetchTools();
-      fetchMyRequests();
-    }
-  }, [open, projectId]);
+    if (!open || !userId.trim()) return;
+    let disposed = false;
+    let unsubscribeRequests = () => undefined;
+    setIsLoading(true);
 
-  useEffect(() => {
-    if (!open) return;
-
-    // Real-time subscription for request updates
-    const channel = supabase
-      .channel('my-tool-requests')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'tool_requests', filter: `requested_by=eq.${userId}` },
-        () => {
-          fetchMyRequests();
+    const unsubscribeTools = subscribeToStorageTools(
+      (records) => {
+        if (!disposed) {
+          setTools(records);
+          setIsLoading(false);
         }
-      )
-      .subscribe();
+      },
+      () => {
+        if (!disposed) setIsLoading(false);
+        toast({ title: "Error", description: "Failed to load available tools", variant: "destructive" });
+      },
+    );
+
+    void subscribeToToolRequests(
+      (records) => {
+        if (!disposed) setMyRequests(records);
+      },
+      () => toast({ title: "Error", description: "Failed to load your requests", variant: "destructive" }),
+      { scope: "mine" },
+    ).then((unsubscribe) => {
+      if (disposed) unsubscribe();
+      else unsubscribeRequests = unsubscribe;
+    }).catch(() => {
+      toast({ title: "Error", description: "Failed to load your requests", variant: "destructive" });
+    });
 
     return () => {
-      supabase.removeChannel(channel);
+      disposed = true;
+      unsubscribeTools();
+      unsubscribeRequests();
     };
-  }, [open, userId]);
+  }, [open, toast, userId]);
 
-  const fetchTools = async () => {
-    const { data, error } = await supabase
-      .from("storage_tools")
-      .select("*")
-      .eq("status", "available")
-      .order("name");
-
-    if (error) {
-      console.error("Error fetching tools:", error);
-    } else {
-      setTools(data || []);
-    }
-    setIsLoading(false);
-  };
-
-  const fetchMyRequests = async () => {
-    const { data, error } = await supabase
-      .from("tool_requests")
-      .select(`
-        *,
-        storage_tools (name, category, serial_number),
-        projects (name)
-      `)
-      .eq("requested_by", userId)
-      .order("requested_at", { ascending: false });
-
-    if (error) {
-      console.error("Error fetching requests:", error);
-    } else {
-      setMyRequests(data || []);
-    }
-  };
+  const toolById = useMemo(() => new Map(tools.map((tool) => [tool.id, tool])), [tools]);
+  const filteredTools = tools.filter((tool) => tool.status === "available" && (
+    tool.name.toLowerCase().includes(searchTerm.toLowerCase())
+    || tool.category.toLowerCase().includes(searchTerm.toLowerCase())
+  ));
+  const activeRequestCount = myRequests.filter((request) =>
+    request.status !== "returned" && request.status !== "rejected").length;
 
   const handleRequestTool = async () => {
     if (!selectedTool) return;
-
     setIsSubmitting(true);
-    const { error } = await supabase
-      .from("tool_requests")
-      .insert({
-        tool_id: selectedTool.id,
-        project_id: projectId,
-        requested_by: userId,
-        notes: notes || null,
-        status: "pending"
-      });
-
-    if (error) {
-      console.error("Error requesting tool:", error);
-      toast({ title: "Error", description: "Failed to request tool", variant: "destructive" });
-    } else {
-      toast({ title: "Success", description: `Tool "${selectedTool.name}" requested successfully` });
+    try {
+      await createToolRequest({ toolId: selectedTool.id, projectId, notes });
+      toast({ title: "Tool requested", description: `Request sent for “${selectedTool.name}”.` });
       setSelectedTool(null);
       setNotes("");
-      fetchMyRequests();
       setActiveTab("my-requests");
-    }
-    setIsSubmitting(false);
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "pending":
-        return <Badge variant="secondary"><Clock className="h-3 w-3 mr-1" />Pending</Badge>;
-      case "approved":
-        return <Badge className="bg-blue-500"><CheckCircle className="h-3 w-3 mr-1" />Approved</Badge>;
-      case "picked_up":
-        return <Badge className="bg-orange-500"><Truck className="h-3 w-3 mr-1" />Picked Up</Badge>;
-      case "delivered":
-        return <Badge className="bg-green-500"><Package className="h-3 w-3 mr-1" />Delivered</Badge>;
-      case "rejected":
-        return <Badge variant="destructive">Rejected</Badge>;
-      default:
-        return <Badge variant="outline">{status}</Badge>;
+    } catch {
+      toast({ title: "Request failed", description: "The tool request could not be created.", variant: "destructive" });
+    } finally {
+      setIsSubmitting(false);
     }
   };
-
-  const filteredTools = tools.filter(tool =>
-    tool.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    tool.category.toLowerCase().includes(searchTerm.toLowerCase())
-  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+      <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Wrench className="h-5 w-5" />
@@ -183,152 +133,118 @@ const ToolRequestDialog = ({ open, onOpenChange, projectId, userId, projectName 
           </DialogTitle>
         </DialogHeader>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 overflow-hidden flex flex-col">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-1 flex-col overflow-hidden">
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="request">Request Tool</TabsTrigger>
             <TabsTrigger value="my-requests">
               My Requests
-              {myRequests.filter(r => r.status !== "delivered" && r.status !== "rejected").length > 0 && (
-                <Badge variant="secondary" className="ml-2">
-                  {myRequests.filter(r => r.status !== "delivered" && r.status !== "rejected").length}
-                </Badge>
-              )}
+              {activeRequestCount > 0 && <Badge variant="secondary" className="ml-2">{activeRequestCount}</Badge>}
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="request" className="flex-1 overflow-auto space-y-4 mt-4">
+          <TabsContent value="request" className="mt-4 flex-1 space-y-4 overflow-auto">
             {isLoading ? (
-              <div className="flex items-center justify-center py-8">
+              <div className="flex items-center justify-center py-8" role="status" aria-label="Loading available tools">
                 <Loader2 className="h-6 w-6 animate-spin" />
               </div>
             ) : (
               <>
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     placeholder="Search available tools..."
                     value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
+                    onChange={(event) => setSearchTerm(event.target.value)}
                     className="pl-10"
+                    aria-label="Search available tools"
                   />
                 </div>
 
                 {selectedTool ? (
                   <Card className="border-primary">
-                    <CardContent className="p-4 space-y-4">
-                      <div className="flex items-center justify-between">
+                    <CardContent className="space-y-4 p-4">
+                      <div className="flex items-center justify-between gap-3">
                         <div>
                           <h4 className="font-medium">{selectedTool.name}</h4>
                           <p className="text-sm text-muted-foreground">
-                            {selectedTool.category}
-                            {selectedTool.serial_number && ` • ${selectedTool.serial_number}`}
+                            {selectedTool.category}{selectedTool.serialNumber ? ` · ${selectedTool.serialNumber}` : ""}
                           </p>
                         </div>
-                        <Button variant="ghost" size="sm" onClick={() => setSelectedTool(null)}>
-                          Change
-                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => setSelectedTool(null)}>Change</Button>
                       </div>
-
                       <Textarea
                         placeholder="Add notes (optional) - e.g., when you need it, specific requirements..."
                         value={notes}
-                        onChange={(e) => setNotes(e.target.value)}
+                        onChange={(event) => setNotes(event.target.value)}
                         rows={3}
                       />
-
-                      <Button
-                        onClick={handleRequestTool}
-                        disabled={isSubmitting}
-                        className="w-full"
-                      >
-                        {isSubmitting ? (
-                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                        ) : (
-                          <Plus className="h-4 w-4 mr-2" />
-                        )}
+                      <Button onClick={() => void handleRequestTool()} disabled={isSubmitting} className="w-full">
+                        {isSubmitting
+                          ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          : <Plus className="mr-2 h-4 w-4" />}
                         Request Tool
                       </Button>
                     </CardContent>
                   </Card>
                 ) : (
-                  <div className="grid gap-2 max-h-[400px] overflow-auto">
+                  <div className="grid max-h-[400px] gap-2 overflow-auto">
                     {filteredTools.length === 0 ? (
-                      <p className="text-center text-muted-foreground py-8">
-                        No available tools found
-                      </p>
-                    ) : (
-                      filteredTools.map((tool) => (
-                        <Card
-                          key={tool.id}
-                          className="cursor-pointer hover:border-primary transition-colors"
-                          onClick={() => setSelectedTool(tool)}
-                        >
-                          <CardContent className="p-3 flex items-center justify-between">
-                            <div>
-                              <p className="font-medium">{tool.name}</p>
-                              <p className="text-sm text-muted-foreground">
-                                {tool.category}
-                                {tool.section && ` • ${tool.section}`}
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Badge variant="outline" className="text-green-600">
-                                Available
-                              </Badge>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))
-                    )}
+                      <p className="py-8 text-center text-muted-foreground">No available tools found</p>
+                    ) : filteredTools.map((tool) => (
+                      <Button
+                        key={tool.id}
+                        type="button"
+                        variant="outline"
+                        className="h-auto w-full justify-between p-3 text-left hover:border-primary"
+                        onClick={() => setSelectedTool(tool)}
+                      >
+                        <span>
+                          <span className="block font-medium">{tool.name}</span>
+                          <span className="block text-sm font-normal text-muted-foreground">
+                            {tool.category}{tool.section ? ` · ${tool.section}` : ""}
+                          </span>
+                        </span>
+                        <Badge variant="outline" className="text-green-700">Available</Badge>
+                      </Button>
+                    ))}
                   </div>
                 )}
               </>
             )}
           </TabsContent>
 
-          <TabsContent value="my-requests" className="flex-1 overflow-auto space-y-3 mt-4">
+          <TabsContent value="my-requests" className="mt-4 flex-1 space-y-3 overflow-auto">
             {myRequests.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">
-                No tool requests yet
-              </p>
-            ) : (
-              myRequests.map((request) => (
+              <p className="py-8 text-center text-muted-foreground">No tool requests yet</p>
+            ) : myRequests.map((request) => {
+              const tool = toolById.get(request.toolId);
+              return (
                 <Card key={request.id}>
                   <CardContent className="p-4">
-                    <div className="flex items-start justify-between">
+                    <div className="flex items-start justify-between gap-3">
                       <div>
-                        <h4 className="font-medium">{request.storage_tools?.name}</h4>
+                        <h4 className="font-medium">{tool?.name || "Unknown tool"}</h4>
                         <p className="text-sm text-muted-foreground">
-                          {request.storage_tools?.category}
-                          {request.storage_tools?.serial_number && ` • ${request.storage_tools.serial_number}`}
+                          {tool?.category || "Uncategorized"}{tool?.serialNumber ? ` · ${tool.serialNumber}` : ""}
                         </p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          For: {request.projects?.name}
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          For: {request.projectId === projectId ? projectName || "Current project" : request.projectId}
                         </p>
                       </div>
                       {getStatusBadge(request.status)}
                     </div>
-
-                    {request.notes && (
-                      <p className="text-sm mt-2 bg-muted p-2 rounded">{request.notes}</p>
-                    )}
-
-                    <div className="mt-3 text-xs text-muted-foreground space-y-1">
-                      <p>Requested: {format(new Date(request.requested_at), "MMM d, yyyy h:mm a")}</p>
-                      {request.approved_at && (
-                        <p>Approved: {format(new Date(request.approved_at), "MMM d, h:mm a")}</p>
-                      )}
-                      {request.picked_up_at && (
-                        <p>Picked up: {format(new Date(request.picked_up_at), "MMM d, h:mm a")}</p>
-                      )}
-                      {request.delivered_at && (
-                        <p>Delivered: {format(new Date(request.delivered_at), "MMM d, h:mm a")}</p>
-                      )}
+                    {request.notes && <p className="mt-2 rounded bg-muted p-2 text-sm">{request.notes}</p>}
+                    <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+                      <p>Requested: {request.requestedAt ? format(request.requestedAt, "MMM d, yyyy h:mm a") : "Pending sync"}</p>
+                      {request.approvedAt && <p>Approved: {format(request.approvedAt, "MMM d, h:mm a")}</p>}
+                      {request.pickedUpAt && <p>Picked up: {format(request.pickedUpAt, "MMM d, h:mm a")}</p>}
+                      {request.deliveredAt && <p>Delivered: {format(request.deliveredAt, "MMM d, h:mm a")}</p>}
+                      {request.returnedAt && <p>Returned: {format(request.returnedAt, "MMM d, h:mm a")}</p>}
                     </div>
                   </CardContent>
                 </Card>
-              ))
-            )}
+              );
+            })}
           </TabsContent>
         </Tabs>
       </DialogContent>
