@@ -120,6 +120,7 @@ export interface MaterialDeliveryRequestRecord {
   id: string;
   projectId: string;
   userId: string;
+  requestedByName: string | null;
   status: "pending" | "in_progress" | "delivered" | "rejected";
   notes: string | null;
   createdAt: Date | null;
@@ -309,6 +310,31 @@ const toDeliveryItem = (snapshot: { id: string; data: () => DocumentData }): Mat
   };
 };
 
+const toDeliveryRequest = (
+  snapshot: { id: string; data: () => DocumentData },
+  items: MaterialDeliveryItemRecord[] = [],
+): MaterialDeliveryRequestRecord => {
+  const data = snapshot.data();
+  const statuses: MaterialDeliveryRequestRecord["status"][] = [
+    "pending",
+    "in_progress",
+    "delivered",
+    "rejected",
+  ];
+  return {
+    id: snapshot.id,
+    projectId: String(data.projectId ?? ""),
+    userId: String(data.userId ?? ""),
+    requestedByName: typeof data.requestedByName === "string" ? data.requestedByName : null,
+    status: statuses.includes(data.status) ? data.status : "pending",
+    notes: typeof data.notes === "string" ? data.notes : null,
+    createdAt: toDate(data.createdAt),
+    resolvedAt: toDate(data.resolvedAt),
+    resolvedBy: typeof data.resolvedBy === "string" ? data.resolvedBy : null,
+    items,
+  };
+};
+
 const toRubbish = (snapshot: { id: string; data: () => DocumentData }): RubbishRequestRecord => {
   const data = snapshot.data();
   const photoPaths = Array.isArray(data.photoPaths)
@@ -331,6 +357,20 @@ export const listStorageMaterials = async (): Promise<StorageMaterialRecord[]> =
   requireCurrentUser();
   const snapshots = await getDocs(materialsCollection);
   return snapshots.docs.map(toMaterial).sort((a, b) => a.name.localeCompare(b.name));
+};
+
+export const subscribeToStorageMaterials = (
+  onChange: (materials: StorageMaterialRecord[]) => void,
+  onError: (error: Error) => void,
+): (() => void) => {
+  requireCurrentUser();
+  return onSnapshot(
+    materialsCollection,
+    (snapshot) => {
+      onChange(snapshot.docs.map(toMaterial).sort((a, b) => a.name.localeCompare(b.name)));
+    },
+    (error) => onError(error instanceof Error ? error : new Error("Unable to load materials")),
+  );
 };
 
 export const createStorageMaterial = async (input: StorageMaterialInput) => {
@@ -796,19 +836,35 @@ export const createMaterialDeliveryRequest = async (input: {
   const user = requireCurrentUser();
   if ((await getCurrentRole()) !== "builder") throw new Error("Only builders can request deliveries");
   if (!input.items.length) throw new Error("At least one delivery item is required");
+  if (input.items.length > 25) throw new Error("A delivery request can contain at most 25 items");
   const projectId = requireText(input.projectId, "Project id");
+  const notes = input.notes?.trim() || null;
+  if (notes && notes.length > 1_000) throw new Error("Delivery notes are too long");
+  const items = input.items.map((item) => {
+    const materialId = requireText(item.materialId, "Material id");
+    assertNonNegative(item.quantity, "Delivery quantity");
+    if (item.quantity <= 0 || item.quantity > 1_000_000) {
+      throw new Error("Delivery quantity must be between 0 and 1,000,000");
+    }
+    return { materialId, quantity: item.quantity };
+  });
+  if (new Set(items.map((item) => item.materialId)).size !== items.length) {
+    throw new Error("A material can only appear once in a delivery request");
+  }
   const requestReference = doc(deliveryRequestsCollection);
   const batch = writeBatch(firebaseDb);
   batch.set(requestReference, {
-    projectId, userId: user.uid, status: "pending", notes: input.notes?.trim() || null,
+    projectId,
+    userId: user.uid,
+    requestedByName: user.displayName?.trim().slice(0, 120) || null,
+    status: "pending",
+    notes,
     createdAt: serverTimestamp(), resolvedAt: null, resolvedBy: null,
   });
-  input.items.forEach((item) => {
-    assertNonNegative(item.quantity, "Delivery quantity");
-    if (item.quantity <= 0) throw new Error("Delivery quantity must be greater than zero");
+  items.forEach((item) => {
     batch.set(doc(deliveryItemsCollection), {
       requestId: requestReference.id,
-      materialId: requireText(item.materialId, "Material id"),
+      materialId: item.materialId,
       quantity: item.quantity,
       createdAt: serverTimestamp(),
     });
@@ -823,19 +879,7 @@ export const getMaterialDeliveryRequest = async (requestId: string) => {
   const requestSnapshot = await getDoc(requestReference);
   if (!requestSnapshot.exists()) return null;
   const itemsSnapshot = await getDocs(query(deliveryItemsCollection, where("requestId", "==", requestSnapshot.id)));
-  const data = requestSnapshot.data();
-  const statuses: MaterialDeliveryRequestRecord["status"][] = ["pending", "in_progress", "delivered", "rejected"];
-  return {
-    id: requestSnapshot.id,
-    projectId: String(data.projectId ?? ""),
-    userId: String(data.userId ?? ""),
-    status: statuses.includes(data.status) ? data.status : "pending",
-    notes: typeof data.notes === "string" ? data.notes : null,
-    createdAt: toDate(data.createdAt),
-    resolvedAt: toDate(data.resolvedAt),
-    resolvedBy: typeof data.resolvedBy === "string" ? data.resolvedBy : null,
-    items: itemsSnapshot.docs.map(toDeliveryItem),
-  } satisfies MaterialDeliveryRequestRecord;
+  return toDeliveryRequest(requestSnapshot, itemsSnapshot.docs.map(toDeliveryItem));
 };
 
 export const listMaterialDeliveryRequests = async () => {
@@ -848,6 +892,96 @@ export const listMaterialDeliveryRequests = async () => {
     .sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
 };
 
+export const subscribeToMaterialDeliveryRequests = async (
+  onChange: (requests: MaterialDeliveryRequestRecord[]) => void,
+  onError: (error: Error) => void,
+): Promise<() => void> => {
+  const user = requireCurrentUser();
+  const role = await getCurrentRole();
+  const reportError = (error: unknown) => {
+    onError(error instanceof Error ? error : new Error("Unable to load delivery requests"));
+  };
+  const sortRequests = (requests: MaterialDeliveryRequestRecord[]) => requests.sort((a, b) =>
+    (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+
+  if (role === "manager") {
+    let requestRecords: MaterialDeliveryRequestRecord[] = [];
+    let itemRecords: MaterialDeliveryItemRecord[] = [];
+    let requestsReady = false;
+    let itemsReady = false;
+    const emit = () => {
+      if (!requestsReady || !itemsReady) return;
+      onChange(sortRequests(requestRecords.map((request) => ({
+        ...request,
+        items: itemRecords.filter((item) => item.requestId === request.id),
+      }))));
+    };
+    const stopRequests = onSnapshot(deliveryRequestsCollection, (snapshot) => {
+      requestRecords = snapshot.docs.map((document) => toDeliveryRequest(document));
+      requestsReady = true;
+      emit();
+    }, reportError);
+    const stopItems = onSnapshot(deliveryItemsCollection, (snapshot) => {
+      itemRecords = snapshot.docs.map(toDeliveryItem);
+      itemsReady = true;
+      emit();
+    }, reportError);
+    return () => {
+      stopRequests();
+      stopItems();
+    };
+  }
+
+  let stopped = false;
+  let generation = 0;
+  let stopItemListeners: Array<() => void> = [];
+  const stopRequests = onSnapshot(
+    query(deliveryRequestsCollection, where("userId", "==", user.uid)),
+    (snapshot) => {
+      generation += 1;
+      const currentGeneration = generation;
+      stopItemListeners.forEach((stop) => stop());
+      stopItemListeners = [];
+      const requestRecords = snapshot.docs.map((document) => toDeliveryRequest(document));
+      if (!requestRecords.length) {
+        onChange([]);
+        return;
+      }
+      const itemsByRequest = new Map<string, MaterialDeliveryItemRecord[]>();
+      let pendingInitialSnapshots = requestRecords.length;
+      const emit = () => {
+        if (stopped || currentGeneration !== generation || pendingInitialSnapshots > 0) return;
+        onChange(sortRequests(requestRecords.map((request) => ({
+          ...request,
+          items: itemsByRequest.get(request.id) ?? [],
+        }))));
+      };
+      requestRecords.forEach((request) => {
+        let initialized = false;
+        const stopItems = onSnapshot(
+          query(deliveryItemsCollection, where("requestId", "==", request.id)),
+          (itemSnapshot) => {
+            itemsByRequest.set(request.id, itemSnapshot.docs.map(toDeliveryItem));
+            if (!initialized) {
+              initialized = true;
+              pendingInitialSnapshots -= 1;
+            }
+            emit();
+          },
+          reportError,
+        );
+        stopItemListeners.push(stopItems);
+      });
+    },
+    reportError,
+  );
+  return () => {
+    stopped = true;
+    stopRequests();
+    stopItemListeners.forEach((stop) => stop());
+  };
+};
+
 export const updateMaterialDeliveryRequest = async (input: {
   requestId: string;
   status: MaterialDeliveryRequestRecord["status"];
@@ -855,18 +989,23 @@ export const updateMaterialDeliveryRequest = async (input: {
   const user = requireCurrentUser();
   if ((await getCurrentRole()) !== "manager") throw new Error("Manager access is required");
   const reference = doc(deliveryRequestsCollection, requireText(input.requestId, "Request id"));
-  const current = await getDoc(reference);
-  if (!current.exists()) throw new Error("Delivery request was not found");
-  const currentStatus = current.data().status as MaterialDeliveryRequestRecord["status"];
   const transitions: Record<MaterialDeliveryRequestRecord["status"], MaterialDeliveryRequestRecord["status"][]> = {
     pending: ["in_progress", "rejected"], in_progress: ["delivered", "rejected"],
     delivered: [], rejected: [],
   };
-  if (!transitions[currentStatus]?.includes(input.status)) throw new Error("Delivery status transition is invalid");
-  await updateDoc(reference, {
-    status: input.status,
-    resolvedAt: input.status === "delivered" || input.status === "rejected" ? serverTimestamp() : null,
-    resolvedBy: input.status === "delivered" || input.status === "rejected" ? user.uid : null,
+  await runTransaction(firebaseDb, async (transaction) => {
+    const current = await transaction.get(reference);
+    if (!current.exists()) throw new Error("Delivery request was not found");
+    const currentStatus = current.data().status as MaterialDeliveryRequestRecord["status"];
+    if (!transitions[currentStatus]?.includes(input.status)) {
+      throw new Error("Delivery status transition is invalid");
+    }
+    const isResolved = input.status === "delivered" || input.status === "rejected";
+    transaction.update(reference, {
+      status: input.status,
+      resolvedAt: isResolved ? serverTimestamp() : null,
+      resolvedBy: isResolved ? user.uid : null,
+    });
   });
   return getMaterialDeliveryRequest(reference.id);
 };

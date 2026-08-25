@@ -11,13 +11,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { LogOut, Clock, MapPin, Repeat, ListChecks, Wrench } from "lucide-react";
+import { LogOut, Clock, MapPin, Repeat, Truck, Wrench } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import TimeTrackingCard from "./TimeTrackingCard";
 import ChangeProjectDialog from "./ChangeProjectDialog";
 import JobsToDoList from "@/components/jobs/JobsToDoList";
 import ToolRequestDialog from "@/components/builders/ToolRequestDialog";
+import MaterialDeliveryDialog from "./MaterialDeliveryDialog";
 
 interface BuilderDashboardProps {
   userId: string;
@@ -30,6 +31,7 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
   const [currentTimeEntry, setCurrentTimeEntry] = useState<TimeEntry | null>(null);
   const [isChangeProjectDialogOpen, setIsChangeProjectDialogOpen] = useState(false);
   const [isToolRequestDialogOpen, setIsToolRequestDialogOpen] = useState(false);
+  const [isMaterialDeliveryDialogOpen, setIsMaterialDeliveryDialogOpen] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -249,14 +251,24 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
             </CardHeader>
           </Card>
 
-          <Card className="opacity-60">
+          <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <ListChecks className="h-5 w-5 text-secondary" />
-                Materials and invoices
+                <Truck className="h-5 w-5 text-primary" />
+                Material deliveries
               </CardTitle>
-              <CardDescription>Firebase migration pending; the legacy dialogs stay isolated.</CardDescription>
+              <CardDescription>Request yard materials and follow each delivery.</CardDescription>
             </CardHeader>
+            <CardContent>
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={!selectedProjectId}
+                onClick={() => setIsMaterialDeliveryDialogOpen(true)}
+              >
+                Request materials
+              </Button>
+            </CardContent>
           </Card>
 
           <Card>
@@ -295,13 +307,21 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
       />
 
       {selectedProject && (
-        <ToolRequestDialog
-          open={isToolRequestDialogOpen}
-          onOpenChange={setIsToolRequestDialogOpen}
-          projectId={selectedProject.id}
-          projectName={selectedProject.name}
-          userId={userId}
-        />
+        <>
+          <ToolRequestDialog
+            open={isToolRequestDialogOpen}
+            onOpenChange={setIsToolRequestDialogOpen}
+            projectId={selectedProject.id}
+            projectName={selectedProject.name}
+            userId={userId}
+          />
+          <MaterialDeliveryDialog
+            open={isMaterialDeliveryDialogOpen}
+            onOpenChange={setIsMaterialDeliveryDialogOpen}
+            projectId={selectedProject.id}
+            projectName={selectedProject.name}
+          />
+        </>
       )}
     </div>
   );

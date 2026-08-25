@@ -26,6 +26,12 @@ service cloud.firestore {
       return ownsExistingDocument(field) && ownsNewDocument(field);
     }
 
+    function requestedNameMatchesAuth(field) {
+      return (request.auth.token.name == null && request.resource.data[field] == null)
+        || (request.auth.token.name is string
+          && request.resource.data[field] == request.auth.token.name);
+    }
+
     function roleClaimIsImmutable() {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(["role"]);
     }
@@ -35,6 +41,11 @@ service cloud.firestore {
         || (resource.data.status == "approved" && request.resource.data.status in ["picked_up", "rejected"])
         || (resource.data.status == "picked_up" && request.resource.data.status in ["delivered", "returned"])
         || (resource.data.status == "delivered" && request.resource.data.status == "returned");
+    }
+
+    function validMaterialDeliveryTransition() {
+      return (resource.data.status == "pending" && request.resource.data.status in ["in_progress", "rejected"])
+        || (resource.data.status == "in_progress" && request.resource.data.status in ["delivered", "rejected"]);
     }
 
     match /users/{userId} {
@@ -119,6 +130,7 @@ service cloud.firestore {
           "createdAt", "updatedAt"
         ])
         && request.resource.data.requestedBy == request.auth.uid
+        && requestedNameMatchesAuth("requestedByName")
         && request.resource.data.status == "pending"
         && request.resource.data.approvedBy == null
         && request.resource.data.pickedUpBy == null
@@ -133,6 +145,7 @@ service cloud.firestore {
         && request.resource.data.toolId == resource.data.toolId
         && request.resource.data.projectId == resource.data.projectId
         && request.resource.data.requestedBy == resource.data.requestedBy
+        && request.resource.data.requestedByName == resource.data.requestedByName
         && validToolRequestTransition();
       allow delete: if isManager();
     }
@@ -154,8 +167,37 @@ service cloud.firestore {
 
     match /materialDeliveryRequests/{requestId} {
       allow read: if isManager() || (isBuilder() && resource.data.userId == request.auth.uid);
-      allow create: if isBuilder() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if isManager();
+      allow create: if isBuilder()
+        && request.resource.data.keys().hasOnly([
+          "projectId", "userId", "requestedByName", "status", "notes", "createdAt",
+          "resolvedAt", "resolvedBy"
+        ])
+        && request.resource.data.userId == request.auth.uid
+        && requestedNameMatchesAuth("requestedByName")
+        && request.resource.data.status == "pending"
+        && request.resource.data.resolvedAt == null
+        && request.resource.data.resolvedBy == null
+        && request.resource.data.createdAt is timestamp
+        && (request.resource.data.notes == null || (
+          request.resource.data.notes is string
+          && request.resource.data.notes.size() <= 1000
+        ))
+        && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
+        && get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.ownerId == request.auth.uid;
+      allow update: if isManager()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "status", "resolvedAt", "resolvedBy"
+        ])
+        && validMaterialDeliveryTransition()
+        && (
+          (request.resource.data.status == "in_progress"
+            && request.resource.data.resolvedAt == null
+            && request.resource.data.resolvedBy == null)
+          || (request.resource.data.status in ["delivered", "rejected"]
+            && request.resource.data.resolvedAt is timestamp
+            && request.resource.data.resolvedBy == request.auth.uid)
+        );
+      allow delete: if false;
     }
 
     match /materialDeliveryItems/{itemId} {
@@ -164,8 +206,16 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/materialDeliveryRequests/$(resource.data.requestId)).data.userId == request.auth.uid
       );
       allow create: if isBuilder()
-        && get(/databases/$(database)/documents/materialDeliveryRequests/$(request.resource.data.requestId)).data.userId == request.auth.uid;
-      allow update, delete: if isManager();
+        && request.resource.data.keys().hasOnly(["requestId", "materialId", "quantity", "createdAt"])
+        && request.resource.data.quantity is number
+        && request.resource.data.quantity > 0
+        && request.resource.data.quantity <= 1000000
+        && request.resource.data.createdAt is timestamp
+        && !exists(/databases/$(database)/documents/materialDeliveryRequests/$(request.resource.data.requestId))
+        && getAfter(/databases/$(database)/documents/materialDeliveryRequests/$(request.resource.data.requestId)).data.userId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/materialDeliveryRequests/$(request.resource.data.requestId)).data.status == "pending"
+        && exists(/databases/$(database)/documents/storageMaterials/$(request.resource.data.materialId));
+      allow update, delete: if false;
     }
 
     match /rubbishCollectionRequests/{requestId} {

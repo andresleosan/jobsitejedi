@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { BriefcaseBusiness, LogOut, Plus, Users, Warehouse } from "lucide-react";
+import { BriefcaseBusiness, LogOut, Plus, Truck, Users, Warehouse } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
@@ -9,6 +9,7 @@ import { listProjects, type ProjectRecord } from "@/lib/firebase/repositories/pr
 import CreateProjectDialog from "./CreateProjectDialog";
 import ProjectList from "./ProjectList";
 import ManagerJobReviewPanel from "./ManagerJobReviewPanel";
+import ManagerMaterialDeliveryDialog from "./ManagerMaterialDeliveryDialog";
 
 interface ManagerDashboardProps {
   userId: string;
@@ -17,6 +18,7 @@ interface ManagerDashboardProps {
 const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
+  const [isMaterialDeliveryOpen, setIsMaterialDeliveryOpen] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -85,8 +87,8 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
               <Users className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-primary">Jobs + photos</div>
-              <p className="text-xs text-muted-foreground">Other manager domains remain queued.</p>
+              <div className="text-2xl font-bold text-primary">Jobs + inventory</div>
+              <p className="text-xs text-muted-foreground">Photos, tools and material deliveries use Firebase.</p>
             </CardContent>
           </Card>
         </div>
@@ -109,6 +111,10 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
                     Storage
                   </Link>
                 </Button>
+                <Button variant="outline" onClick={() => setIsMaterialDeliveryOpen(true)}>
+                  <Truck className="h-4 w-4" />
+                  Deliveries
+                </Button>
                 <Button variant="outline" asChild>
                   <Link to="/invite">
                     <Users className="h-4 w-4" />
@@ -130,6 +136,11 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
         open={isCreateProjectOpen}
         onOpenChange={setIsCreateProjectOpen}
         onProjectCreated={fetchProjects}
+      />
+      <ManagerMaterialDeliveryDialog
+        open={isMaterialDeliveryOpen}
+        onOpenChange={setIsMaterialDeliveryOpen}
+        projects={projects}
       />
     </div>
   );

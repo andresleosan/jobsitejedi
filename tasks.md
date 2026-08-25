@@ -291,7 +291,20 @@ toquen producción necesitan confirmación explícita del operador.
   - Reglas de solicitudes endurecidas con claves permitidas, proyecto perteneciente al builder,
     estado inicial obligatorio y transiciones válidas. Emulator Firebase: 13 archivos/38 tests;
     E2E de fotos e inventario: 2/2; typecheck, ESLint focalizado y build aprobados.
-  - Queda pendiente migrar las UI de entregas de materiales y residuos; T-010 continúa en progreso.
+  - `MaterialDeliveryDialog` y `ManagerMaterialDeliveryDialog` migrados a Firebase e integrados en
+    ambos dashboards. Builder crea una solicitud con ítems del catálogo y manager la mueve por
+    `pending → in_progress → delivered/rejected`; los listeners de solicitudes, ítems y materiales
+    tienen cleanup y la transición manager usa una transacción para evitar carreras.
+  - Cabecera e ítems de entrega se crean en un único batch. Las reglas exigen proyecto propio,
+    catálogo existente, cantidades válidas, claves cerradas e ítems solo durante la creación
+    atómica; además impiden saltos de estado y cambios de identidad/proyecto. `requestedByName` es
+    una desnormalización aditiva e inmutable; documentos antiguos conservan fallback y su rollback
+    consiste en dejar de escribir/leer el campo, sin reescritura destructiva.
+  - Emulator Firebase aprobado en 13 archivos/38 tests y E2E de fotos, herramientas y entregas en
+    3/3. El test integral de invitaciones usa 15 s explícitos para absorber el arranque local de
+    Functions sin relajar ninguna aserción funcional.
+  - Queda pendiente migrar las UI de residuos y revisar los accesos restantes de uso/transferencia
+    de materiales; T-010 continúa en progreso.
 
 ### T-011 — Migrar facturas, reportes y evaluaciones de riesgo
 

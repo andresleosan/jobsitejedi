@@ -10,18 +10,18 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
+import { doc, getDoc, serverTimestamp, setDoc, updateDoc, writeBatch } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 
 const projectId = "demo-jobsite-jedi";
 let testEnv: RulesTestEnvironment;
 
 const builderDb = () =>
-  testEnv.authenticatedContext("builder-1", { role: "builder" }).firestore();
+  testEnv.authenticatedContext("builder-1", { role: "builder", name: "Builder One" }).firestore();
 const otherBuilderDb = () =>
-  testEnv.authenticatedContext("builder-2", { role: "builder" }).firestore();
+  testEnv.authenticatedContext("builder-2", { role: "builder", name: "Builder Two" }).firestore();
 const managerDb = () =>
-  testEnv.authenticatedContext("manager-1", { role: "manager" }).firestore();
+  testEnv.authenticatedContext("manager-1", { role: "manager", name: "Manager One" }).firestore();
 const anonymousDb = () => testEnv.unauthenticatedContext().firestore();
 
 describe("Firestore authorization rules", () => {
@@ -142,6 +142,10 @@ describe("Firestore authorization rules", () => {
       updatedAt: "now",
     };
     await assertSucceeds(setDoc(request, pendingRequest));
+    await assertFails(setDoc(doc(builderDb(), "toolRequests/forged-name"), {
+      ...pendingRequest,
+      requestedByName: "Manager One",
+    }));
     await assertFails(setDoc(doc(builderDb(), "toolRequests/forged-approved"), {
       ...pendingRequest,
       status: "approved",
@@ -197,17 +201,62 @@ describe("Firestore authorization rules", () => {
     await assertFails(getDoc(doc(otherBuilderDb(), usage.path)));
     await assertFails(updateDoc(doc(builderDb(), usage.path), { quantityUsed: 1 }));
 
-    const delivery = doc(builderDb(), "materialDeliveryRequests/delivery-1");
-    await assertSucceeds(setDoc(delivery, { userId: "builder-1", projectId: "project-1", status: "pending" }));
-    const deliveryItem = doc(builderDb(), "materialDeliveryItems/delivery-item-1");
-    await assertSucceeds(setDoc(deliveryItem, {
-      requestId: delivery.id,
-      materialId: "material-1",
-      quantity: 3,
+    await assertSucceeds(setDoc(doc(managerDb(), "projects/delivery-project-1"), {
+      ownerId: "builder-1",
+      name: "Delivery project",
     }));
+    await assertSucceeds(setDoc(doc(managerDb(), "storageMaterials/delivery-material-1"), {
+      name: "Cement",
+      quantity: 10,
+      createdBy: "manager-1",
+    }));
+
+    const deliveryDb = builderDb();
+    const delivery = doc(deliveryDb, "materialDeliveryRequests/delivery-1");
+    const deliveryItem = doc(deliveryDb, "materialDeliveryItems/delivery-item-1");
+    const deliveryBatch = writeBatch(deliveryDb);
+    const deliveryData = {
+      userId: "builder-1",
+      requestedByName: "Builder One",
+      projectId: "delivery-project-1",
+      status: "pending",
+      notes: null,
+      createdAt: serverTimestamp(),
+      resolvedAt: null,
+      resolvedBy: null,
+    };
+    await assertFails(setDoc(doc(builderDb(), "materialDeliveryRequests/forged-name"), {
+      ...deliveryData,
+      requestedByName: "Manager One",
+    }));
+    deliveryBatch.set(delivery, deliveryData);
+    deliveryBatch.set(deliveryItem, {
+      requestId: delivery.id,
+      materialId: "delivery-material-1",
+      quantity: 3,
+      createdAt: serverTimestamp(),
+    });
+    await assertSucceeds(deliveryBatch.commit());
     await assertFails(getDoc(doc(otherBuilderDb(), delivery.path)));
     await assertFails(getDoc(doc(otherBuilderDb(), deliveryItem.path)));
-    await assertSucceeds(updateDoc(doc(managerDb(), delivery.path), { status: "delivered" }));
+    await assertFails(setDoc(doc(builderDb(), "materialDeliveryItems/late-item"), {
+      requestId: delivery.id,
+      materialId: "delivery-material-1",
+      quantity: 1,
+      createdAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(managerDb(), delivery.path), { status: "delivered" }));
+    await assertFails(updateDoc(doc(managerDb(), delivery.path), { projectId: "another-project" }));
+    await assertSucceeds(updateDoc(doc(managerDb(), delivery.path), {
+      status: "in_progress",
+      resolvedAt: null,
+      resolvedBy: null,
+    }));
+    await assertSucceeds(updateDoc(doc(managerDb(), delivery.path), {
+      status: "delivered",
+      resolvedAt: serverTimestamp(),
+      resolvedBy: "manager-1",
+    }));
 
     const rubbish = doc(builderDb(), "rubbishCollectionRequests/rubbish-1");
     await assertSucceeds(setDoc(rubbish, {

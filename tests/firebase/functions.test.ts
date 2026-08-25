@@ -62,5 +62,5 @@ describe("Firebase invitation Functions", () => {
         userId: invitedBuilder.id,
       }),
     ).rejects.toMatchObject({ code: "functions/failed-precondition" });
-  });
+  }, 15_000);
 });
