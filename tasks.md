@@ -256,7 +256,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-010 — Migrar inventario, herramientas y solicitudes
 
-- **Prioridad:** P1 · **Estado:** en-progreso · **Depende de:** T-005, T-009
+- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-005, T-009
 - Crear repositorios para materiales, uso, entregas, herramientas, checkouts y residuos.
 - Cubrir transiciones de estado, cantidades y operaciones manager-only.
 - Reemplazar listeners `postgres_changes` por listeners Firestore con cleanup.
@@ -315,8 +315,20 @@ toquen producción necesitan confirmación explícita del operador.
     longitud de descripción; builder queda aislado y manager solo puede resolver.
   - Evidencia final del bloque residuos: typecheck, ESLint focalizado y build aprobados; Emulator
     Firebase en 13 archivos/39 tests y E2E de fotos, herramientas, entregas y residuos en 4/4.
-  - Queda pendiente revisar los accesos y UI restantes de uso/transferencia de materiales; T-010
-    continúa en progreso.
+  - Añadida la pestaña manager `Movements` en Storage para registrar transferencias a proyecto y
+    consumo directo. Ambos flujos descuentan stock central en una transacción y publican historial
+    en vivo con cleanup; la UI valida disponibilidad, cantidad, proyecto, fecha y notas antes de
+    ejecutar. Builders continúan sin permiso para descontar stock directamente.
+  - Transferencias y consumos son registros de auditoría inmutables. Las reglas exigen identidad
+    firmada, claves cerradas, proyecto/material existentes y que `getAfter` refleje exactamente el
+    descuento declarado sin stock negativo. Cada registro conserva snapshots verificados de nombre
+    de material, unidad y proyecto para seguir siendo legible tras cambios del catálogo.
+  - Evidencia final del bloque: typecheck, ESLint focalizado, `git diff --check` y build de producción
+    aprobados; Emulator Firebase en 13 archivos/39 tests y E2E de fotos, herramientas, entregas,
+    residuos y movimientos en 5/5. El guard global informa las 137 referencias Supabase históricas
+    asignadas a T-011/T-012; los archivos nuevos y el flujo activo de Storage no añaden ninguna.
+  - T-010 pasa a revisión con evidencia. La futura operación builder privilegiada sigue fuera del
+    cliente y depende de una Function de T-009; no bloquea el flujo manager-only aceptado aquí.
 
 ### T-011 — Migrar facturas, reportes y evaluaciones de riesgo
 

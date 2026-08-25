@@ -57,6 +57,15 @@ service cloud.firestore {
       );
     }
 
+    function validStockDecrement(materialId, quantity) {
+      return exists(/databases/$(database)/documents/storageMaterials/$(materialId))
+        && get(/databases/$(database)/documents/storageMaterials/$(materialId)).data.quantity is number
+        && getAfter(/databases/$(database)/documents/storageMaterials/$(materialId)).data.quantity is number
+        && getAfter(/databases/$(database)/documents/storageMaterials/$(materialId)).data.quantity
+          == get(/databases/$(database)/documents/storageMaterials/$(materialId)).data.quantity - quantity
+        && getAfter(/databases/$(database)/documents/storageMaterials/$(materialId)).data.quantity >= 0;
+    }
+
     match /users/{userId} {
       allow get, list: if isManager() || (isSignedIn() && request.auth.uid == userId);
       allow create: if isSignedIn() && request.auth.uid == userId
@@ -165,13 +174,73 @@ service cloud.firestore {
     }
 
     match /materialTransfers/{transferId} {
-      allow read, create: if isManager();
-      allow update, delete: if isManager();
+      allow read: if isManager();
+      allow create: if isManager()
+        && request.resource.data.keys().hasOnly([
+          "materialId", "materialName", "materialUnit", "projectId", "projectName",
+          "quantity", "transferredBy", "transferredByName", "transferredAt", "notes"
+        ])
+        && request.resource.data.materialId is string
+        && request.resource.data.projectId is string
+        && request.resource.data.transferredBy == request.auth.uid
+        && requestedNameMatchesAuth("transferredByName")
+        && request.resource.data.quantity is number
+        && request.resource.data.quantity > 0
+        && request.resource.data.quantity <= 1000000
+        && request.resource.data.transferredAt is timestamp
+        && (request.resource.data.notes == null || (
+          request.resource.data.notes is string
+          && request.resource.data.notes.size() <= 1000
+        ))
+        && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
+        && exists(/databases/$(database)/documents/storageMaterials/$(request.resource.data.materialId))
+        && request.resource.data.projectName
+          == get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.name
+        && request.resource.data.materialName
+          == get(/databases/$(database)/documents/storageMaterials/$(request.resource.data.materialId)).data.name
+        && request.resource.data.materialUnit
+          == get(/databases/$(database)/documents/storageMaterials/$(request.resource.data.materialId)).data.unit
+        && validStockDecrement(request.resource.data.materialId, request.resource.data.quantity);
+      allow update, delete: if false;
     }
 
     match /materialUsage/{usageId} {
       allow read: if isManager() || (isBuilder() && resource.data.usedBy == request.auth.uid);
-      allow create, update, delete: if isManager();
+      allow create: if isManager()
+        && request.resource.data.keys().hasOnly([
+          "projectId", "projectName", "materialId", "materialName", "materialUnit", "jobId",
+          "quantityUsed", "usedBy", "usedByName", "date", "notes", "createdAt"
+        ])
+        && request.resource.data.materialId is string
+        && request.resource.data.projectId is string
+        && request.resource.data.usedBy == request.auth.uid
+        && requestedNameMatchesAuth("usedByName")
+        && request.resource.data.quantityUsed is number
+        && request.resource.data.quantityUsed > 0
+        && request.resource.data.quantityUsed <= 1000000
+        && request.resource.data.date is string
+        && request.resource.data.date.matches("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+        && request.resource.data.createdAt is timestamp
+        && (request.resource.data.notes == null || (
+          request.resource.data.notes is string
+          && request.resource.data.notes.size() <= 1000
+        ))
+        && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
+        && exists(/databases/$(database)/documents/storageMaterials/$(request.resource.data.materialId))
+        && request.resource.data.projectName
+          == get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.name
+        && request.resource.data.materialName
+          == get(/databases/$(database)/documents/storageMaterials/$(request.resource.data.materialId)).data.name
+        && request.resource.data.materialUnit
+          == get(/databases/$(database)/documents/storageMaterials/$(request.resource.data.materialId)).data.unit
+        && (request.resource.data.jobId == null || (
+          request.resource.data.jobId is string
+          && exists(/databases/$(database)/documents/jobs/$(request.resource.data.jobId))
+          && get(/databases/$(database)/documents/jobs/$(request.resource.data.jobId)).data.projectId
+            == request.resource.data.projectId
+        ))
+        && validStockDecrement(request.resource.data.materialId, request.resource.data.quantityUsed);
+      allow update, delete: if false;
     }
 
     match /materialDeliveryRequests/{requestId} {

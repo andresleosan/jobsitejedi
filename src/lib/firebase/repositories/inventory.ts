@@ -105,13 +105,31 @@ export interface ToolCheckoutRecord {
 export interface MaterialUsageRecord {
   id: string;
   projectId: string;
+  projectName: string | null;
   materialId: string;
+  materialName: string | null;
+  materialUnit: string | null;
   jobId: string | null;
   quantityUsed: number;
   usedBy: string;
+  usedByName: string | null;
   date: string;
   notes: string | null;
   createdAt: Date | null;
+}
+
+export interface MaterialTransferRecord {
+  id: string;
+  materialId: string;
+  materialName: string | null;
+  materialUnit: string | null;
+  projectId: string;
+  projectName: string | null;
+  quantity: number;
+  transferredBy: string;
+  transferredByName: string | null;
+  transferredAt: Date | null;
+  notes: string | null;
 }
 
 export interface MaterialDeliveryItemRecord {
@@ -175,6 +193,8 @@ const requestsCollection = collection(firebaseDb, "toolRequests");
 const checkoutsCollection = collection(firebaseDb, "toolCheckouts");
 const transfersCollection = collection(firebaseDb, "materialTransfers");
 const usageCollection = collection(firebaseDb, "materialUsage");
+const projectsCollection = collection(firebaseDb, "projects");
+const jobsCollection = collection(firebaseDb, "jobs");
 const deliveryRequestsCollection = collection(firebaseDb, "materialDeliveryRequests");
 const deliveryItemsCollection = collection(firebaseDb, "materialDeliveryItems");
 const rubbishCollection = collection(firebaseDb, "rubbishCollectionRequests");
@@ -296,13 +316,34 @@ const toUsage = (snapshot: { id: string; data: () => DocumentData }): MaterialUs
   return {
     id: snapshot.id,
     projectId: String(data.projectId ?? ""),
+    projectName: typeof data.projectName === "string" ? data.projectName : null,
     materialId: String(data.materialId ?? ""),
+    materialName: typeof data.materialName === "string" ? data.materialName : null,
+    materialUnit: typeof data.materialUnit === "string" ? data.materialUnit : null,
     jobId: typeof data.jobId === "string" ? data.jobId : null,
     quantityUsed: Number(data.quantityUsed ?? 0),
     usedBy: String(data.usedBy ?? ""),
+    usedByName: typeof data.usedByName === "string" ? data.usedByName : null,
     date: String(data.date ?? ""),
     notes: typeof data.notes === "string" ? data.notes : null,
     createdAt: toDate(data.createdAt),
+  };
+};
+
+const toTransfer = (snapshot: { id: string; data: () => DocumentData }): MaterialTransferRecord => {
+  const data = snapshot.data();
+  return {
+    id: snapshot.id,
+    materialId: String(data.materialId ?? ""),
+    materialName: typeof data.materialName === "string" ? data.materialName : null,
+    materialUnit: typeof data.materialUnit === "string" ? data.materialUnit : null,
+    projectId: String(data.projectId ?? ""),
+    projectName: typeof data.projectName === "string" ? data.projectName : null,
+    quantity: Number(data.quantity ?? 0),
+    transferredBy: String(data.transferredBy ?? ""),
+    transferredByName: typeof data.transferredByName === "string" ? data.transferredByName : null,
+    transferredAt: toDate(data.transferredAt),
+    notes: typeof data.notes === "string" ? data.notes : null,
   };
 };
 
@@ -769,22 +810,42 @@ export const transferMaterial = async (input: {
   const user = requireCurrentUser();
   const quantity = input.quantity;
   assertNonNegative(quantity, "Transfer quantity");
-  if (quantity <= 0) throw new Error("Transfer quantity must be greater than zero");
+  if (quantity <= 0 || quantity > 1_000_000) {
+    throw new Error("Transfer quantity must be between 0 and 1,000,000");
+  }
   const materialId = requireText(input.materialId, "Material id");
   const projectId = requireText(input.projectId, "Project id");
+  const notes = input.notes?.trim() || null;
+  if (notes && notes.length > 1_000) throw new Error("Transfer notes are too long");
+  const transferReference = doc(transfersCollection);
   await runTransaction(firebaseDb, async (transaction) => {
     const materialReference = doc(materialsCollection, materialId);
-    const material = await transaction.get(materialReference);
+    const projectReference = doc(projectsCollection, projectId);
+    const [material, project] = await Promise.all([
+      transaction.get(materialReference),
+      transaction.get(projectReference),
+    ]);
     if (!material.exists()) throw new Error("Material was not found");
+    if (!project.exists()) throw new Error("Project was not found");
     const currentQuantity = Number(material.data().quantity ?? 0);
     if (currentQuantity < quantity) throw new Error("Insufficient material quantity");
-    const transferReference = doc(transfersCollection);
-    transaction.update(materialReference, { quantity: currentQuantity - quantity, updatedAt: serverTimestamp() });
+    const now = serverTimestamp();
+    transaction.update(materialReference, { quantity: currentQuantity - quantity, updatedAt: now });
     transaction.set(transferReference, {
-      materialId, projectId, quantity, transferredBy: user.uid,
-      transferredAt: serverTimestamp(), notes: input.notes?.trim() || null,
+      materialId,
+      materialName: String(material.data().name ?? ""),
+      materialUnit: String(material.data().unit ?? "units"),
+      projectId,
+      projectName: String(project.data().name ?? ""),
+      quantity,
+      transferredBy: user.uid,
+      transferredByName: user.displayName?.trim() || null,
+      transferredAt: now, notes,
     });
   });
+  const created = await getDoc(transferReference);
+  if (!created.exists()) throw new Error("Material transfer was not recorded");
+  return toTransfer(created);
 };
 
 export const recordMaterialUsage = async (input: {
@@ -798,25 +859,56 @@ export const recordMaterialUsage = async (input: {
   await requireManager();
   const user = requireCurrentUser();
   assertNonNegative(input.quantityUsed, "Usage quantity");
-  if (input.quantityUsed <= 0) throw new Error("Usage quantity must be greater than zero");
+  if (input.quantityUsed <= 0 || input.quantityUsed > 1_000_000) {
+    throw new Error("Usage quantity must be between 0 and 1,000,000");
+  }
   const projectId = requireText(input.projectId, "Project id");
   const materialId = requireText(input.materialId, "Material id");
   const date = requireText(input.date, "Usage date");
+  const parsedDate = new Date(`${date}T00:00:00Z`);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(date)
+    || Number.isNaN(parsedDate.getTime())
+    || parsedDate.toISOString().slice(0, 10) !== date
+  ) {
+    throw new Error("Usage date must use YYYY-MM-DD format");
+  }
+  const notes = input.notes?.trim() || null;
+  if (notes && notes.length > 1_000) throw new Error("Usage notes are too long");
+  const jobId = input.jobId?.trim() || null;
   const usage = await runTransaction(firebaseDb, async (transaction) => {
     const materialReference = doc(materialsCollection, materialId);
-    const material = await transaction.get(materialReference);
+    const projectReference = doc(projectsCollection, projectId);
+    const jobReference = jobId ? doc(jobsCollection, jobId) : null;
+    const [material, project, job] = await Promise.all([
+      transaction.get(materialReference),
+      transaction.get(projectReference),
+      jobReference ? transaction.get(jobReference) : Promise.resolve(null),
+    ]);
     if (!material.exists()) throw new Error("Material was not found");
+    if (!project.exists()) throw new Error("Project was not found");
+    if (jobReference && (!job?.exists() || job.data().projectId !== projectId)) {
+      throw new Error("Job does not belong to the selected project");
+    }
     const currentQuantity = Number(material.data().quantity ?? 0);
     if (currentQuantity < input.quantityUsed) throw new Error("Insufficient material quantity");
     const usageReference = doc(usageCollection);
+    const now = serverTimestamp();
     transaction.update(materialReference, {
       quantity: currentQuantity - input.quantityUsed,
-      updatedAt: serverTimestamp(),
+      updatedAt: now,
     });
     transaction.set(usageReference, {
-      projectId, materialId, quantityUsed: input.quantityUsed, usedBy: user.uid, date,
-      jobId: input.jobId?.trim() || null, notes: input.notes?.trim() || null,
-      createdAt: serverTimestamp(),
+      projectId,
+      projectName: String(project.data().name ?? ""),
+      materialId,
+      materialName: String(material.data().name ?? ""),
+      materialUnit: String(material.data().unit ?? "units"),
+      quantityUsed: input.quantityUsed,
+      usedBy: user.uid,
+      date,
+      usedByName: user.displayName?.trim() || null,
+      jobId, notes, createdAt: now,
     });
     return usageReference;
   });
@@ -834,6 +926,36 @@ export const listMaterialUsage = async (projectId?: string) => {
   const snapshots = await getDocs(query(usageCollection, ...constraints));
   return snapshots.docs.map(toUsage).sort((a, b) =>
     (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+};
+
+export const subscribeToMaterialTransfers = async (
+  onChange: (transfers: MaterialTransferRecord[]) => void,
+  onError: (error: Error) => void,
+): Promise<() => void> => {
+  await requireManager();
+  return onSnapshot(
+    transfersCollection,
+    (snapshot) => {
+      onChange(snapshot.docs.map(toTransfer).sort((a, b) =>
+        (b.transferredAt?.getTime() ?? 0) - (a.transferredAt?.getTime() ?? 0)));
+    },
+    (error) => onError(error instanceof Error ? error : new Error("Unable to load material transfers")),
+  );
+};
+
+export const subscribeToMaterialUsage = async (
+  onChange: (usage: MaterialUsageRecord[]) => void,
+  onError: (error: Error) => void,
+): Promise<() => void> => {
+  await requireManager();
+  return onSnapshot(
+    usageCollection,
+    (snapshot) => {
+      onChange(snapshot.docs.map(toUsage).sort((a, b) =>
+        (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0)));
+    },
+    (error) => onError(error instanceof Error ? error : new Error("Unable to load material usage")),
+  );
 };
 
 export const createMaterialDeliveryRequest = async (input: {

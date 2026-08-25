@@ -110,7 +110,12 @@ describe("Firestore authorization rules", () => {
     const material = doc(managerDb(), "storageMaterials/material-1");
     const tool = doc(managerDb(), "storageTools/tool-1");
     const project = doc(managerDb(), "projects/inventory-project-1");
-    await assertSucceeds(setDoc(material, { name: "Concrete", quantity: 10, createdBy: "manager-1" }));
+    await assertSucceeds(setDoc(material, {
+      name: "Concrete",
+      quantity: 10,
+      unit: "bags",
+      createdBy: "manager-1",
+    }));
     await assertSucceeds(setDoc(tool, { name: "Drill", status: "available", createdBy: "manager-1" }));
     await assertSucceeds(setDoc(project, { name: "Builder site", ownerId: "builder-1" }));
 
@@ -181,25 +186,103 @@ describe("Firestore authorization rules", () => {
     const transfer = doc(builderDb(), "materialTransfers/transfer-1");
     await assertFails(setDoc(transfer, {
       materialId: "material-1",
-      projectId: "project-1",
+      materialName: "Concrete",
+      materialUnit: "bags",
+      projectId: "inventory-project-1",
+      projectName: "Builder site",
       quantity: 2,
       transferredBy: "builder-1",
+      transferredByName: "Builder One",
+      transferredAt: serverTimestamp(),
+      notes: null,
     }));
-    await assertSucceeds(setDoc(doc(managerDb(), transfer.path), {
+    const transferManagerDb = managerDb();
+    const managerTransfer = doc(transferManagerDb, transfer.path);
+    const transferData = {
       materialId: "material-1",
-      projectId: "project-1",
+      materialName: "Concrete",
+      materialUnit: "bags",
+      projectId: "inventory-project-1",
+      projectName: "Builder site",
       quantity: 2,
       transferredBy: "manager-1",
-    }));
+      transferredByName: "Manager One",
+      transferredAt: serverTimestamp(),
+      notes: "Issued to site",
+    };
+    await assertFails(setDoc(managerTransfer, transferData));
+    const forgedTransferBatch = writeBatch(transferManagerDb);
+    forgedTransferBatch.update(doc(transferManagerDb, material.path), { quantity: 8, updatedAt: serverTimestamp() });
+    forgedTransferBatch.set(doc(transferManagerDb, "materialTransfers/forged-transfer-name"), {
+      ...transferData,
+      transferredByName: "Builder One",
+    });
+    await assertFails(forgedTransferBatch.commit());
+    const transferBatch = writeBatch(transferManagerDb);
+    transferBatch.update(doc(transferManagerDb, material.path), { quantity: 8, updatedAt: serverTimestamp() });
+    transferBatch.set(managerTransfer, transferData);
+    await assertSucceeds(transferBatch.commit());
     await assertFails(getDoc(doc(builderDb(), transfer.path)));
+    await assertFails(updateDoc(managerTransfer, { quantity: 1 }));
+    await assertFails(deleteDoc(managerTransfer));
   });
 
   test("protects material usage, deliveries and rubbish requests", async () => {
-    const usage = doc(managerDb(), "materialUsage/usage-1");
-    await assertSucceeds(setDoc(usage, { usedBy: "builder-1", projectId: "project-1", quantityUsed: 2 }));
-    await assertSucceeds(getDoc(doc(builderDb(), usage.path)));
-    await assertFails(getDoc(doc(otherBuilderDb(), usage.path)));
-    await assertFails(updateDoc(doc(builderDb(), usage.path), { quantityUsed: 1 }));
+    const usageProject = doc(managerDb(), "projects/usage-project-1");
+    const usageMaterial = doc(managerDb(), "storageMaterials/usage-material-1");
+    await assertSucceeds(setDoc(usageProject, { ownerId: "builder-1", name: "Usage project" }));
+    await assertSucceeds(setDoc(usageMaterial, {
+      name: "Usage material",
+      quantity: 10,
+      unit: "units",
+      createdBy: "manager-1",
+    }));
+    const usageManagerDb = managerDb();
+    const usage = doc(usageManagerDb, "materialUsage/usage-1");
+    const usageData = {
+      projectId: "usage-project-1",
+      projectName: "Usage project",
+      materialId: "usage-material-1",
+      materialName: "Usage material",
+      materialUnit: "units",
+      jobId: null,
+      quantityUsed: 2,
+      usedBy: "manager-1",
+      usedByName: "Manager One",
+      date: "2026-08-24",
+      notes: "Direct site use",
+      createdAt: serverTimestamp(),
+    };
+    await assertFails(setDoc(usage, usageData));
+    await assertFails(setDoc(doc(builderDb(), "materialUsage/builder-direct-usage"), {
+      ...usageData,
+      usedBy: "builder-1",
+      usedByName: "Builder One",
+    }));
+    const forgedUsageBatch = writeBatch(usageManagerDb);
+    forgedUsageBatch.update(doc(usageManagerDb, usageMaterial.path), { quantity: 8, updatedAt: serverTimestamp() });
+    forgedUsageBatch.set(doc(usageManagerDb, "materialUsage/forged-usage-name"), {
+      ...usageData,
+      usedByName: "Builder One",
+    });
+    await assertFails(forgedUsageBatch.commit());
+    const usageBatch = writeBatch(usageManagerDb);
+    usageBatch.update(doc(usageManagerDb, usageMaterial.path), { quantity: 8, updatedAt: serverTimestamp() });
+    usageBatch.set(usage, usageData);
+    await assertSucceeds(usageBatch.commit());
+    await assertSucceeds(getDoc(usage));
+    await assertFails(getDoc(doc(builderDb(), usage.path)));
+    await assertFails(updateDoc(usage, { quantityUsed: 1 }));
+    await assertFails(deleteDoc(usage));
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), "materialUsage/builder-owned-usage"), {
+        usedBy: "builder-1",
+        projectId: "usage-project-1",
+      });
+    });
+    await assertSucceeds(getDoc(doc(builderDb(), "materialUsage/builder-owned-usage")));
+    await assertFails(getDoc(doc(otherBuilderDb(), "materialUsage/builder-owned-usage")));
 
     await assertSucceeds(setDoc(doc(managerDb(), "projects/delivery-project-1"), {
       ownerId: "builder-1",
