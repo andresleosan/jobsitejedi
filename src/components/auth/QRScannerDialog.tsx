@@ -135,7 +135,7 @@ export const QRScannerDialog = ({ open, onClose, onScan }: QRScannerDialogProps)
           console.error("QR Scanner error:", err);
           const name =
             typeof err === "object" && err && "name" in err
-              ? String((err as any).name)
+              ? String(err.name)
               : "";
 
           if (!cancelled) {

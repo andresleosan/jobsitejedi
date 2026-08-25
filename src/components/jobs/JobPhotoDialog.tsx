@@ -27,6 +27,7 @@ interface JobPhotoDialogProps {
   job: JobRecord | null;
   kind: JobPhotoKind;
   onUploaded?: () => void;
+  readOnly?: boolean;
 }
 
 interface DraftPhoto {
@@ -63,6 +64,7 @@ const JobPhotoDialog = ({
   job,
   kind,
   onUploaded,
+  readOnly = false,
 }: JobPhotoDialogProps) => {
   const [draftPhotos, setDraftPhotos] = useState<DraftPhoto[]>([]);
   const [existingPhotos, setExistingPhotos] = useState<ExistingPhoto[]>([]);
@@ -262,7 +264,7 @@ const JobPhotoDialog = ({
         </DialogHeader>
 
         <div className="space-y-5">
-          <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-4">
+          {!readOnly && <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="font-medium">Add evidence from this device</p>
@@ -282,9 +284,9 @@ const JobPhotoDialog = ({
               onChange={handleFileSelect}
               aria-label="Choose photos for this job"
             />
-          </div>
+          </div>}
 
-          {draftPhotos.length > 0 && (
+          {!readOnly && draftPhotos.length > 0 && (
             <div>
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-sm font-medium">Ready to upload</p>
@@ -331,6 +333,7 @@ const JobPhotoDialog = ({
                 {existingPhotos.map((photo) => (
                   <div key={photo.record.id} className="group relative aspect-square overflow-hidden rounded-md border bg-muted">
                     <img src={photo.previewUrl} alt={photo.record.fileName} className="h-full w-full object-cover" />
+                    {!readOnly && (
                     <Button
                       type="button"
                       variant="destructive"
@@ -342,13 +345,14 @@ const JobPhotoDialog = ({
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
+                    )}
                   </div>
                 ))}
               </div>
             )}
           </section>
 
-          {kind === "completion" && existingPhotos.length > 0 && job?.status !== "waiting_review" && job?.status !== "completed" && (
+          {!readOnly && kind === "completion" && existingPhotos.length > 0 && job?.status !== "waiting_review" && job?.status !== "completed" && (
             <div className="rounded-md border border-secondary/50 bg-secondary/10 p-3">
               <p className="text-sm font-medium">Ready for manager review?</p>
               <p className="mt-1 text-xs text-muted-foreground">Submitting locks the job into the review queue until a manager responds.</p>

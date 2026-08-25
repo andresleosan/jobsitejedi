@@ -67,11 +67,35 @@ describe("Firebase Storage authorization rules", () => {
   });
 
   test("supports the remaining private domain roots for the owner", async () => {
-    for (const root of ["dailyReports", "invoices", "documents", "materials", "voiceNotes"]) {
+    for (const root of ["dailyReports", "documents", "materials", "voiceNotes"]) {
       await assertSucceeds(
         uploadBytes(ref(builderStorage(), `${root}/builder-1/file.bin`), await image()),
       );
     }
+  });
+
+  test("locks private invoice evidence after the server record exists", async () => {
+    const path = "invoices/builder-1/invoice-storage-1/invoice.pdf";
+    const pdf = new Blob(["invoice-pdf"], { type: "application/pdf" });
+    await assertSucceeds(uploadBytes(ref(builderStorage(), path), pdf));
+    await assertSucceeds(getBytes(ref(builderStorage(), path)));
+    await assertSucceeds(getBytes(ref(managerStorage(), path)));
+    await assertFails(getBytes(ref(otherBuilderStorage(), path)));
+    await assertFails(uploadBytes(
+      ref(managerStorage(), "invoices/builder-1/manager-write/invoice.pdf"),
+      pdf,
+    ));
+    await assertFails(uploadBytes(ref(builderStorage(), path), pdf));
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), "invoices/invoice-storage-1"), {
+        uploadedBy: "builder-1",
+        filePath: path,
+        status: "submitted",
+      });
+    });
+    await assertFails(deleteObject(ref(builderStorage(), path)));
+    await assertFails(uploadBytes(ref(builderStorage(), path), pdf));
   });
 
   test("keeps rubbish evidence immutable after its request is created", async () => {
@@ -113,6 +137,12 @@ describe("Firebase Storage authorization rules", () => {
     );
     await assertFails(
       uploadBytes(ref(builderStorage(), "rubbish/builder-1/request-1/file.txt"), pdf),
+    );
+    await assertFails(
+      uploadBytes(
+        ref(builderStorage(), "invoices/builder-1/invoice-invalid/file.txt"),
+        pdf,
+      ),
     );
   });
 });

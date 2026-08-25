@@ -20,8 +20,6 @@ export default defineConfig({
     env: {
       ...process.env,
       VITE_FIREBASE_USE_EMULATORS: "true",
-      VITE_SUPABASE_URL: "https://legacy-disabled.invalid",
-      VITE_SUPABASE_PUBLISHABLE_KEY: "e2e-disabled-key",
     },
   },
 });

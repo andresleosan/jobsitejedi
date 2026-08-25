@@ -11,8 +11,9 @@ export const firebaseConfig = {
   projectId: useEmulators
     ? emulatorProjectId
     : (env.VITE_FIREBASE_PROJECT_ID ?? emulatorProjectId),
-  storageBucket:
-    env.VITE_FIREBASE_STORAGE_BUCKET ?? "demo-jobsite-jedi.appspot.com",
+  storageBucket: useEmulators
+    ? emulatorProjectId
+    : (env.VITE_FIREBASE_STORAGE_BUCKET ?? "demo-jobsite-jedi.appspot.com"),
   messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID ?? "000000000000",
   appId: env.VITE_FIREBASE_APP_ID ?? "demo-app-id",
   emulators: {

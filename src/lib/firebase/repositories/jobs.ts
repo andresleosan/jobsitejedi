@@ -88,16 +88,32 @@ const requireCurrentUser = () => {
 };
 
 const validateJobInput = (input: JobInput) => {
-  if (!input.projectId.trim() || !input.title.trim()) {
+  if (!input?.projectId?.trim() || !input?.title?.trim()) {
     throw new Error("Project and job title are required");
   }
-}
+  if (input.title.trim().length > 160) throw new Error("Job title is too long");
+  if ((input.description?.trim().length ?? 0) > 2_000) throw new Error("Job description is too long");
+  if ((input.section?.trim().length ?? 0) > 120) throw new Error("Job section is too long");
+};
+
+const resolveBuilderId = async (input: JobInput, userId: string, role: string | null) => {
+  const requestedBuilderId = input.builderId?.trim();
+  if (requestedBuilderId) return requestedBuilderId;
+  if (role !== "manager") return userId;
+
+  const project = await getDoc(doc(firebaseDb, "projects", input.projectId.trim()));
+  const ownerId = project.exists() ? project.data().ownerId : null;
+  if (typeof ownerId !== "string" || !ownerId.trim()) {
+    throw new Error("The project must have a builder owner before jobs can be created");
+  }
+  return ownerId.trim();
+};
 
 export const createJob = async (input: JobInput): Promise<JobRecord> => {
   validateJobInput(input);
   const user = requireCurrentUser();
   const role = await getCurrentRole();
-  const builderId = input.builderId?.trim() || user.uid;
+  const builderId = await resolveBuilderId(input, user.uid, role);
 
   if (role === "builder" && builderId !== user.uid) {
     throw new Error("A builder can only create jobs for their own account");

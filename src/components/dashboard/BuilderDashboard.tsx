@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { LogOut, Clock, MapPin, Repeat, Trash2, Truck, Wrench } from "lucide-react";
+import { LogOut, Clock, MapPin, ReceiptText, Repeat, Trash2, Truck, Wrench } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import TimeTrackingCard from "./TimeTrackingCard";
@@ -20,6 +20,7 @@ import JobsToDoList from "@/components/jobs/JobsToDoList";
 import ToolRequestDialog from "@/components/builders/ToolRequestDialog";
 import MaterialDeliveryDialog from "./MaterialDeliveryDialog";
 import RubbishCollectionDialog from "./RubbishCollectionDialog";
+import InvoiceSubmissionDialog from "./InvoiceSubmissionDialog";
 
 interface BuilderDashboardProps {
   userId: string;
@@ -34,6 +35,7 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
   const [isToolRequestDialogOpen, setIsToolRequestDialogOpen] = useState(false);
   const [isMaterialDeliveryDialogOpen, setIsMaterialDeliveryDialogOpen] = useState(false);
   const [isRubbishDialogOpen, setIsRubbishDialogOpen] = useState(false);
+  const [isInvoiceDialogOpen, setIsInvoiceDialogOpen] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -239,7 +241,7 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
         {selectedProjectId && <JobsToDoList projectId={selectedProjectId} />}
 
         {/* Firebase verticals still being migrated */}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
           <Card
             className={isClockedIn ? "cursor-pointer hover:shadow-md transition-shadow" : "opacity-60"}
             onClick={() => isClockedIn && setIsChangeProjectDialogOpen(true)}
@@ -312,6 +314,26 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
               </Button>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ReceiptText className="h-5 w-5 text-primary" />
+                Project invoices
+              </CardTitle>
+              <CardDescription>Submit private receipts and follow manager review.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={!selectedProjectId}
+                onClick={() => setIsInvoiceDialogOpen(true)}
+              >
+                Submit an invoice
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </main>
 
@@ -349,6 +371,12 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
             projectId={selectedProject.id}
             projectName={selectedProject.name}
             projects={projects}
+          />
+          <InvoiceSubmissionDialog
+            open={isInvoiceDialogOpen}
+            onOpenChange={setIsInvoiceDialogOpen}
+            projectId={selectedProject.id}
+            projectName={selectedProject.name}
           />
         </>
       )}

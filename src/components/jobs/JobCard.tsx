@@ -6,19 +6,76 @@ import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Clock, CheckCircle2, AlertCircle, PlayCircle, Users, Package, Download, XCircle, Edit } from "lucide-react";
 
+interface ProfileSummary {
+  full_name?: string | null;
+}
+
+interface ActiveWorker {
+  id: string;
+  user_id?: string;
+  profiles?: ProfileSummary | null;
+}
+
+interface MaterialUsage {
+  quantity_used?: number | null;
+  materials?: {
+    cost_per_unit?: number | null;
+    name?: string | null;
+    unit?: string | null;
+  } | null;
+}
+
+interface JobMaterial {
+  id: string;
+  material_usage?: MaterialUsage | null;
+}
+
+interface JobCollaborator {
+  user_id: string;
+  profiles?: ProfileSummary | null;
+}
+
+interface JobCompletionPhoto {
+  photo_url: string;
+}
+
+interface JobCompletion {
+  profiles?: ProfileSummary | null;
+  notes?: string | null;
+  job_collaborators?: JobCollaborator[];
+  job_completion_photos: JobCompletionPhoto[];
+}
+
+interface JobPhoto {
+  photo_url: string;
+}
+
+interface JobCardJob {
+  id: string;
+  title: string;
+  description?: string | null;
+  status: string;
+  profiles?: ProfileSummary | null;
+  job_completions?: JobCompletion[];
+  job_time_tracking?: unknown[];
+  job_materials?: JobMaterial[];
+  manager_feedback?: string | null;
+  job_photos?: JobPhoto[];
+}
+
 interface JobCardProps {
-  job: any;
+  job: JobCardJob;
   userRole: "manager" | "builder" | null;
-  activeWorkers: any[];
+  activeWorkers: ActiveWorker[];
   photoUrls: string[];
   managerFeedbackPhotoUrls: string[];
-  onEdit: (job: any) => void;
+  onEdit: (job: JobCardJob) => void;
   onStartTracking: (jobId: string) => void;
   onSubmitForReview: (jobId: string) => void;
   onNeedsCorrection: (jobId: string) => void;
   onJobDone: (jobId: string) => void;
   onDownloadPhoto: (photoPath: string, bucket?: string) => void;
-  calculateTotalTime: (timeTracking: any[]) => number;
+  calculateTotalTime: (timeTracking: unknown[]) => number;
   formatTime: (minutes: number) => string;
   // Selection mode props
   selectionMode?: boolean;
@@ -125,7 +182,7 @@ export const JobCard = ({
               <CardContent className="px-3 pb-3">
                 {workers.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
-                    {workers.map((worker: any) => (
+                    {workers.map((worker) => (
                       <Badge key={worker.id} variant="secondary" className="animate-pulse text-xs">
                         {worker.profiles?.full_name}
                       </Badge>
@@ -169,10 +226,10 @@ export const JobCard = ({
                 <div className="text-xl sm:text-2xl font-bold">{materials.length}</div>
                 {materials.length > 0 && (
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    £{materials.reduce((sum: number, m: any) => {
+                    £{materials.reduce((sum, m) => {
                       const usage = m.material_usage;
                       const material = usage?.materials;
-                      return sum + (usage?.quantity_used * material?.cost_per_unit || 0);
+                      return sum + ((usage?.quantity_used ?? 0) * (material?.cost_per_unit ?? 0));
                     }, 0).toFixed(2)} total
                   </p>
                 )}
@@ -195,7 +252,7 @@ export const JobCard = ({
                   {completion.job_collaborators?.length > 0 && (
                     <>
                       <span className="text-sm text-muted-foreground">with</span>
-                      {completion.job_collaborators.map((collab: any) => (
+                      {completion.job_collaborators.map((collab) => (
                         <Badge key={collab.user_id} variant="secondary">
                           {collab.profiles?.full_name}
                         </Badge>
@@ -250,7 +307,7 @@ export const JobCard = ({
                   <div className="space-y-3">
                     <p className="text-sm font-medium">Materials Breakdown</p>
                     <div className="border rounded-lg divide-y">
-                      {materials.map((jm: any) => {
+                      {materials.map((jm) => {
                         const usage = jm.material_usage;
                         const material = usage?.materials;
                         return (
@@ -262,7 +319,7 @@ export const JobCard = ({
                               </div>
                             </div>
                             <div className="font-semibold text-sm">
-                              £{(usage?.quantity_used * material?.cost_per_unit).toFixed(2)}
+                              £{((usage?.quantity_used ?? 0) * (material?.cost_per_unit ?? 0)).toFixed(2)}
                             </div>
                           </div>
                         );
@@ -310,7 +367,10 @@ export const JobCard = ({
                               variant="secondary"
                               size="sm"
                               className="absolute bottom-1 right-1 h-7 w-7 p-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
-                              onClick={() => onDownloadPhoto(job.job_photos[index]?.photo_url, "job-photos")}
+                              onClick={() => {
+                                const photo = job.job_photos?.[index];
+                                if (photo) onDownloadPhoto(photo.photo_url, "job-photos");
+                              }}
                             >
                               <Download className="h-3 w-3" />
                             </Button>

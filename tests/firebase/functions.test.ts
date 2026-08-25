@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+import { collection, doc } from "firebase/firestore";
 
 const credentials = (label: string) => ({
   email: `functions-${label}-${Date.now()}@example.test`,
@@ -16,6 +17,12 @@ let registerWithInvitation: typeof import("@/lib/firebase/auth").registerWithInv
 let signIn: typeof import("@/lib/firebase/auth").signIn;
 let signOut: typeof import("@/lib/firebase/auth").signOut;
 let invitationOperations: typeof import("@/lib/firebase/functions").invitationOperations;
+let submitInvoiceRecord: typeof import("@/lib/firebase/functions").submitInvoiceRecord;
+let reviewInvoiceRecord: typeof import("@/lib/firebase/functions").reviewInvoiceRecord;
+let createProject: typeof import("@/lib/firebase/repositories/projects").createProject;
+let uploadPrivateFile: typeof import("@/lib/firebase/storage").uploadPrivateFile;
+let buildPrivateStoragePath: typeof import("@/lib/firebase/storage").buildPrivateStoragePath;
+let firebaseDb: typeof import("@/lib/firebase/client").firebaseDb;
 
 describe("Firebase invitation Functions", () => {
   beforeAll(async () => {
@@ -28,7 +35,10 @@ describe("Firebase invitation Functions", () => {
       ?? initializeApp({ projectId: "demo-jobsite-jedi" }, "firebase-invitation-tests");
     adminAuth = getAuth(adminApp);
     ({ registerBuilder, registerWithInvitation, signIn, signOut } = await import("@/lib/firebase/auth"));
-    ({ invitationOperations } = await import("@/lib/firebase/functions"));
+    ({ invitationOperations, submitInvoiceRecord, reviewInvoiceRecord } = await import("@/lib/firebase/functions"));
+    ({ createProject } = await import("@/lib/firebase/repositories/projects"));
+    ({ uploadPrivateFile, buildPrivateStoragePath } = await import("@/lib/firebase/storage"));
+    ({ firebaseDb } = await import("@/lib/firebase/client"));
   });
 
   afterAll(async () => {
@@ -63,4 +73,57 @@ describe("Firebase invitation Functions", () => {
       }),
     ).rejects.toMatchObject({ code: "functions/failed-precondition" });
   }, 15_000);
+
+  test("submits an invoice idempotently and restricts review to managers", async () => {
+    const builderCredentials = credentials("invoice-builder");
+    const builder = await registerBuilder(builderCredentials);
+    const project = await createProject({
+      name: "Functions invoice project",
+      clientName: "Invoice client",
+    });
+    const invoiceId = doc(collection(firebaseDb, "invoices")).id;
+    const filePath = buildPrivateStoragePath("invoices", builder.id, invoiceId, "invoice.png");
+    await uploadPrivateFile(
+      filePath,
+      new Blob(["invoice-image"], { type: "image/png" }),
+      { contentType: "image/png" },
+    );
+    const payload = {
+      invoiceId,
+      projectId: project.id,
+      invoiceNumber: "INV-FN-100",
+      supplierName: "Functions Supplier",
+      invoiceDate: "2026-08-24",
+      totalAmountMinor: 45_678,
+      currency: "GBP" as const,
+      notes: "Callable integration fixture",
+      filePath,
+      fileName: "invoice.png",
+    };
+
+    await expect(submitInvoiceRecord(payload)).resolves.toEqual({ invoiceId, status: "submitted" });
+    await expect(submitInvoiceRecord(payload)).resolves.toEqual({ invoiceId, status: "submitted" });
+    await expect(submitInvoiceRecord({ ...payload, totalAmountMinor: 0 })).rejects.toMatchObject({
+      code: "functions/invalid-argument",
+    });
+    await expect(reviewInvoiceRecord({
+      invoiceId,
+      status: "approved",
+      reviewNotes: "Builder cannot approve",
+    })).rejects.toMatchObject({ code: "functions/permission-denied" });
+
+    await signOut();
+    const managerCredentials = credentials("invoice-manager");
+    const manager = await registerBuilder(managerCredentials);
+    await adminAuth.setCustomUserClaims(manager.id, { role: "manager" });
+    await signOut();
+    await signIn(managerCredentials.email, managerCredentials.password);
+
+    const review = { invoiceId, status: "approved" as const, reviewNotes: "Matched to project" };
+    await expect(reviewInvoiceRecord(review)).resolves.toEqual({ invoiceId, status: "approved" });
+    await expect(reviewInvoiceRecord(review)).resolves.toEqual({ invoiceId, status: "approved" });
+    await expect(reviewInvoiceRecord({ ...review, status: "rejected" })).rejects.toMatchObject({
+      code: "functions/failed-precondition",
+    });
+  }, 20_000);
 });

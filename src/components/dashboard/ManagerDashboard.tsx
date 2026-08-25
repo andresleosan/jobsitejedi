@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { BriefcaseBusiness, LogOut, Plus, Trash2, Truck, Users, Warehouse } from "lucide-react";
+import { BriefcaseBusiness, LogOut, Plus, ReceiptText, Trash2, Truck, Users, Warehouse } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
@@ -11,6 +11,7 @@ import ProjectList from "./ProjectList";
 import ManagerJobReviewPanel from "./ManagerJobReviewPanel";
 import ManagerMaterialDeliveryDialog from "./ManagerMaterialDeliveryDialog";
 import ManagerRubbishDialog from "./ManagerRubbishDialog";
+import ManagerInvoicesDialog from "./ManagerInvoicesDialog";
 
 interface ManagerDashboardProps {
   userId: string;
@@ -21,6 +22,7 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
   const [isMaterialDeliveryOpen, setIsMaterialDeliveryOpen] = useState(false);
   const [isRubbishDialogOpen, setIsRubbishDialogOpen] = useState(false);
+  const [isInvoicesDialogOpen, setIsInvoicesDialogOpen] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -121,6 +123,10 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
                   <Trash2 className="h-4 w-4" />
                   Rubbish requests
                 </Button>
+                <Button variant="outline" onClick={() => setIsInvoicesDialogOpen(true)}>
+                  <ReceiptText className="h-4 w-4" />
+                  Invoice review
+                </Button>
                 <Button variant="outline" asChild>
                   <Link to="/invite">
                     <Users className="h-4 w-4" />
@@ -152,6 +158,10 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
         open={isRubbishDialogOpen}
         onOpenChange={setIsRubbishDialogOpen}
         projects={projects}
+      />
+      <ManagerInvoicesDialog
+        open={isInvoicesDialogOpen}
+        onOpenChange={setIsInvoicesDialogOpen}
       />
     </div>
   );

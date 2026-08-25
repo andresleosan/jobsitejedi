@@ -250,9 +250,14 @@ toquen producción necesitan confirmación explícita del operador.
   - La prueba `tests/firebase/functions.test.ts` cubre en Emulator el camino feliz
     manager→crear invitación→builder consumir, asignación server-side del rol y segundo consumo
     rechazado; `npm.cmd run test:firebase:emulator` queda en 13 archivos y 37 tests aprobados.
-  - El slice de invitaciones queda funcional, pero T-009 sigue en progreso hasta cubrir facturas,
-    extracción de Excel y limpieza programada, además de endurecer reintentos/timeouts y el manejo
-    compensatorio si falla la asignación de claims después de crear una cuenta.
+  - Implementado el primer slice de facturas con `submitInvoice` y `reviewInvoice`: exige roles,
+    valida fechas e importes enteros en peniques, comprueba propiedad del proyecto y metadata real
+    del archivo privado, limita cada comprobante a menos de 10 MB y conserva snapshots de auditoría.
+  - El alta y la revisión son idempotentes para el mismo payload; la revisión es terminal y
+    manager-only. `maxInstances: 10` y timeouts explícitos acotan abuso/costo básico, aunque la cuota
+    por usuario o App Check queda como endurecimiento previo a producción.
+  - T-009 sigue en progreso hasta cubrir extracción de Excel, limpieza programada, protección por
+    usuario y el manejo compensatorio si falla la asignación de claims después de crear una cuenta.
 
 ### T-010 — Migrar inventario, herramientas y solicitudes
 
@@ -332,73 +337,142 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-011 — Migrar facturas, reportes y evaluaciones de riesgo
 
-- **Prioridad:** P1 · **Estado:** pendiente · **Depende de:** T-007, T-009, T-010
+- **Prioridad:** P1 · **Estado:** en-progreso · **Depende de:** T-007, T-009, T-010
 - Migrar facturas, proveedores, extracción, reportes diarios, firmas y documentos.
 - Revisar especialmente que `documents` no exponga archivos de otros usuarios y que la
   ruta/bucket de evaluaciones de riesgo sea coherente.
 - **Aceptación:** archivos, datos financieros y firmas tienen tests de autorización y E2E.
+- **Avance 2026-08-24:**
+  - Añadido repositorio Firebase tipado para facturas, importes exactos en peniques, subida privada
+    con borrado compensatorio y listeners con cleanup. El builder ve solo el historial del proyecto
+    abierto; el manager filtra, descarga la evidencia y aprueba o rechaza con nota opcional.
+  - Firestore bloquea escrituras directas y aísla lecturas builder; Storage exige la ruta exacta
+    `invoices/{uid}/{invoiceId}/{archivo}`, imagen/PDF menor de 10 MB y vuelve el objeto inmutable
+    cuando existe el registro financiero. El contrato y rollback están en
+    `docs/data-model-invoices.md`; no se aplicó migración ni se conectó OCR/API de pago.
+  - Autocrítica de seguridad: autenticación y rol se verifican server-side, las entradas y metadata
+    se revalidan, no hay secretos nuevos y los archivos nuevos no contienen referencias Supabase.
+    La evidencia de este incremento detectó 137 referencias heredadas y 4 avisos altos/2 moderados;
+    ambos hallazgos quedaron resueltos posteriormente en T-012/T-019.
+  - Evidencia: `npm.cmd run typecheck`, build de producción, ESLint focalizado y
+    `git diff --check` aprobados; `npm.cmd run test:firebase:emulator` → 13 archivos/42 tests;
+    `npm.cmd run test:e2e:firebase:emulator` → 6/6 E2E, incluido importe inválido,
+    builder→envío privado→manager descarga y aprobación.
+  - T-011 continúa para proveedores, extracción, reportes diarios, firmas, documentos y
+    evaluaciones de riesgo; no se marca como aprobada con alcance parcial.
 
 ## Fase 5 — Retirada de Supabase
 
 ### T-012 — Eliminar dependencias runtime de Supabase
 
-- **Prioridad:** P0 · **Estado:** pendiente · **Depende de:** T-005, T-006, T-007, T-008,
+- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-005, T-006, T-007, T-008,
   T-009, T-010, T-011
 - Eliminar imports runtime de Supabase en `src`.
 - Eliminar cliente, tipos y dependencia npm solo cuando no haya consumidores.
 - Mantener migraciones históricas como evidencia hasta decidir su limpieza.
 - **Pruebas:** `npm run test:provider-guard` debe pasar con cero referencias.
 - **Aceptación:** `rg` y el guard confirman que no existe una ruta híbrida accidental.
+- **Avance 2026-08-25:**
+  - `ProjectDetails` y `Statements`, las dos rutas alcanzables que quedaban, consumen repositorios
+    Firebase; los módulos Supabase sin consumidores, cliente, tipos y helper Storage se retiraron.
+  - Se eliminaron `@supabase/supabase-js` y las variables `VITE_SUPABASE_*` del runtime. Las
+    migraciones y Functions históricas permanecen intactas como evidencia para T-013.
+  - `npm.cmd run test:provider-guard` → 3/3 y `rg` → cero referencias Supabase bajo `src`.
+    La aceptación E2E manager→proyecto→ledger pasa dentro de la suite 7/7.
+  - Autocrítica y seguridad: no se hallaron vulnerabilidades críticas; acceso y roles siguen
+    aplicándose en repositorios y Rules. No hubo despliegue, migración ni acceso a datos reales.
 
 ### T-013 — Retirar o aislar infraestructura Supabase antigua
 
-- **Prioridad:** P1 · **Estado:** pendiente · **Depende de:** T-012
+- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-012
 - Documentar qué migraciones se conservan como historial y qué carpetas quedan fuera del
   runtime.
 - Si se aplica la migración Storage anterior, hacerlo primero en staging con backup
   verificado, rollback documentado y confirmación explícita del operador.
 - Validar políticas efectivas en `pg_policies` antes de retirar el proveedor.
 - **Aceptación:** no se ejecuta ninguna acción destructiva en producción sin checkpoint.
+- **Avance 2026-08-25:**
+  - Inventariados 67 migrations, 3 Edge Functions, 1 script SQL y la configuración CLI
+    histórica; quedaron documentados como artefactos fuera del runtime Firebase.
+  - Añadidos `docs/legacy-supabase.md`, `supabase/README.md` y ADR-002 para fijar la
+    frontera: `src/` y `functions/src/` no importan ni invocan Supabase.
+  - README y `docs/supabase-setup.md` ya no presentan Supabase como configuración activa;
+    la guía quedó limitada a validación autorizada en staging.
+  - El guard `npm.cmd run test:provider-guard` verifica ambos árboles runtime y pasa 3/3;
+    `npm.cmd run typecheck`, `npm.cmd run lint` y `git diff --check` también pasan.
+  - No se ejecutaron `pg_policies`, `supabase db push`, despliegues, migraciones ni borrados:
+    el estado remoto requiere acceso autorizado, backup verificable, rollback y checkpoint
+    explícito del operador antes de cerrar la retirada del proveedor.
 
 ## Fase 6 — Calidad, seguridad y rendimiento
 
 ### T-014 — Cerrar TypeScript y lint por lotes
 
-- **Prioridad:** P1 · **Estado:** en-progreso · **Depende de:** T-012
+- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-012
 - Corregir primero errores de compilación y después dividir la deuda de `any` por dominio:
   auth, proyectos/trabajos, inventario, finanzas y UI.
 - Resolver dependencias reales de `useEffect`; no silenciar reglas globalmente.
 - **Aceptación:** `tsc --noEmit` y `npm run lint` pasan sin desactivar reglas de seguridad.
-- **Avance 2026-08-24:**
+- **Avance 2026-08-25:**
   - Corregido el import duplicado de `storage`, además de tipado seguro de errores y
     dependencia real de `useEffect` en `RubbishCollectionDialog.tsx`.
-  - `npm.cmd run typecheck` → aprobado.
-  - ESLint focalizado de los módulos tocados y `git diff --check` → aprobados.
-  - `npm.cmd run build` → aprobado; `npm.cmd run lint` todavía falla con 116 errores y
-    26 avisos históricos fuera de este lote y se seguirá cerrando por dominio.
+  - Tipados explícitos en `QRScannerDialog.tsx` y `JobCard.tsx`; interfaces vacías
+    reemplazadas en `command.tsx` y `textarea.tsx`; import ESM en `tailwind.config.ts`;
+    errores `unknown` seguros en la función histórica de Supabase; y limpieza de streams
+    de cámara corregida en `CameraCapture.tsx`.
+  - `npm.cmd run typecheck` → aprobado; `npm.cmd run lint` → 0 errores y 7 avisos
+    no bloqueantes de Fast Refresh en componentes UI compartidos.
+  - `npm.cmd run build` → aprobado; `npm.cmd run test:provider-guard` → 3/3; `npm.cmd
+    run test:firebase:emulator` → 13 archivos y 43 pruebas aprobadas en la segunda
+    ejecución (la primera tuvo un timeout transitorio de carga del emulador Functions).
+  - `npm.cmd audit --omit=dev` → 0 vulnerabilidades; `git diff --check` → aprobado.
+  - Autocrítica de seguridad: los cambios no agregan endpoints, secretos, permisos ni
+    dependencias runtime; no hubo despliegue, migración ni acceso a datos reales.
 
 ### T-015 — Completar QA automatizado
 
-- **Prioridad:** P1 · **Estado:** pendiente · **Depende de:** T-012, T-014
+- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-012, T-014
 - Añadir pruebas de reglas Firestore/Storage, Functions y repositorios.
 - Añadir E2E de autenticación, proyectos, trabajos, fotos, inventario, facturas y reportes.
 - Incorporar casos de usuario ajeno, sesión expirada, payload inválido y doble envío.
 - **Aceptación:** la suite completa corre contra emuladores y no depende de servicios
   remotos ni APIs pagas.
+- **Avance 2026-08-25:**
+  - La cobertura existente queda consolidada en reglas Firestore/Storage, autenticación,
+    Functions, repositorios y siete flujos E2E de los dominios de trabajos, fotos, inventario,
+    facturas y reportes.
+  - Se verificaron casos de usuario anónimo o ajeno, escalación de rol, payload inválido,
+    sesión no autorizada, uploads inválidos, doble consumo e idempotencia.
+  - `npm.cmd run test:firebase:emulator` → 13 archivos y 43 tests aprobados.
+  - `npm.cmd run test:e2e:firebase:emulator` → 7 E2E aprobadas; reporte HTML local generado en
+    `qa/reports`.
+  - QA avanzado aplicado: pruebas de integración/contrato y casos límite de seguridad. La
+    medición de carga queda diferida a T-016; no se usaron servicios remotos, credenciales de
+    producción ni APIs pagas.
 
 ### T-016 — Medir y corregir rendimiento
 
-- **Prioridad:** P2 · **Estado:** pendiente · **Depende de:** T-015
+- **Prioridad:** P2 · **Estado:** revisión · **Depende de:** T-015
 - Medir baseline del bundle, carga inicial y consultas principales.
 - Dividir rutas con `React.lazy()` y detectar N+1 en `ProjectDetails`, `Statements` y
   dashboards.
 - Comparar métricas antes/después; no optimizar por intuición.
 - **Aceptación:** existe reporte de medición y el bundle/tiempo de carga mejora sin cambiar
   comportamiento funcional.
+- **Avance 2026-08-25:**
+  - Se documentó el baseline antes/después en `docs/performance-baseline.md`.
+  - `src/App.tsx` usa `React.lazy()` por ruta y `Suspense`: el chunk inicial bajó de 1.811,33 kB
+    a 330,70 kB (-81,7%); gzip bajó de 497,78 kB a 107,38 kB (-78,4%).
+  - `ProjectDetails` (2 lecturas), `Statements` (5 lecturas) y dashboards fueron revisados sin
+    detectar un N+1 claro; las lecturas paralelas y suscripciones bajo demanda se conservaron.
+  - Typecheck y build pasan; lint queda en 0 errores y 7 warnings preexistentes. La regresión
+    E2E Firebase pasó 7/7 contra emuladores.
+  - La medición Web Vitals de navegador queda pendiente por falta del ejecutable Chromium local;
+    no hubo despliegue, migración ni acceso a servicios remotos o APIs pagas.
 
 ### T-019 — Cerrar vulnerabilidades de dependencias
 
-- **Prioridad:** P0 · **Estado:** en-progreso · **Depende de:** T-011, T-014
+- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-011, T-014
 - Sustituir `xlsx`, usado por reportes y carga masiva, por una alternativa mantenida o aislar su
   procesamiento con límites y validaciones equivalentes; la versión actual no tiene fix publicado.
 - Evaluar la migración controlada a React Router 7 para cerrar los avisos moderados restantes.
@@ -407,9 +481,15 @@ toquen producción necesitan confirmación explícita del operador.
 - No ejecutar `npm audit fix --force`: cualquier salto mayor debe pasar pruebas de regresión.
 - **Aceptación:** `npm audit --omit=dev` no reporta vulnerabilidades altas/críticas, o existe una
   excepción temporal documentada con exposición, mitigación, responsable y fecha de retirada.
-- **Avance 2026-08-25:** `react-router-dom` actualizado de 6.30.1 a 6.30.6; se eliminaron los
-  avisos altos de XSS/open redirect sin cambiar de major. Persisten 4 avisos altos y 2 moderados,
-  por lo que esta tarea bloquea el gate de producción, aunque no el siguiente incremento local.
+- **Avance 2026-08-25:**
+  - `react-router-dom` quedó en 7.18.2 y pasó typecheck, build y regresión E2E completa.
+  - Se retiró `xlsx`; el ledger exporta CSV sin parser y neutraliza fórmulas incluso tras espacios o
+    tabulaciones. La carga Excel huérfana se eliminó y su futura alternativa Firebase sigue en T-009.
+  - `@playwright/test` y `tailwindcss-animate` quedaron en `devDependencies`, aislando
+    `tailwindcss` y sus transitivas del árbol productivo.
+  - `npm.cmd audit --omit=dev` → 0 vulnerabilidades. El audit completo conserva 6 altas y
+    7 moderadas únicamente en tooling de desarrollo; no forman parte del bundle/runtime y se
+    mantienen visibles para el lote de calidad, sin usar `npm audit fix --force`.
 
 ## Fase 7 — Release controlado
 

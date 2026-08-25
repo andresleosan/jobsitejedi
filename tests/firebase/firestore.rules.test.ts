@@ -106,6 +106,30 @@ describe("Firestore authorization rules", () => {
     await assertFails(getDoc(doc(anonymousDb(), invitation.path)));
   });
 
+  test("keeps invoice records server-written and isolates financial data", async () => {
+    const path = "invoices/invoice-rules-1";
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), path), {
+        projectId: "project-owned",
+        uploadedBy: "builder-1",
+        status: "submitted",
+        totalAmountMinor: 12_345,
+      });
+    });
+
+    await assertSucceeds(getDoc(doc(builderDb(), path)));
+    await assertSucceeds(getDoc(doc(managerDb(), path)));
+    await assertFails(getDoc(doc(otherBuilderDb(), path)));
+    await assertFails(getDoc(doc(anonymousDb(), path)));
+    await assertFails(setDoc(doc(builderDb(), "invoices/direct-write"), {
+      uploadedBy: "builder-1",
+      totalAmountMinor: 1,
+    }));
+    await assertFails(updateDoc(doc(builderDb(), path), { totalAmountMinor: 1 }));
+    await assertFails(updateDoc(doc(managerDb(), path), { status: "approved" }));
+    await assertFails(deleteDoc(doc(managerDb(), path)));
+  });
+
   test("protects inventory catalogs and isolates builder operations", async () => {
     const material = doc(managerDb(), "storageMaterials/material-1");
     const tool = doc(managerDb(), "storageTools/tool-1");

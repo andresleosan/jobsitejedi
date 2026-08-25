@@ -118,7 +118,7 @@ export const CreateJobDialog = ({
             <Label htmlFor="description">Description</Label>
             <Textarea id="description" value={description} onChange={(event) => setDescription(event.target.value)} rows={4} disabled={isLoading} />
           </div>
-          <p className="text-xs text-muted-foreground">Photo references and job submissions will be migrated in the next vertical.</p>
+          <p className="text-xs text-muted-foreground">Photo references and completion evidence are managed from the project ledger after creation.</p>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isLoading}>Cancel</Button>
             <Button type="submit" disabled={isLoading}>

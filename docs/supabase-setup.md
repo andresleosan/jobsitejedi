@@ -1,29 +1,28 @@
-# Configuración de Supabase
+# Validación histórica de Supabase (solo staging)
 
-Esta guía deja el repositorio preparado para completar la configuración cuando haya acceso al proyecto Supabase.
+Supabase ya no es un proveedor de runtime de Jobsite Jedi. Esta guía no activa la aplicación ni
+autoriza despliegues: sirve únicamente para una eventual validación forense o migración controlada
+si el operador concede acceso al proyecto y confirma el checkpoint correspondiente.
 
-## Variables locales
+## Variables y credenciales
 
-Configurar localmente estas variables en `.env`:
+No configurar variables `VITE_SUPABASE_*` para el frontend. Si una validación operativa necesita
+credenciales, deben inyectarse solo en el entorno temporal autorizado y nunca escribirse en Git,
+logs, capturas ni archivos `.env` versionados.
 
-```text
-VITE_SUPABASE_PROJECT_ID=<project-ref>
-VITE_SUPABASE_URL=https://<project-ref>.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=<publishable-key>
-```
-
-`.env` no debe versionarse. El contrato sin credenciales está en `.env.example`.
-
-## Storage
+## Validación Storage en staging
 
 1. Crear un backup verificable de `storage.buckets` y de las policies de `storage.objects`.
-2. Aplicar `supabase/migrations/20260807120000_consolidate_storage_object_policies.sql` primero en staging.
-3. Ejecutar `supabase/scripts/verify-storage-policies.sql` y comprobar que no devuelve policies faltantes ni legadas.
-4. Probar acceso anónimo, builder y manager por bucket antes de producción.
-5. Aplicar en producción solo con confirmación operativa y rollback disponible.
+2. Confirmar que el proyecto y el entorno son staging antes de usar el CLI.
+3. Ejecutar `supabase/scripts/verify-storage-policies.sql`, que es de lectura, y conservar su salida.
+4. Si se propone aplicar `20260807120000_consolidate_storage_object_policies.sql`, documentar
+   rollback y probar acceso anónimo, builder y manager por bucket antes de producción.
+5. Aplicar en producción solo con backup reciente, rollback probado y confirmación operativa.
 
-La migración no elimina objetos. Las rutas antiguas guardadas como URLs completas se normalizan en frontend antes de generar URLs firmadas.
+La migración de consolidación no debe asumirse aplicable solo porque exista en el repositorio; las
+políticas efectivas se deben comprobar en `pg_policies`.
 
-## Rotación
+## Rotación si hubo exposición
 
-Si `.env` estuvo versionado, invalidar la clave anterior desde el panel de Supabase y actualizar únicamente el `.env` local. No registrar la nueva clave en Git, logs ni capturas.
+Si una credencial Supabase estuvo versionada o expuesta, invalidarla desde el panel del proveedor
+antes de continuar. No registrar la nueva credencial en Git, logs ni capturas.

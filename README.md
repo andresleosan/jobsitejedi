@@ -36,7 +36,8 @@ npm i
 npm run dev
 ```
 
-La configuración de variables, migraciones Storage, verificación y rotación de credenciales está documentada en [`docs/supabase-setup.md`](docs/supabase-setup.md).
+La infraestructura Supabase heredada está aislada del runtime Firebase y su inventario, límites
+y controles están documentados en [`docs/legacy-supabase.md`](docs/legacy-supabase.md).
 
 **Edit a file directly in GitHub**
 

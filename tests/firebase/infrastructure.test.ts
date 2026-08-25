@@ -16,6 +16,7 @@ describe("Firebase local infrastructure", () => {
 
   test("uses the local demo Firebase project", () => {
     expect(firebaseConfig.projectId).toBe("demo-jobsite-jedi");
+    expect(firebaseConfig.storageBucket).toBe("demo-jobsite-jedi");
     expect(firebaseConfig.emulators.auth).toBe(9099);
     expect(firebaseConfig.emulators.firestore).toBe(8080);
     expect(firebaseConfig.emulators.storage).toBe(9199);

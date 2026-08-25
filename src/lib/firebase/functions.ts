@@ -30,6 +30,31 @@ const consumeInvitationCallable = httpsCallable<
   { role: AppRole }
 >(firebaseFunctions, "consumeInvitation");
 
+export interface SubmitInvoiceCallableInput {
+  invoiceId: string;
+  projectId: string;
+  invoiceNumber: string;
+  supplierName: string;
+  invoiceDate: string;
+  totalAmountMinor: number;
+  currency: "GBP";
+  notes: string | null;
+  filePath: string;
+  fileName: string;
+}
+
+export type InvoiceReviewStatus = "approved" | "rejected";
+
+const submitInvoiceCallable = httpsCallable<
+  SubmitInvoiceCallableInput,
+  { invoiceId: string; status: "submitted" | InvoiceReviewStatus }
+>(firebaseFunctions, "submitInvoice");
+
+const reviewInvoiceCallable = httpsCallable<
+  { invoiceId: string; status: InvoiceReviewStatus; reviewNotes: string | null },
+  { invoiceId: string; status: InvoiceReviewStatus }
+>(firebaseFunctions, "reviewInvoice");
+
 export const ensureBuilderRole = async (): Promise<void> => {
   const result = await ensureBuilderRoleCallable({ role: "builder" });
 
@@ -64,3 +89,12 @@ export const invitationOperations: InvitationOperations = {
     await assignUserRole(input);
   },
 };
+
+export const submitInvoiceRecord = async (input: SubmitInvoiceCallableInput) =>
+  (await submitInvoiceCallable(input)).data;
+
+export const reviewInvoiceRecord = async (input: {
+  invoiceId: string;
+  status: InvoiceReviewStatus;
+  reviewNotes: string | null;
+}) => (await reviewInvoiceCallable(input)).data;

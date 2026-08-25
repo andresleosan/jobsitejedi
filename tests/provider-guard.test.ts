@@ -3,7 +3,10 @@ import { extname, join, relative, resolve } from "node:path";
 import * as ts from "typescript";
 import { describe, expect, test } from "vitest";
 
-const sourceRoot = resolve(process.cwd(), "src");
+const runtimeRoots = [
+  resolve(process.cwd(), "src"),
+  resolve(process.cwd(), "functions/src"),
+];
 const sourceExtensions = new Set([".js", ".jsx", ".ts", ".tsx"]);
 
 function sourceFiles(directory: string): string[] {
@@ -104,10 +107,12 @@ function runtimeSupabaseReferences(source: string, filePath: string): string[] {
 }
 
 function allSupabaseReferences(): string[] {
-  return sourceFiles(sourceRoot).flatMap((filePath) =>
-    runtimeSupabaseReferences(
-      readFileSync(filePath, "utf8"),
-      relative(process.cwd(), filePath),
+  return runtimeRoots.flatMap((root) =>
+    sourceFiles(root).flatMap((filePath) =>
+      runtimeSupabaseReferences(
+        readFileSync(filePath, "utf8"),
+        relative(process.cwd(), filePath),
+      ),
     ),
   );
 }
@@ -115,10 +120,10 @@ function allSupabaseReferences(): string[] {
 const references = allSupabaseReferences();
 
 describe("provider migration guard", () => {
-  test("reports remaining Supabase references under src", () => {
+  test("reports remaining Supabase references under runtime sources", () => {
     expect(
       references,
-      `Runtime Supabase references remain under src (${references.length}):\n${references.join("\n")}`,
+      `Runtime Supabase references remain under runtime sources (${references.length}):\n${references.join("\n")}`,
     ).toEqual([]);
   });
 

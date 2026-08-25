@@ -86,7 +86,7 @@ serve(async (req) => {
 
     if (trainingData && trainingData.length > 0) {
       systemPrompt += `\n\nFor this supplier, use the following extraction rules:\n`;
-      trainingData.forEach((rule: any) => {
+      trainingData.forEach((rule: { field_name: string; field_path: string }) => {
         systemPrompt += `- ${rule.field_name}: ${rule.field_path}\n`;
       });
     }
@@ -141,10 +141,11 @@ serve(async (req) => {
       JSON.stringify({ extractedData }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error in process-invoice:", error);
+    const message = error instanceof Error ? error.message : "Unexpected invoice processing error";
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

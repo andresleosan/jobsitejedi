@@ -11,6 +11,7 @@ import {
   type DocumentData,
   type Timestamp,
 } from "firebase/firestore";
+import { getCurrentRole } from "@/lib/firebase/auth";
 import { firebaseAuth, firebaseDb } from "@/lib/firebase/client";
 
 export interface TimeEntry {
@@ -93,6 +94,21 @@ export const getActiveTimeEntry = async (): Promise<TimeEntry | null> => {
   );
   const active = snapshots.docs[0];
   return active ? toEntry(active) : null;
+};
+
+export const listTimeEntries = async (projectId?: string): Promise<TimeEntry[]> => {
+  const user = requireCurrentUser();
+  const role = await getCurrentRole();
+  const constraints = role === "manager"
+    ? projectId?.trim() ? [where("projectId", "==", projectId.trim())] : []
+    : [
+        where("builderId", "==", user.uid),
+        ...(projectId?.trim() ? [where("projectId", "==", projectId.trim())] : []),
+      ];
+  const snapshots = await getDocs(query(entriesCollection, ...constraints));
+  return snapshots.docs
+    .map(toEntry)
+    .sort((left, right) => (right.clockIn?.getTime() ?? 0) - (left.clockIn?.getTime() ?? 0));
 };
 
 export const startTimeEntry = async (input: StartTimeEntryInput): Promise<TimeEntry> => {

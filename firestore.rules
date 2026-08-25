@@ -128,6 +128,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /invoices/{invoiceId} {
+      allow read: if isManager() || (
+        isBuilder() && resource.data.uploadedBy == request.auth.uid
+      );
+      allow write: if false;
+    }
+
     match /storageMaterials/{materialId} {
       allow read: if isSignedIn();
       allow write: if isManager();

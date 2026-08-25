@@ -13,30 +13,43 @@ export const CameraCapture = ({ onCapture, onClose }: CameraCaptureProps) => {
   const [facingMode, setFacingMode] = useState<"user" | "environment">("environment");
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
-    startCamera();
-    return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+    let cancelled = false;
+
+    const startCamera = async () => {
+      try {
+        const mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode },
+          audio: false,
+        });
+
+        if (cancelled) {
+          mediaStream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        streamRef.current = mediaStream;
+        setStream(mediaStream);
+        if (videoRef.current) {
+          videoRef.current.srcObject = mediaStream;
+        }
+      } catch (error) {
+        console.error("Error accessing camera:", error);
       }
     };
-  }, [facingMode]);
 
-  const startCamera = async () => {
-    try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode },
-        audio: false,
-      });
-      setStream(mediaStream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
+    void startCamera();
+    return () => {
+      cancelled = true;
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
       }
-    } catch (error) {
-      console.error("Error accessing camera:", error);
-    }
-  };
+      setStream(null);
+    };
+  }, [facingMode]);
 
   const capturePhoto = () => {
     if (videoRef.current && canvasRef.current) {
@@ -51,7 +64,8 @@ export const CameraCapture = ({ onCapture, onClose }: CameraCaptureProps) => {
           if (blob) {
             onCapture(blob);
             if (stream) {
-              stream.getTracks().forEach(track => track.stop());
+            stream.getTracks().forEach(track => track.stop());
+            streamRef.current = null;
             }
           }
         }, "image/jpeg", 0.95);

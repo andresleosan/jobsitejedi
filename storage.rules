@@ -25,6 +25,15 @@ service firebase.storage {
         && request.resource.contentType.matches("image/.*");
     }
 
+    function isValidInvoiceUpload() {
+      return request.resource.size > 0
+        && request.resource.size < 10 * 1024 * 1024
+        && (
+          request.resource.contentType.matches("image/.*")
+          || request.resource.contentType == "application/pdf"
+        );
+    }
+
     match /jobs/{jobId}/{builderId}/{allPaths=**} {
       allow read: if isManager() || (isBuilder() && request.auth.uid == builderId);
       allow create, update: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
@@ -43,10 +52,17 @@ service firebase.storage {
       allow delete: if isManager() || (isBuilder() && request.auth.uid == builderId);
     }
 
-    match /invoices/{builderId}/{allPaths=**} {
+    match /invoices/{builderId}/{invoiceId}/{fileName} {
       allow read: if isManager() || (isBuilder() && request.auth.uid == builderId);
-      allow create, update: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
-      allow delete: if isManager() || (isBuilder() && request.auth.uid == builderId);
+      allow create: if isBuilder()
+        && request.auth.uid == builderId
+        && resource == null
+        && isValidInvoiceUpload()
+        && !firestore.exists(/databases/(default)/documents/invoices/$(invoiceId));
+      allow update: if false;
+      allow delete: if isBuilder()
+        && request.auth.uid == builderId
+        && !firestore.exists(/databases/(default)/documents/invoices/$(invoiceId));
     }
 
     match /documents/{userId}/{allPaths=**} {

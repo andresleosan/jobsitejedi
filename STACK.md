@@ -35,7 +35,7 @@ La clasificación fue confirmada por el operador el `2026-08-24`.
 | Backend privilegiado | Firebase Cloud Functions | Scaffold |
 | Testing | Vitest + Playwright | Parcial |
 | Infraestructura local | Firebase Emulator Suite | Configurada, no estabilizada |
-| Proveedor legado | Supabase | Retirada progresiva |
+| Proveedor legado | Supabase | Solo historial, fuera del runtime |
 
 ## Decisión de proveedor
 
@@ -99,6 +99,38 @@ la aterriza al trabajo de obra:
   técnica ni una URL pública.
 - **Piso de calidad:** foco visible, `aria-label` en acciones de archivo, feedback de carga
   y error, y respeto de `prefers-reduced-motion` mediante transiciones no esenciales.
+
+## Criterio visual para la vertical de facturas (T-011)
+
+Como no existe `BRIEF.md`, esta vertical extiende la identidad activa de BuildTrack Pro sin
+introducir un sistema visual paralelo:
+
+- **Paleta:** tokens semánticos existentes; `primary` identifica el importe y las acciones,
+  ámbar comunica revisión pendiente, esmeralda aprobación y `destructive` rechazo o error.
+- **Tipografía:** tipografía actual del producto; importes con cifras tabulares para facilitar
+  la comparación y texto secundario compacto para proveedor, fecha y número de factura.
+- **Layout:** una bandeja de comprobantes vinculada al proyecto: formulario breve para builder
+  y lista de revisión para manager, ambos en una sola columna móvil y con metadatos agrupados.
+- **Elemento firma:** cada comprobante se presenta como una tira de recibo con importe, estado y
+  acceso al archivo privado, de modo que la decisión financiera se entienda de un vistazo.
+- **Piso de calidad:** foco visible, labels explícitos, errores junto al flujo, botones con verbos
+  consistentes y sin animación obligatoria; los archivos aceptados se explican antes de cargarlos.
+
+## Criterio visual para detalle de proyecto y estados (T-012)
+
+El cierre del runtime Supabase conserva la identidad activa y convierte dos pantallas heredadas
+en superficies de trabajo coherentes con las verticales Firebase:
+
+- **Paleta:** tokens semánticos existentes; `primary` para navegación y totales, ámbar para revisión,
+  esmeralda para cierre y `destructive` únicamente para corrección o error.
+- **Tipografía:** tipografía actual; cifras tabulares en horas e importes y jerarquía compacta para
+  títulos de trabajo, secciones y metadatos de obra.
+- **Layout:** detalle de proyecto agrupado por secciones y libro de estados en una tabla adaptable;
+  en móvil los controles se apilan y los registros conservan lectura horizontal.
+- **Elemento firma:** una franja de “site ledger” resume horas, facturas, movimientos y trabajos
+  cerrados antes del detalle, conectando decisiones financieras con actividad de obra.
+- **Piso de calidad:** estados vacíos y de error explícitos, navegación por teclado, labels accesibles,
+  acciones con verbos consistentes y transiciones no esenciales respetando movimiento reducido.
 
 ## Migración
 
