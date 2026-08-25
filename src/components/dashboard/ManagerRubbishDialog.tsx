@@ -1,131 +1,120 @@
-import { useState, useEffect } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
-import { getStoragePath, storage } from "@/lib/storage";
-import { Loader2, Trash2, CheckCircle2, Clock, User, Building2, Image } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-
-interface RubbishRequest {
-  id: string;
-  user_id: string;
-  project_id: string;
-  photo_url: string | null;
-  description: string | null;
-  status: string;
-  created_at: string;
-  resolved_at: string | null;
-  resolved_by: string | null;
-  project_name?: string;
-  builder_name?: string;
-}
+import { Building2, CheckCircle2, Clock, Image, Loader2, Trash2, User } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useToast } from "@/hooks/use-toast";
+import {
+  resolveRubbishRequest,
+  subscribeToRubbishRequests,
+  type RubbishRequestRecord,
+} from "@/lib/firebase/repositories/inventory";
+import { createPrivateObjectUrl } from "@/lib/firebase/storage";
 
 interface ManagerRubbishDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  projects: Array<{ id: string; name: string }>;
 }
 
-const ManagerRubbishDialog = ({ open, onOpenChange }: ManagerRubbishDialogProps) => {
-  const [requests, setRequests] = useState<RubbishRequest[]>([]);
+type Filter = "pending" | "resolved" | "all";
+
+const ManagerRubbishDialog = ({ open, onOpenChange, projects }: ManagerRubbishDialogProps) => {
+  const [requests, setRequests] = useState<RubbishRequestRecord[]>([]);
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+  const [filter, setFilter] = useState<Filter>("pending");
   const [isLoading, setIsLoading] = useState(false);
-  const [filter, setFilter] = useState<"all" | "pending" | "resolved">("pending");
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [confirmRequest, setConfirmRequest] = useState<RubbishRequestRecord | null>(null);
   const [selectedPhotos, setSelectedPhotos] = useState<string[] | null>(null);
   const { toast } = useToast();
 
+  const projectNames = useMemo(
+    () => new Map(projects.map((project) => [project.id, project.name])),
+    [projects],
+  );
+  const visibleRequests = useMemo(
+    () => requests.filter((request) => filter === "all" || request.status === filter),
+    [filter, requests],
+  );
+  const privatePhotoPathsKey = useMemo(
+    () => JSON.stringify([...new Set(requests.flatMap((request) => request.photoPaths))].sort()),
+    [requests],
+  );
+  const pendingCount = requests.filter((request) => request.status === "pending").length;
+
   useEffect(() => {
-    if (open) {
-      fetchRequests();
-    }
-  }, [open, filter]);
-
-  const fetchRequests = async () => {
+    if (!open) return;
+    let stopped = false;
+    let unsubscribe = () => undefined;
     setIsLoading(true);
-    try {
-      let query = supabase
-        .from("rubbish_collection_requests")
-        .select("*, projects(name)")
-        .order("created_at", { ascending: false });
-
-      if (filter !== "all") {
-        query = query.eq("status", filter);
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
-
-      // Fetch builder names
-      const userIds = [...new Set(data?.map(r => r.user_id) || [])];
-      let profilesMap = new Map<string, string>();
-
-      if (userIds.length > 0) {
-        const { data: profiles } = await supabase
-          .from("profiles")
-          .select("id, full_name")
-          .in("id", userIds);
-
-        profiles?.forEach(p => profilesMap.set(p.id, p.full_name));
-      }
-
-      const mapped = await Promise.all((data || []).map(async (r) => {
-        const signedPhotoUrls = await Promise.all(
-          parsePhotoUrls(r.photo_url).map((photoPath) =>
-            storage.createSignedUrl(
-              "rubbish-photos",
-              getStoragePath(photoPath, "rubbish-photos"),
-              3600,
-            ),
-          ),
-        );
-
-        return {
-          ...r,
-          photo_url: JSON.stringify(signedPhotoUrls.filter((url): url is string => Boolean(url))),
-          project_name: (r.projects as any)?.name || "Unknown",
-          builder_name: profilesMap.get(r.user_id) || "Unknown",
-        };
-      }));
-
-      setRequests(mapped);
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to fetch requests",
-        variant: "destructive",
-      });
-    } finally {
+    const reportError = (error: Error) => {
+      if (stopped) return;
       setIsLoading(false);
+      toast({ title: "Unable to load collection requests", description: error.message, variant: "destructive" });
+    };
+    void subscribeToRubbishRequests((nextRequests) => {
+      if (stopped) return;
+      setRequests(nextRequests);
+      setIsLoading(false);
+    }, reportError).then((cleanup) => {
+      if (stopped) cleanup();
+      else unsubscribe = cleanup;
+    }).catch(reportError);
+    return () => {
+      stopped = true;
+      unsubscribe();
+    };
+  }, [open, toast]);
+
+  useEffect(() => {
+    if (!open) {
+      setPhotoUrls({});
+      return;
     }
-  };
+    let stopped = false;
+    const allocatedUrls: string[] = [];
+    const paths = JSON.parse(privatePhotoPathsKey) as string[];
+    void Promise.all(paths.map(async (path) => {
+      try {
+        const url = await createPrivateObjectUrl(path, "image/jpeg");
+        allocatedUrls.push(url);
+        return [path, url] as const;
+      } catch {
+        return null;
+      }
+    })).then((entries) => {
+      if (!stopped) setPhotoUrls(Object.fromEntries(entries.filter((entry) => entry !== null)));
+    });
+    return () => {
+      stopped = true;
+      allocatedUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [open, privatePhotoPathsKey]);
 
-  const handleResolve = async (requestId: string) => {
-    setResolvingId(requestId);
+  const resolveRequest = async () => {
+    if (!confirmRequest) return;
+    setResolvingId(confirmRequest.id);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      const { error } = await supabase
-        .from("rubbish_collection_requests")
-        .update({
-          status: "resolved",
-          resolved_at: new Date().toISOString(),
-          resolved_by: user?.id,
-        })
-        .eq("id", requestId);
-
-      if (error) throw error;
-
+      await resolveRubbishRequest(confirmRequest.id);
+      toast({ title: "Collection resolved", description: "The request remains available as an audit record." });
+      setConfirmRequest(null);
+    } catch (error) {
       toast({
-        title: "Request resolved",
-        description: "The rubbish collection request has been marked as resolved",
-      });
-
-      fetchRequests();
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to resolve request",
+        title: "Unable to resolve request",
+        description: error instanceof Error ? error.message : "The status could not be updated.",
         variant: "destructive",
       });
     } finally {
@@ -133,239 +122,134 @@ const ManagerRubbishDialog = ({ open, onOpenChange }: ManagerRubbishDialogProps)
     }
   };
 
-  const handleDelete = async (requestId: string) => {
-    if (!confirm("Are you sure you want to delete this request?")) return;
-
-    try {
-      const { error } = await supabase
-        .from("rubbish_collection_requests")
-        .delete()
-        .eq("id", requestId);
-
-      if (error) throw error;
-
-      toast({
-        title: "Request deleted",
-        description: "The rubbish collection request has been deleted",
-      });
-
-      fetchRequests();
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to delete request",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const parsePhotoUrls = (photoUrl: string | null): string[] => {
-    if (!photoUrl) return [];
-    try {
-      const parsed = JSON.parse(photoUrl);
-      return Array.isArray(parsed) ? parsed : [photoUrl];
-    } catch {
-      return photoUrl ? [photoUrl] : [];
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "pending":
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-            <Clock className="h-3 w-3" />
-            Pending
-          </span>
-        );
-      case "resolved":
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-            <CheckCircle2 className="h-3 w-3" />
-            Resolved
-          </span>
-        );
-      default:
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground">
-            {status}
-          </span>
-        );
-    }
-  };
-
-  const pendingCount = requests.filter(r => r.status === "pending").length;
-
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Trash2 className="h-5 w-5 text-orange-500" />
-              Rubbish Collection Requests
+            <DialogTitle className="flex flex-wrap items-center gap-2">
+              <Trash2 className="h-5 w-5 text-orange-600" />
+              Rubbish collection requests
               {pendingCount > 0 && (
-                <span className="ml-2 px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-800 rounded-full">
-                  {pendingCount} pending
-                </span>
+                <Badge className="bg-orange-100 text-orange-800 hover:bg-orange-100">{pendingCount} pending</Badge>
               )}
             </DialogTitle>
+            <DialogDescription>Review private evidence and close completed pickups.</DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
-            {/* Filter */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">Filter:</span>
-              <Select value={filter} onValueChange={(v: any) => setFilter(v)}>
-                <SelectTrigger className="w-[140px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="resolved">Resolved</SelectItem>
-                  <SelectItem value="all">All</SelectItem>
-                </SelectContent>
-              </Select>
+          <Tabs value={filter} onValueChange={(value) => setFilter(value as Filter)}>
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="pending">Pending</TabsTrigger>
+              <TabsTrigger value="resolved">Resolved</TabsTrigger>
+              <TabsTrigger value="all">All</TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          {isLoading ? (
+            <div className="flex justify-center py-12"><Loader2 className="h-7 w-7 animate-spin" /></div>
+          ) : visibleRequests.length === 0 ? (
+            <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
+              No {filter === "all" ? "" : filter} collection requests.
             </div>
+          ) : (
+            <div className="space-y-4">
+              {visibleRequests.map((request) => {
+                const urls = request.photoPaths.map((path) => photoUrls[path]).filter(Boolean);
+                return (
+                  <article key={request.id} className="space-y-3 rounded-xl border bg-card p-4" data-testid="rubbish-request">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="space-y-2">
+                        <Badge
+                          variant="secondary"
+                          className={request.status === "resolved"
+                            ? "gap-1 bg-emerald-100 text-emerald-800"
+                            : "gap-1 bg-amber-100 text-amber-800"}
+                        >
+                          {request.status === "resolved"
+                            ? <CheckCircle2 className="h-3 w-3" />
+                            : <Clock className="h-3 w-3" />}
+                          {request.status === "resolved" ? "Resolved" : "Pending"}
+                        </Badge>
+                        <p className="flex items-center gap-2 text-sm font-medium">
+                          <Building2 className="h-4 w-4 text-primary" />
+                          {projectNames.get(request.projectId) ?? request.projectId}
+                        </p>
+                      </div>
+                      <time className="text-xs text-muted-foreground">
+                        {request.createdAt ? format(request.createdAt, "dd MMM yyyy, HH:mm") : "Syncing"}
+                      </time>
+                    </div>
 
-            {/* Requests List */}
-            {isLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-              </div>
-            ) : requests.length === 0 ? (
-              <div className="text-center py-12">
-                <Trash2 className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
-                <p className="text-muted-foreground">No {filter !== "all" ? filter : ""} requests found</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {requests.map((request) => {
-                  const photoUrls = parsePhotoUrls(request.photo_url);
-                  return (
-                    <div
-                      key={request.id}
-                      className="border rounded-lg overflow-hidden bg-card"
-                    >
-                      <div className="p-4 space-y-3">
-                        {/* Header */}
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="space-y-1">
-                            {getStatusBadge(request.status)}
-                            <div className="flex items-center gap-2 text-sm mt-2">
-                              <Building2 className="h-4 w-4 text-primary" />
-                              <span className="font-medium">{request.project_name}</span>
-                            </div>
-                          </div>
-                          <div className="text-right text-xs text-muted-foreground">
-                            <p>{format(new Date(request.created_at), "dd MMM yyyy")}</p>
-                            <p>{format(new Date(request.created_at), "HH:mm")}</p>
-                          </div>
-                        </div>
+                    <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <User className="h-4 w-4" />
+                      Requested by {request.requestedByName ?? request.userId}
+                    </p>
 
-                        {/* Builder */}
-                        <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                          <User className="h-4 w-4" />
-                          <span>Requested by: {request.builder_name}</span>
-                        </div>
-
-                        {/* Photos */}
-                        {photoUrls.length > 0 && (
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                              <Image className="h-4 w-4" />
-                              <span>{photoUrls.length} photo{photoUrls.length > 1 ? 's' : ''}</span>
-                            </div>
-                            <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-                              {photoUrls.slice(0, 6).map((url, idx) => (
-                                <img
-                                  key={idx}
-                                  src={url}
-                                  alt={`Rubbish ${idx + 1}`}
-                                  className="aspect-square object-cover rounded-md cursor-pointer hover:opacity-80 transition-opacity"
-                                  onClick={() => setSelectedPhotos(photoUrls)}
-                                />
-                              ))}
-                              {photoUrls.length > 6 && (
-                                <button
-                                  onClick={() => setSelectedPhotos(photoUrls)}
-                                  className="aspect-square bg-muted rounded-md flex items-center justify-center text-sm text-muted-foreground hover:bg-muted/80"
-                                >
-                                  +{photoUrls.length - 6}
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Description */}
-                        {request.description && (
-                          <p className="text-sm text-muted-foreground bg-muted/50 p-2 rounded">
-                            {request.description}
-                          </p>
-                        )}
-
-                        {/* Resolved info */}
-                        {request.resolved_at && (
-                          <p className="text-xs text-green-600">
-                            Resolved on {format(new Date(request.resolved_at), "dd MMM yyyy, HH:mm")}
-                          </p>
-                        )}
-
-                        {/* Actions */}
-                        <div className="flex items-center gap-2 pt-2 border-t">
-                          {request.status === "pending" && (
-                            <Button
-                              size="sm"
-                              onClick={() => handleResolve(request.id)}
-                              disabled={resolvingId === request.id}
-                            >
-                              {resolvingId === request.id ? (
-                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              ) : (
-                                <CheckCircle2 className="h-4 w-4 mr-2" />
-                              )}
-                              Mark Resolved
-                            </Button>
-                          )}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleDelete(request.id)}
-                            className="text-destructive hover:text-destructive"
+                    <div className="space-y-2">
+                      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Image className="h-4 w-4" />
+                        {request.photoPaths.length} private photo{request.photoPaths.length === 1 ? "" : "s"}
+                      </p>
+                      <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+                        {urls.slice(0, 6).map((url, index) => (
+                          <button
+                            key={url}
+                            type="button"
+                            className="aspect-square overflow-hidden rounded-md bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            aria-label={`Open rubbish photo ${index + 1}`}
+                            onClick={() => setSelectedPhotos(urls)}
                           >
-                            Delete
-                          </Button>
-                        </div>
+                            <img src={url} alt="" className="h-full w-full object-cover transition-opacity hover:opacity-80" />
+                          </button>
+                        ))}
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+
+                    {request.description && <p className="rounded-md bg-muted/60 p-3 text-sm">{request.description}</p>}
+                    {request.resolvedAt && (
+                      <p className="text-xs text-emerald-700">Resolved {format(request.resolvedAt, "dd MMM yyyy, HH:mm")}</p>
+                    )}
+                    {request.status === "pending" && (
+                      <div className="border-t pt-3">
+                        <Button size="sm" disabled={resolvingId === request.id} onClick={() => setConfirmRequest(request)}>
+                          {resolvingId === request.id && <Loader2 className="h-4 w-4 animate-spin" />}
+                          Mark resolved
+                        </Button>
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
-      {/* Photo Gallery Modal */}
-      <Dialog open={!!selectedPhotos} onOpenChange={() => setSelectedPhotos(null)}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Photos ({selectedPhotos?.length || 0})</DialogTitle>
-          </DialogHeader>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {selectedPhotos?.map((url, idx) => (
-              <img
-                key={idx}
-                src={url}
-                alt={`Photo ${idx + 1}`}
-                className="w-full aspect-square object-cover rounded-lg cursor-pointer hover:opacity-90"
-                onClick={() => window.open(url, "_blank")}
-              />
+      <Dialog open={selectedPhotos !== null} onOpenChange={(nextOpen) => !nextOpen && setSelectedPhotos(null)}>
+        <DialogContent className="max-h-[92vh] max-w-4xl overflow-y-auto">
+          <DialogHeader><DialogTitle>Rubbish evidence ({selectedPhotos?.length ?? 0})</DialogTitle></DialogHeader>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
+            {selectedPhotos?.map((url, index) => (
+              <img key={url} src={url} alt={`Rubbish evidence ${index + 1}`} className="aspect-square w-full rounded-lg object-cover" />
             ))}
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={confirmRequest !== null} onOpenChange={(nextOpen) => !nextOpen && setConfirmRequest(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Mark this pickup as resolved?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This closes the request and preserves its photos and details for audit history.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={resolveRequest}>Confirm resolved</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 };

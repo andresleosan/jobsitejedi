@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { LogOut, Clock, MapPin, Repeat, Truck, Wrench } from "lucide-react";
+import { LogOut, Clock, MapPin, Repeat, Trash2, Truck, Wrench } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import TimeTrackingCard from "./TimeTrackingCard";
@@ -19,6 +19,7 @@ import ChangeProjectDialog from "./ChangeProjectDialog";
 import JobsToDoList from "@/components/jobs/JobsToDoList";
 import ToolRequestDialog from "@/components/builders/ToolRequestDialog";
 import MaterialDeliveryDialog from "./MaterialDeliveryDialog";
+import RubbishCollectionDialog from "./RubbishCollectionDialog";
 
 interface BuilderDashboardProps {
   userId: string;
@@ -32,6 +33,7 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
   const [isChangeProjectDialogOpen, setIsChangeProjectDialogOpen] = useState(false);
   const [isToolRequestDialogOpen, setIsToolRequestDialogOpen] = useState(false);
   const [isMaterialDeliveryDialogOpen, setIsMaterialDeliveryDialogOpen] = useState(false);
+  const [isRubbishDialogOpen, setIsRubbishDialogOpen] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -237,7 +239,7 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
         {selectedProjectId && <JobsToDoList projectId={selectedProjectId} />}
 
         {/* Firebase verticals still being migrated */}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Card
             className={isClockedIn ? "cursor-pointer hover:shadow-md transition-shadow" : "opacity-60"}
             onClick={() => isClockedIn && setIsChangeProjectDialogOpen(true)}
@@ -290,6 +292,26 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
               </Button>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Trash2 className="h-5 w-5 text-orange-600" />
+                Rubbish collection
+              </CardTitle>
+              <CardDescription>Send private photos and follow the pickup status.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={!selectedProjectId}
+                onClick={() => setIsRubbishDialogOpen(true)}
+              >
+                Request collection
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </main>
 
@@ -320,6 +342,13 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
             onOpenChange={setIsMaterialDeliveryDialogOpen}
             projectId={selectedProject.id}
             projectName={selectedProject.name}
+          />
+          <RubbishCollectionDialog
+            open={isRubbishDialogOpen}
+            onOpenChange={setIsRubbishDialogOpen}
+            projectId={selectedProject.id}
+            projectName={selectedProject.name}
+            projects={projects}
           />
         </>
       )}

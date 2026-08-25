@@ -1,221 +1,181 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
-import { getStoragePath, storage } from "@/lib/storage";
-import { Loader2, Camera, Trash2, X, CheckCircle2, Building2, Plus } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
-
-interface RubbishRequest {
-  id: string;
-  photo_url: string | null;
-  description: string | null;
-  status: string;
-  created_at: string;
-  project_name?: string;
-}
+import { Building2, Camera, CheckCircle2, Clock, Loader2, Plus, Trash2, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
+import {
+  createRubbishRequest,
+  subscribeToRubbishRequests,
+  type RubbishRequestRecord,
+} from "@/lib/firebase/repositories/inventory";
+import { createPrivateObjectUrl } from "@/lib/firebase/storage";
 
 interface RubbishCollectionDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
-  userId: string;
+  projectName: string;
+  projects: Array<{ id: string; name: string }>;
 }
 
-const RubbishCollectionDialog = ({ open, onOpenChange, projectId, userId }: RubbishCollectionDialogProps) => {
-  const [isSubmitting, setIsSubmitting] = useState(false);
+const MAX_PHOTOS = 10;
+const MAX_PHOTO_SIZE = 10 * 1024 * 1024;
+
+const statusBadge = (status: RubbishRequestRecord["status"]) => status === "resolved" ? (
+  <Badge className="gap-1 bg-emerald-100 text-emerald-800 hover:bg-emerald-100">
+    <CheckCircle2 className="h-3 w-3" />
+    Resolved
+  </Badge>
+) : (
+  <Badge variant="secondary" className="gap-1 bg-amber-100 text-amber-800">
+    <Clock className="h-3 w-3" />
+    Pending
+  </Badge>
+);
+
+const RubbishCollectionDialog = ({
+  open,
+  onOpenChange,
+  projectId,
+  projectName,
+  projects,
+}: RubbishCollectionDialogProps) => {
   const [photos, setPhotos] = useState<File[]>([]);
-  const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [description, setDescription] = useState("");
-  const [myRequests, setMyRequests] = useState<RubbishRequest[]>([]);
-  const [isLoadingRequests, setIsLoadingRequests] = useState(false);
-  const [projectName, setProjectName] = useState<string>("");
+  const [requests, setRequests] = useState<RubbishRequestRecord[]>([]);
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+  const [activeTab, setActiveTab] = useState("request");
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
-  const MAX_PHOTOS = 10;
+  const projectNames = useMemo(
+    () => new Map(projects.map((project) => [project.id, project.name])),
+    [projects],
+  );
+  const privatePhotoPathsKey = useMemo(
+    () => JSON.stringify([...new Set(requests.flatMap((request) => request.photoPaths))].sort()),
+    [requests],
+  );
+  const previews = useMemo(
+    () => photos.map((photo) => URL.createObjectURL(photo)),
+    [photos],
+  );
 
-  const fetchProjectName = useCallback(async () => {
-    if (!projectId) return;
-    const { data } = await supabase
-      .from("projects")
-      .select("name")
-      .eq("id", projectId)
-      .single();
-    if (data) {
-      setProjectName(data.name);
-    }
-  }, [projectId]);
+  useEffect(() => () => previews.forEach((url) => URL.revokeObjectURL(url)), [previews]);
 
   useEffect(() => {
-    if (open && projectId) {
-      void fetchProjectName();
+    if (!open) return;
+    let stopped = false;
+    let unsubscribe = () => undefined;
+    setIsLoading(true);
+    const reportError = (error: Error) => {
+      if (stopped) return;
+      setIsLoading(false);
+      toast({ title: "Unable to load collection requests", description: error.message, variant: "destructive" });
+    };
+    void subscribeToRubbishRequests((nextRequests) => {
+      if (stopped) return;
+      setRequests(nextRequests);
+      setIsLoading(false);
+    }, reportError).then((cleanup) => {
+      if (stopped) cleanup();
+      else unsubscribe = cleanup;
+    }).catch(reportError);
+    return () => {
+      stopped = true;
+      unsubscribe();
+    };
+  }, [open, toast]);
+
+  useEffect(() => {
+    if (!open) {
+      setPhotoUrls({});
+      return;
     }
-  }, [fetchProjectName, open, projectId]);
-
-  const fetchMyRequests = async () => {
-    setIsLoadingRequests(true);
-    try {
-      const { data: requests, error } = await supabase
-        .from("rubbish_collection_requests")
-        .select("*, projects(name)")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(10);
-
-      if (error) throw error;
-
-      const mapped = await Promise.all((requests || []).map(async (r) => {
-        const signedPhotoUrls = await Promise.all(
-          parsePhotoUrls(r.photo_url).map((photoPath) =>
-            storage.createSignedUrl(
-              "rubbish-photos",
-              getStoragePath(photoPath, "rubbish-photos"),
-              3600,
-            ),
-          ),
-        );
-
-        const relatedProject: unknown = r.projects;
-        const projectName =
-          relatedProject &&
-          typeof relatedProject === "object" &&
-          "name" in relatedProject &&
-          typeof relatedProject.name === "string"
-            ? relatedProject.name
-            : "Unknown";
-
-        return {
-          ...r,
-          photo_url: JSON.stringify(signedPhotoUrls.filter((url): url is string => Boolean(url))),
-          project_name: projectName,
-        };
-      }));
-
-      setMyRequests(mapped);
-    } catch (error) {
-      console.error("Error fetching requests:", error instanceof Error ? error.message : error);
-    } finally {
-      setIsLoadingRequests(false);
-    }
-  };
-
-  const handleOpenChange = (isOpen: boolean) => {
-    if (isOpen) {
-      fetchMyRequests();
-      fetchProjectName();
-    } else {
-      resetForm();
-    }
-    onOpenChange(isOpen);
-  };
+    let stopped = false;
+    const allocatedUrls: string[] = [];
+    const paths = JSON.parse(privatePhotoPathsKey) as string[];
+    void Promise.all(paths.map(async (path) => {
+      try {
+        const url = await createPrivateObjectUrl(path, "image/jpeg");
+        allocatedUrls.push(url);
+        return [path, url] as const;
+      } catch {
+        return null;
+      }
+    })).then((entries) => {
+      if (!stopped) setPhotoUrls(Object.fromEntries(entries.filter((entry) => entry !== null)));
+    });
+    return () => {
+      stopped = true;
+      allocatedUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [open, privatePhotoPathsKey]);
 
   const resetForm = () => {
     setPhotos([]);
-    setPhotoPreviews([]);
     setDescription("");
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      resetForm();
+      setActiveTab("request");
+    }
+    onOpenChange(nextOpen);
+  };
 
+  const handlePhotoSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(event.target.files ?? []);
+    const valid = selected.filter((file) =>
+      file.type.startsWith("image/") && file.size > 0 && file.size < MAX_PHOTO_SIZE);
     const remainingSlots = MAX_PHOTOS - photos.length;
-    const filesToAdd = Array.from(files).slice(0, remainingSlots);
-
-    if (filesToAdd.length < files.length) {
+    const accepted = valid.slice(0, remainingSlots);
+    if (accepted.length !== selected.length) {
       toast({
-        title: "Photo limit",
-        description: `Maximum ${MAX_PHOTOS} photos allowed`,
+        title: "Some photos were not added",
+        description: `Use up to ${MAX_PHOTOS} non-empty images smaller than 10 MB each.`,
         variant: "destructive",
       });
     }
-
-    const newPhotos = [...photos, ...filesToAdd];
-    setPhotos(newPhotos);
-
-    // Generate previews for new files
-    filesToAdd.forEach(file => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPhotoPreviews(prev => [...prev, reader.result as string]);
-      };
-      reader.readAsDataURL(file);
-    });
-
-    // Reset input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
+    setPhotos((current) => [...current, ...accepted]);
+    event.target.value = "";
   };
 
-  const removePhoto = (index: number) => {
-    setPhotos(prev => prev.filter((_, i) => i !== index));
-    setPhotoPreviews(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const handleSubmit = async () => {
-    if (!projectId) {
-      toast({
-        title: "Project required",
-        description: "Please select a project first",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (photos.length === 0) {
-      toast({
-        title: "Photo required",
-        description: "Please add at least one photo of what needs to be collected",
-        variant: "destructive",
-      });
-      return;
-    }
-
+  const submitRequest = async () => {
+    if (!projectId || !photos.length) return;
     setIsSubmitting(true);
     try {
-      // Upload all photos
-      const uploadedUrls: string[] = [];
-      
-      for (const photo of photos) {
-        const fileExt = photo.name.split('.').pop();
-        const fileName = `${userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-        
-        await storage.upload("rubbish-photos", fileName, photo);
-
-        uploadedUrls.push(fileName);
-      }
-
-      // Store URLs as JSON array string
-      const photoUrlsJson = JSON.stringify(uploadedUrls);
-
-      // Create request
-      const { error } = await supabase
-        .from("rubbish_collection_requests")
-        .insert({
-          user_id: userId,
-          project_id: projectId,
-          photo_url: photoUrlsJson,
-          description: description.trim() || null,
-        });
-
-      if (error) throw error;
-
-      toast({
-        title: "Request submitted",
-        description: "A manager will be notified to collect the rubbish",
+      await createRubbishRequest({
+        projectId,
+        description,
+        photos: photos.map((photo) => ({
+          file: photo,
+          fileName: photo.name,
+          contentType: photo.type,
+        })),
       });
-
+      toast({ title: "Collection requested", description: "The yard team can now review the rubbish evidence." });
       resetForm();
-      fetchMyRequests();
+      setActiveTab("history");
     } catch (error) {
       toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to submit request",
+        title: "Request failed",
+        description: error instanceof Error ? error.message : "The request could not be submitted.",
         variant: "destructive",
       });
     } finally {
@@ -223,198 +183,132 @@ const RubbishCollectionDialog = ({ open, onOpenChange, projectId, userId }: Rubb
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "pending":
-        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">Pending</span>;
-      case "resolved":
-        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800"><CheckCircle2 className="h-3 w-3" /> Resolved</span>;
-      default:
-        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground">{status}</span>;
-    }
-  };
-
-  const parsePhotoUrls = (photoUrl: string | null): string[] => {
-    if (!photoUrl) return [];
-    try {
-      const parsed = JSON.parse(photoUrl);
-      return Array.isArray(parsed) ? parsed : [photoUrl];
-    } catch {
-      return photoUrl ? [photoUrl] : [];
-    }
-  };
-
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Trash2 className="h-5 w-5 text-orange-500" />
-            Request Rubbish Collection
+            <Trash2 className="h-5 w-5 text-orange-600" />
+            Rubbish collection
           </DialogTitle>
+          <DialogDescription>Request a pickup with private photographic evidence.</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-6">
-          {/* New Request Form */}
-          <div className="space-y-4 p-4 bg-muted/30 rounded-lg border">
-            <h3 className="font-medium">New Request</h3>
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="request">New request</TabsTrigger>
+            <TabsTrigger value="history">My requests ({requests.length})</TabsTrigger>
+          </TabsList>
 
-            {/* Project Reference */}
-            <div className="space-y-2">
-              <Label>Project</Label>
-              <div className="flex items-center gap-2 p-3 bg-primary/5 border border-primary/20 rounded-md">
+          <TabsContent value="request" className="space-y-5 pt-3">
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
                 <Building2 className="h-4 w-4 text-primary" />
-                <span className="text-sm font-medium">{projectName || "Select a project"}</span>
+                {projectName}
               </div>
-              <p className="text-xs text-muted-foreground">
-                The rubbish will be collected from this project location
-              </p>
+              <p className="mt-1 text-xs text-muted-foreground">The pickup will use this project's location.</p>
             </div>
 
-            {/* Photos */}
             <div className="space-y-2">
-              <Label>Photos * ({photos.length}/{MAX_PHOTOS})</Label>
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="rubbish-photos">Photos ({photos.length}/{MAX_PHOTOS})</Label>
+                {photos.length > 0 && photos.length < MAX_PHOTOS && (
+                  <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
+                    <Plus className="h-4 w-4" /> Add photos
+                  </Button>
+                )}
+              </div>
               <input
+                id="rubbish-photos"
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
                 capture="environment"
                 multiple
+                className="sr-only"
                 onChange={handlePhotoSelect}
-                className="hidden"
               />
-              
-              {photoPreviews.length > 0 && (
-                <div className="grid grid-cols-3 gap-2">
-                  {photoPreviews.map((preview, index) => (
-                    <div key={index} className="relative aspect-square">
-                      <img
-                        src={preview}
-                        alt={`Preview ${index + 1}`}
-                        className="w-full h-full object-cover rounded-lg border"
-                      />
+              {previews.length ? (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {previews.map((preview, index) => (
+                    <div key={preview} className="group relative aspect-square overflow-hidden rounded-lg border bg-muted">
+                      <img src={preview} alt={`Selected rubbish evidence ${index + 1}`} className="h-full w-full object-cover" />
                       <Button
                         type="button"
                         variant="destructive"
                         size="icon"
-                        className="absolute top-1 right-1 h-6 w-6"
-                        onClick={() => removePhoto(index)}
+                        className="absolute right-1 top-1 h-7 w-7"
+                        aria-label={`Remove photo ${index + 1}`}
+                        onClick={() => setPhotos((current) => current.filter((_, photoIndex) => photoIndex !== index))}
                       >
-                        <X className="h-3 w-3" />
+                        <X className="h-4 w-4" />
                       </Button>
                     </div>
                   ))}
-                  
-                  {photos.length < MAX_PHOTOS && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="aspect-square flex flex-col items-center justify-center gap-1"
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      <Plus className="h-6 w-6 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground">Add</span>
-                    </Button>
-                  )}
                 </div>
-              )}
-
-              {photoPreviews.length === 0 && (
+              ) : (
                 <Button
                   type="button"
                   variant="outline"
-                  className="w-full h-32 flex flex-col items-center justify-center gap-2"
+                  className="h-32 w-full flex-col gap-2 border-dashed"
                   onClick={() => fileInputRef.current?.click()}
                 >
-                  <Camera className="h-8 w-8 text-muted-foreground" />
-                  <span className="text-sm text-muted-foreground">Take or select photos (up to {MAX_PHOTOS})</span>
+                  <Camera className="h-7 w-7 text-orange-600" />
+                  Take or select at least one photo
                 </Button>
               )}
+              <p className="text-xs text-muted-foreground">Up to 10 images, each smaller than 10 MB.</p>
             </div>
 
-            {/* Description */}
             <div className="space-y-2">
-              <Label>Description (optional)</Label>
+              <Label htmlFor="rubbish-description">Description (optional)</Label>
               <Textarea
-                placeholder="Describe what needs to be collected..."
+                id="rubbish-description"
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                maxLength={1000}
                 rows={3}
+                placeholder="Access instructions, approximate volume, or anything the team should know."
+                onChange={(event) => setDescription(event.target.value)}
               />
+              <p className="text-right text-xs text-muted-foreground">{description.length}/1000</p>
             </div>
 
-            {/* Submit Button */}
-            <Button
-              onClick={handleSubmit}
-              disabled={isSubmitting || photos.length === 0 || !projectId}
-              className="w-full"
-            >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Submitting...
-                </>
-              ) : (
-                "Submit Request"
-              )}
+            <Button className="w-full" disabled={isSubmitting || !photos.length || !projectId} onClick={submitRequest}>
+              {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              {isSubmitting ? "Submitting..." : "Submit collection request"}
             </Button>
-          </div>
+          </TabsContent>
 
-          {/* My Recent Requests */}
-          <div className="space-y-3">
-            <h3 className="font-medium">My Recent Requests</h3>
-            {isLoadingRequests ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <TabsContent value="history" className="space-y-3 pt-3">
+            {isLoading ? (
+              <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin" /></div>
+            ) : requests.length === 0 ? (
+              <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+                No collection requests yet.
               </div>
-            ) : myRequests.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">
-                No requests yet
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {myRequests.map((request) => {
-                  const photoUrls = parsePhotoUrls(request.photo_url);
-                  return (
-                    <div
-                      key={request.id}
-                      className="flex items-start gap-3 p-3 bg-card border rounded-lg"
-                    >
-                      {photoUrls.length > 0 && (
-                        <div className="flex gap-1 flex-shrink-0">
-                          <img
-                            src={photoUrls[0]}
-                            alt="Rubbish"
-                            className="w-16 h-16 object-cover rounded-md"
-                          />
-                          {photoUrls.length > 1 && (
-                            <div className="w-16 h-16 bg-muted rounded-md flex items-center justify-center text-xs text-muted-foreground">
-                              +{photoUrls.length - 1}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {getStatusBadge(request.status)}
-                          <span className="text-xs text-muted-foreground">
-                            {format(new Date(request.created_at), "dd MMM yyyy, HH:mm")}
-                          </span>
-                        </div>
-                        <p className="text-sm font-medium mt-1">{request.project_name}</p>
-                        {request.description && (
-                          <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                            {request.description}
-                          </p>
-                        )}
-                      </div>
+            ) : requests.map((request) => {
+              const firstPhoto = request.photoPaths.map((path) => photoUrls[path]).find(Boolean);
+              return (
+                <article key={request.id} className="flex gap-3 rounded-lg border bg-card p-3" data-testid="rubbish-request">
+                  <div className="h-20 w-20 flex-none overflow-hidden rounded-md bg-muted">
+                    {firstPhoto ? <img src={firstPhoto} alt="Rubbish evidence" className="h-full w-full object-cover" /> : null}
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      {statusBadge(request.status)}
+                      <span className="text-xs text-muted-foreground">
+                        {request.createdAt ? format(request.createdAt, "dd MMM yyyy, HH:mm") : "Syncing"}
+                      </span>
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
+                    <p className="truncate text-sm font-medium">{projectNames.get(request.projectId) ?? request.projectId}</p>
+                    {request.description && <p className="line-clamp-2 text-xs text-muted-foreground">{request.description}</p>}
+                    <p className="text-xs text-muted-foreground">{request.photoPaths.length} photo{request.photoPaths.length === 1 ? "" : "s"}</p>
+                  </div>
+                </article>
+              );
+            })}
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
   );

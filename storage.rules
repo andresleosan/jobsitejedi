@@ -19,6 +19,12 @@ service firebase.storage {
         && request.resource.contentType.matches("(image|application)/.*");
     }
 
+    function isValidImageUpload() {
+      return request.resource.size > 0
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches("image/.*");
+    }
+
     match /jobs/{jobId}/{builderId}/{allPaths=**} {
       allow read: if isManager() || (isBuilder() && request.auth.uid == builderId);
       allow create, update: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
@@ -55,10 +61,19 @@ service firebase.storage {
       allow delete: if isManager() || (isBuilder() && request.auth.uid == builderId);
     }
 
-    match /rubbish/{builderId}/{allPaths=**} {
+    match /rubbish/{builderId}/{requestId}/{fileName} {
       allow read: if isManager() || (isBuilder() && request.auth.uid == builderId);
-      allow create, update: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
-      allow delete: if isManager() || (isBuilder() && request.auth.uid == builderId);
+      allow create, update: if isBuilder()
+        && request.auth.uid == builderId
+        && isValidImageUpload()
+        && !firestore.exists(
+          /databases/(default)/documents/rubbishCollectionRequests/$(requestId)
+        );
+      allow delete: if isBuilder()
+        && request.auth.uid == builderId
+        && !firestore.exists(
+          /databases/(default)/documents/rubbishCollectionRequests/$(requestId)
+        );
     }
 
     match /voiceNotes/{builderId}/{allPaths=**} {

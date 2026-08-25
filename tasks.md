@@ -303,8 +303,20 @@ toquen producción necesitan confirmación explícita del operador.
   - Emulator Firebase aprobado en 13 archivos/38 tests y E2E de fotos, herramientas y entregas en
     3/3. El test integral de invitaciones usa 15 s explícitos para absorber el arranque local de
     Functions sin relajar ninguna aserción funcional.
-  - Queda pendiente migrar las UI de residuos y revisar los accesos restantes de uso/transferencia
-    de materiales; T-010 continúa en progreso.
+  - `RubbishCollectionDialog` y `ManagerRubbishDialog` migrados a Firebase e integrados en ambos
+    dashboards. Builder carga de 1 a 10 imágenes privadas y sigue su historial en vivo; manager
+    revisa la galería y ejecuta la transición transaccional `pending → resolved`, sin borrado de
+    solicitudes para conservar auditoría. Los listeners y object URLs tienen cleanup al cerrar o
+    desmontar los diálogos.
+  - Las fotos usan rutas `rubbish/{builderId}/{requestId}/{file}` y solo aceptan imágenes no vacías
+    menores de 10 MB. Si falla la creación Firestore se limpian los uploads huérfanos; una vez que
+    existe la solicitud, Storage consulta Firestore y bloquea sobrescritura/borrado de evidencia.
+    Firestore valida proyecto propio, nombre firmado, claves, rutas, cantidad de fotos, estado y
+    longitud de descripción; builder queda aislado y manager solo puede resolver.
+  - Evidencia final del bloque residuos: typecheck, ESLint focalizado y build aprobados; Emulator
+    Firebase en 13 archivos/39 tests y E2E de fotos, herramientas, entregas y residuos en 4/4.
+  - Queda pendiente revisar los accesos y UI restantes de uso/transferencia de materiales; T-010
+    continúa en progreso.
 
 ### T-011 — Migrar facturas, reportes y evaluaciones de riesgo
 

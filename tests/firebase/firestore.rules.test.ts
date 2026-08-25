@@ -10,7 +10,7 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { doc, getDoc, serverTimestamp, setDoc, updateDoc, writeBatch } from "firebase/firestore";
+import { deleteDoc, doc, getDoc, serverTimestamp, setDoc, updateDoc, writeBatch } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 
 const projectId = "demo-jobsite-jedi";
@@ -259,16 +259,34 @@ describe("Firestore authorization rules", () => {
     }));
 
     const rubbish = doc(builderDb(), "rubbishCollectionRequests/rubbish-1");
-    await assertSucceeds(setDoc(rubbish, {
+    const rubbishData = {
       userId: "builder-1",
-      projectId: "project-1",
+      requestedByName: "Builder One",
+      projectId: "delivery-project-1",
       status: "pending",
-      photoPaths: [],
+      photoPaths: ["rubbish/builder-1/rubbish-1/photo.jpg"],
+      description: "Waste bags",
+      createdAt: serverTimestamp(),
+      resolvedAt: null,
+      resolvedBy: null,
+    };
+    await assertSucceeds(setDoc(rubbish, rubbishData));
+    await assertFails(setDoc(doc(builderDb(), "rubbishCollectionRequests/forged-rubbish"), {
+      ...rubbishData,
+      requestedByName: "Manager One",
+      photoPaths: ["rubbish/builder-1/forged-rubbish/photo.jpg"],
+    }));
+    await assertFails(setDoc(doc(builderDb(), "rubbishCollectionRequests/wrong-photo-owner"), {
+      ...rubbishData,
+      photoPaths: ["rubbish/builder-2/wrong-photo-owner/photo.jpg"],
     }));
     await assertFails(getDoc(doc(otherBuilderDb(), rubbish.path)));
+    await assertFails(updateDoc(rubbish, { status: "resolved" }));
     await assertSucceeds(updateDoc(doc(managerDb(), rubbish.path), {
       status: "resolved",
+      resolvedAt: serverTimestamp(),
       resolvedBy: "manager-1",
     }));
+    await assertFails(deleteDoc(doc(managerDb(), rubbish.path)));
   });
 });

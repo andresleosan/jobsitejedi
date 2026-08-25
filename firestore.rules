@@ -48,6 +48,15 @@ service cloud.firestore {
         || (resource.data.status == "in_progress" && request.resource.data.status in ["delivered", "rejected"]);
     }
 
+    function validRubbishPhotoAt(index, requestId) {
+      return request.resource.data.photoPaths.size() <= index || (
+        request.resource.data.photoPaths[index] is string
+        && request.resource.data.photoPaths[index].matches(
+          "^rubbish/" + request.auth.uid + "/" + requestId + "/[^/]+$"
+        )
+      );
+    }
+
     match /users/{userId} {
       allow get, list: if isManager() || (isSignedIn() && request.auth.uid == userId);
       allow create: if isSignedIn() && request.auth.uid == userId
@@ -220,8 +229,45 @@ service cloud.firestore {
 
     match /rubbishCollectionRequests/{requestId} {
       allow read: if isManager() || (isBuilder() && resource.data.userId == request.auth.uid);
-      allow create: if isBuilder() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if isManager();
+      allow create: if isBuilder()
+        && request.resource.data.keys().hasOnly([
+          "userId", "requestedByName", "projectId", "photoPaths", "description", "status",
+          "createdAt", "resolvedAt", "resolvedBy"
+        ])
+        && request.resource.data.userId == request.auth.uid
+        && requestedNameMatchesAuth("requestedByName")
+        && request.resource.data.status == "pending"
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.resolvedAt == null
+        && request.resource.data.resolvedBy == null
+        && request.resource.data.photoPaths is list
+        && request.resource.data.photoPaths.size() > 0
+        && request.resource.data.photoPaths.size() <= 10
+        && validRubbishPhotoAt(0, requestId)
+        && validRubbishPhotoAt(1, requestId)
+        && validRubbishPhotoAt(2, requestId)
+        && validRubbishPhotoAt(3, requestId)
+        && validRubbishPhotoAt(4, requestId)
+        && validRubbishPhotoAt(5, requestId)
+        && validRubbishPhotoAt(6, requestId)
+        && validRubbishPhotoAt(7, requestId)
+        && validRubbishPhotoAt(8, requestId)
+        && validRubbishPhotoAt(9, requestId)
+        && (request.resource.data.description == null || (
+          request.resource.data.description is string
+          && request.resource.data.description.size() <= 1000
+        ))
+        && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
+        && get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.ownerId == request.auth.uid;
+      allow update: if isManager()
+        && resource.data.status == "pending"
+        && request.resource.data.status == "resolved"
+        && request.resource.data.resolvedAt is timestamp
+        && request.resource.data.resolvedBy == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "status", "resolvedAt", "resolvedBy"
+        ]);
+      allow delete: if false;
     }
 
     match /{document=**} {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { BriefcaseBusiness, LogOut, Plus, Truck, Users, Warehouse } from "lucide-react";
+import { BriefcaseBusiness, LogOut, Plus, Trash2, Truck, Users, Warehouse } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
@@ -10,6 +10,7 @@ import CreateProjectDialog from "./CreateProjectDialog";
 import ProjectList from "./ProjectList";
 import ManagerJobReviewPanel from "./ManagerJobReviewPanel";
 import ManagerMaterialDeliveryDialog from "./ManagerMaterialDeliveryDialog";
+import ManagerRubbishDialog from "./ManagerRubbishDialog";
 
 interface ManagerDashboardProps {
   userId: string;
@@ -19,6 +20,7 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
   const [isMaterialDeliveryOpen, setIsMaterialDeliveryOpen] = useState(false);
+  const [isRubbishDialogOpen, setIsRubbishDialogOpen] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -88,7 +90,7 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-primary">Jobs + inventory</div>
-              <p className="text-xs text-muted-foreground">Photos, tools and material deliveries use Firebase.</p>
+              <p className="text-xs text-muted-foreground">Photos, tools, deliveries and rubbish requests use Firebase.</p>
             </CardContent>
           </Card>
         </div>
@@ -115,6 +117,10 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
                   <Truck className="h-4 w-4" />
                   Deliveries
                 </Button>
+                <Button variant="outline" onClick={() => setIsRubbishDialogOpen(true)}>
+                  <Trash2 className="h-4 w-4" />
+                  Rubbish requests
+                </Button>
                 <Button variant="outline" asChild>
                   <Link to="/invite">
                     <Users className="h-4 w-4" />
@@ -140,6 +146,11 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
       <ManagerMaterialDeliveryDialog
         open={isMaterialDeliveryOpen}
         onOpenChange={setIsMaterialDeliveryOpen}
+        projects={projects}
+      />
+      <ManagerRubbishDialog
+        open={isRubbishDialogOpen}
+        onOpenChange={setIsRubbishDialogOpen}
         projects={projects}
       />
     </div>

@@ -9,6 +9,7 @@ import {
   query,
   runTransaction,
   serverTimestamp,
+  setDoc,
   updateDoc,
   where,
   writeBatch,
@@ -17,6 +18,11 @@ import {
 } from "firebase/firestore";
 import { getCurrentRole } from "@/lib/firebase/auth";
 import { firebaseAuth, firebaseDb } from "@/lib/firebase/client";
+import {
+  buildPrivateStoragePath,
+  deletePrivateFile,
+  uploadPrivateFile,
+} from "@/lib/firebase/storage";
 
 export type ToolStatus = "available" | "checked_out" | "maintenance" | "retired";
 export type ToolRequestStatus =
@@ -132,6 +138,7 @@ export interface MaterialDeliveryRequestRecord {
 export interface RubbishRequestRecord {
   id: string;
   userId: string;
+  requestedByName: string | null;
   projectId: string;
   photoPaths: string[];
   description: string | null;
@@ -343,6 +350,7 @@ const toRubbish = (snapshot: { id: string; data: () => DocumentData }): RubbishR
   return {
     id: snapshot.id,
     userId: String(data.userId ?? ""),
+    requestedByName: typeof data.requestedByName === "string" ? data.requestedByName : null,
     projectId: String(data.projectId ?? ""),
     photoPaths,
     description: typeof data.description === "string" ? data.description : null,
@@ -856,7 +864,7 @@ export const createMaterialDeliveryRequest = async (input: {
   batch.set(requestReference, {
     projectId,
     userId: user.uid,
-    requestedByName: user.displayName?.trim().slice(0, 120) || null,
+    requestedByName: user.displayName?.trim() || null,
     status: "pending",
     notes,
     createdAt: serverTimestamp(), resolvedAt: null, resolvedBy: null,
@@ -1012,21 +1020,61 @@ export const updateMaterialDeliveryRequest = async (input: {
 
 export const createRubbishRequest = async (input: {
   projectId: string;
-  photoPaths?: string[];
+  photos: Array<{ file: Blob; fileName: string; contentType?: string }>;
   description?: string | null;
 }) => {
   const user = requireCurrentUser();
   if ((await getCurrentRole()) !== "builder") throw new Error("Only builders can create rubbish requests");
-  const reference = await addDoc(rubbishCollection, {
-    userId: user.uid,
-    projectId: requireText(input.projectId, "Project id"),
-    photoPaths: (input.photoPaths ?? []).map((path) => requireText(path, "Photo path")),
-    description: input.description?.trim() || null,
-    status: "pending",
-    createdAt: serverTimestamp(),
-    resolvedAt: null,
-    resolvedBy: null,
+  const projectId = requireText(input.projectId, "Project id");
+  if (!input.photos.length) throw new Error("At least one rubbish photo is required");
+  if (input.photos.length > 10) throw new Error("A rubbish request can contain at most 10 photos");
+  const description = input.description?.trim() || null;
+  if (description && description.length > 1_000) throw new Error("Rubbish description is too long");
+  const project = await getDoc(doc(firebaseDb, "projects", projectId));
+  if (!project.exists() || project.data().ownerId !== user.uid) {
+    throw new Error("The selected project does not belong to this builder");
+  }
+
+  const photos = input.photos.map((photo) => {
+    const contentType = photo.contentType?.trim() || photo.file.type;
+    if (!(photo.file instanceof Blob) || photo.file.size <= 0) {
+      throw new Error("Rubbish photos cannot be empty");
+    }
+    if (!contentType.startsWith("image/")) throw new Error("Rubbish evidence must be an image");
+    if (photo.file.size >= 10 * 1024 * 1024) throw new Error("Each rubbish photo must be smaller than 10 MB");
+    const rawExtension = photo.fileName.split(".").pop()?.toLowerCase() ?? "jpg";
+    const extension = /^[a-z0-9]{1,8}$/.test(rawExtension) ? rawExtension : "jpg";
+    return { file: photo.file, contentType, extension };
   });
+  const reference = doc(rubbishCollection);
+  const photoPaths: string[] = [];
+  try {
+    for (const photo of photos) {
+      const photoId = doc(rubbishCollection).id;
+      const path = buildPrivateStoragePath(
+        "rubbish",
+        user.uid,
+        reference.id,
+        `${photoId}.${photo.extension}`,
+      );
+      await uploadPrivateFile(path, photo.file, { contentType: photo.contentType });
+      photoPaths.push(path);
+    }
+    await setDoc(reference, {
+      userId: user.uid,
+      requestedByName: user.displayName?.trim() || null,
+      projectId,
+      photoPaths,
+      description,
+      status: "pending",
+      createdAt: serverTimestamp(),
+      resolvedAt: null,
+      resolvedBy: null,
+    });
+  } catch (error) {
+    await Promise.allSettled(photoPaths.map((path) => deletePrivateFile(path)));
+    throw error;
+  }
   const created = await getDoc(reference);
   if (!created.exists()) throw new Error("Rubbish request was not created");
   return toRubbish(created);
@@ -1039,18 +1087,43 @@ export const listRubbishRequests = async (status?: RubbishRequestRecord["status"
     ? status ? [where("status", "==", status)] : []
     : [where("userId", "==", user.uid)];
   const snapshots = await getDocs(query(rubbishCollection, ...constraints));
-  return snapshots.docs.map(toRubbish).sort((a, b) =>
-    (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+  return snapshots.docs
+    .map(toRubbish)
+    .filter((request) => !status || request.status === status)
+    .sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+};
+
+export const subscribeToRubbishRequests = async (
+  onChange: (requests: RubbishRequestRecord[]) => void,
+  onError: (error: Error) => void,
+): Promise<() => void> => {
+  const user = requireCurrentUser();
+  const role = await getCurrentRole();
+  const source = role === "manager"
+    ? rubbishCollection
+    : query(rubbishCollection, where("userId", "==", user.uid));
+  return onSnapshot(
+    source,
+    (snapshot) => onChange(snapshot.docs.map(toRubbish).sort((a, b) =>
+      (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0))),
+    (error) => onError(error instanceof Error ? error : new Error("Unable to load rubbish requests")),
+  );
 };
 
 export const resolveRubbishRequest = async (requestId: string) => {
   const user = requireCurrentUser();
   if ((await getCurrentRole()) !== "manager") throw new Error("Manager access is required");
   const reference = doc(rubbishCollection, requireText(requestId, "Request id"));
-  const current = await getDoc(reference);
-  if (!current.exists()) throw new Error("Rubbish request was not found");
-  if (current.data().status !== "pending") throw new Error("Rubbish request is already resolved");
-  await updateDoc(reference, { status: "resolved", resolvedAt: serverTimestamp(), resolvedBy: user.uid });
+  await runTransaction(firebaseDb, async (transaction) => {
+    const current = await transaction.get(reference);
+    if (!current.exists()) throw new Error("Rubbish request was not found");
+    if (current.data().status !== "pending") throw new Error("Rubbish request is already resolved");
+    transaction.update(reference, {
+      status: "resolved",
+      resolvedAt: serverTimestamp(),
+      resolvedBy: user.uid,
+    });
+  });
   const updated = await getDoc(reference);
   if (!updated.exists()) throw new Error("Rubbish request was not found after resolution");
   return toRubbish(updated);
