@@ -618,9 +618,10 @@ toquen producción necesitan confirmación explícita del operador.
   manual. La biblioteca descarga y cachea sus recursos publicos de idioma/core al primer uso.
 - Evidencia: prueba unitaria del parser y fallback PDF (`3/3`), `typecheck`, `build`, `lint` (0 errores, 7
   warnings preexistentes), `test:provider-guard` (`3/3`), `build:functions` y
-  `test:firebase:emulator` (`15/15` archivos, `52/52` tests) pasados. Falta repetir el E2E completo
-  cuando el runner local de Playwright cierre correctamente los emuladores; no se aplicaron
-  migraciones ni despliegues.
+  `test:firebase:emulator` (`15/15` archivos, `52/52` tests) pasados. El E2E focalizado de invoices
+  también pasó (`1/1`): carga de imagen, habilitación de OCR, envío privado y aprobación manager.
+  La suite global fue intentada, pero el runner quedó retenido durante el teardown; no se cuenta como
+  cierre global. No se aplicaron migraciones ni despliegues.
 
 ## Fuera de alcance hasta cerrar la Fase 2
 
