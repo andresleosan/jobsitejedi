@@ -337,7 +337,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-011 — Migrar facturas, reportes y evaluaciones de riesgo
 
-- **Prioridad:** P1 · **Estado:** en-progreso · **Depende de:** T-007, T-009, T-010
+- **Prioridad:** P1 · **Estado:** revision · **Depende de:** T-007, T-009, T-010
 - Migrar facturas, proveedores, extracción, reportes diarios, firmas y documentos.
 - Revisar especialmente que `documents` no exponga archivos de otros usuarios y que la
   ruta/bucket de evaluaciones de riesgo sea coherente.
@@ -648,8 +648,9 @@ toquen producción necesitan confirmación explícita del operador.
   `firebase emulators:exec` con JDK 21 pasó `1/1` en 18.1 s, junto con `typecheck` y lint sin errores.
   El runner cerró los emuladores correctamente; permanecen solo warnings no bloqueantes del entorno y
   un warning React de claves durante la suite concurrente.
-- T-011 continúa `en-progreso` por el alcance pendiente de proveedores/extracción y no se marca
-  aprobada sin cerrar esos frentes; no hubo migraciones ni despliegues.
+- T-011 queda en `revision`: proveedores, extracción, reportes, carga privada y firma ya tienen
+  implementación y evidencia E2E; falta la revisión humana de los criterios de cierre. No hubo
+  migraciones ni despliegues.
 
 ## Fuera de alcance hasta cerrar la Fase 2
 
