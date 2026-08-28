@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
-import { CalendarDays, FileText, Loader2, Paperclip, ReceiptText } from "lucide-react";
+import { CalendarDays, FileText, Loader2, Paperclip, ReceiptText, ScanText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +25,7 @@ import {
   type InvoiceRecord,
 } from "@/lib/firebase/repositories/invoices";
 import { listSuppliers, type SupplierRecord } from "@/lib/firebase/repositories/suppliers";
+import { extractInvoiceOcr, type InvoiceOcrSuggestions } from "@/lib/ocr/invoice";
 
 interface InvoiceSubmissionDialogProps {
   open: boolean;
@@ -59,6 +60,8 @@ const InvoiceSubmissionDialog = ({
   const [notes, setNotes] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [fileInputKey, setFileInputKey] = useState(0);
+  const [isOcrRunning, setIsOcrRunning] = useState(false);
+  const [ocrProgress, setOcrProgress] = useState(0);
   const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -122,6 +125,40 @@ const InvoiceSubmissionDialog = ({
     setNotes("");
     setFile(null);
     setFileInputKey((value) => value + 1);
+    setOcrProgress(0);
+  };
+
+  const applyOcrSuggestions = (suggestions: InvoiceOcrSuggestions) => {
+    if (suggestions.invoiceNumber) setInvoiceNumber(suggestions.invoiceNumber);
+    if (suggestions.supplierName) {
+      setSupplierMode(MANUAL_SUPPLIER_VALUE);
+      setSupplierName(suggestions.supplierName);
+    }
+    if (suggestions.invoiceDate) setInvoiceDate(suggestions.invoiceDate);
+    if (suggestions.amount) setAmount(suggestions.amount);
+  };
+
+  const handleOcr = async () => {
+    if (!file) return;
+    setErrorMessage(null);
+    setIsOcrRunning(true);
+    setOcrProgress(0);
+    try {
+      const suggestions = await extractInvoiceOcr(file, setOcrProgress);
+      applyOcrSuggestions(suggestions);
+      const found = [suggestions.invoiceNumber, suggestions.supplierName, suggestions.invoiceDate, suggestions.amount]
+        .filter(Boolean).length;
+      toast({
+        title: found > 0 ? "Invoice fields detected" : "No invoice fields detected",
+        description: found > 0
+          ? "Check the suggested values before submitting."
+          : "Enter the invoice details manually.",
+      });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "The invoice image could not be scanned.");
+    } finally {
+      setIsOcrRunning(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -280,6 +317,19 @@ const InvoiceSubmissionDialog = ({
                 Image or PDF, smaller than 10 MB. The file becomes private audit evidence after submission.
               </p>
               {file && <p className="flex items-center gap-2 text-sm"><Paperclip className="h-4 w-4" />{file.name}</p>}
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!file || !file.type.startsWith("image/") || isSubmitting || isOcrRunning}
+                  onClick={() => void handleOcr()}
+                >
+                  {isOcrRunning ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <ScanText className="h-4 w-4" />}
+                  {isOcrRunning ? `Scanning image (${ocrProgress}%)` : "Scan image fields"}
+                </Button>
+                <span className="text-xs text-muted-foreground">Free local OCR; values stay editable. PDF fields are manual.</span>
+              </div>
             </div>
 
             <div className="space-y-2">

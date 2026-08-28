@@ -103,6 +103,7 @@ test("builder submits a private invoice and manager approves it", async ({ page 
   await page.getByRole("button", { name: "Submit an invoice", exact: true }).click();
   let dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("combobox", { name: "Invoice supplier", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Scan image fields", exact: true })).toBeDisabled();
   await dialog.getByLabel("Invoice number").fill("INV-E2E-2048");
   await dialog.getByRole("textbox", { name: "Supplier", exact: true }).fill("Jedi Timber Supplies");
   await dialog.getByLabel("Invoice date").fill("2026-08-24");
@@ -117,6 +118,7 @@ test("builder submits a private invoice and manager approves it", async ({ page 
     mimeType: "image/png",
     buffer: onePixelPng,
   });
+  await expect(dialog.getByRole("button", { name: "Scan image fields", exact: true })).toBeEnabled();
   await dialog.getByRole("button", { name: "Submit invoice", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("valid amount");
   await dialog.getByLabel("Total amount (GBP)").fill("1234.56");

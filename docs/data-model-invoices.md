@@ -1,6 +1,6 @@
 # Contrato de datos — facturas Firebase
 
-Estado: primer slice de T-009/T-011, sin OCR ni APIs externas.
+Estado: primer slice de T-009/T-011 con OCR local opcional para imagenes.
 
 ## Colección `invoices/{invoiceId}`
 
@@ -44,6 +44,18 @@ borrado. Si el alta falla, el cliente intenta eliminar el upload huérfano.
 
 Este slice no necesita un índice compuesto. Se revisará paginación e índices cuando el volumen
 medido lo justifique.
+
+## OCR local opcional
+
+El formulario puede leer una imagen de factura con [Tesseract.js](https://github.com/naptha/tesseract.js),
+version `7.0.0`, una biblioteca Apache-2.0 sin API key ni cobro por uso. El reconocimiento corre en un
+Web Worker del navegador y solo propone `invoiceNumber`, `supplierName`, `invoiceDate` y `amount`;
+el builder debe revisar y puede corregir los valores antes de enviar.
+
+Tesseract.js descarga sus recursos publicos de idioma/core al primer uso y los cachea en el navegador;
+la imagen de la factura se procesa localmente y no se envia a una API de OCR. Si esos recursos no estan
+disponibles, o el archivo es PDF, el flujo se degrada a captura manual con un mensaje visible. No hay
+credenciales, reintentos automaticos ni gasto nuevo asociado a esta integracion.
 
 ## Rollback
 

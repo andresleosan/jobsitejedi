@@ -607,6 +607,21 @@ toquen producción necesitan confirmación explícita del operador.
   requiere un runner que cierre correctamente los emuladores; no se aplicaron migraciones,
   despliegues ni cambios remotos.
 
+## Seguimiento de T-011 - OCR local de facturas
+
+- Integrado `tesseract.js@7.0.0` como OCR gratuito y local para imagenes; no requiere API key ni
+  envia la imagen a una API de OCR.
+- `src/lib/ocr/invoice.ts` extrae texto en Web Worker y propone numero, proveedor, fecha y total
+  con parsing conservador; todos los campos siguen siendo editables y los PDF mantienen captura
+  manual.
+- `InvoiceSubmissionDialog.tsx` expone `Scan image fields`, progreso, errores visibles y fallback
+  manual. La biblioteca descarga y cachea sus recursos publicos de idioma/core al primer uso.
+- Evidencia: prueba unitaria del parser y fallback PDF (`3/3`), `typecheck`, `build`, `lint` (0 errores, 7
+  warnings preexistentes), `test:provider-guard` (`3/3`), `build:functions` y
+  `test:firebase:emulator` (`15/15` archivos, `52/52` tests) pasados. Falta repetir el E2E completo
+  cuando el runner local de Playwright cierre correctamente los emuladores; no se aplicaron
+  migraciones ni despliegues.
+
 ## Fuera de alcance hasta cerrar la Fase 2
 
 - Nuevas features de negocio.

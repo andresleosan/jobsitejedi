@@ -171,6 +171,15 @@ backlog.
 - Antes de usar Functions con APIs externas se debe definir límite de costo, timeout,
   reintentos y alerta presupuestaria.
 
+## Costo de OCR
+
+- **Tesseract.js 7.0.0:** biblioteca Apache-2.0 ejecutada en el navegador; costo de uso: `0` y sin
+  credenciales. Los recursos de idioma/core se sirven desde CDN publico y se cachean localmente.
+- **Alerta de facturacion:** no aplica a Tesseract.js. Firebase conserva sus controles de costo
+  independientes y no se modifican en este slice.
+- **Degradacion:** si el CDN o el worker fallan, el builder conserva la captura manual; no hay
+  reintentos infinitos ni llamadas pagas.
+
 ## Checkpoint A2.1
 
 Confirmado explícitamente por el operador:
