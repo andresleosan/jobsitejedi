@@ -595,14 +595,17 @@ toquen producción necesitan confirmación explícita del operador.
   `docs/data-model-suppliers.md`.
 - Integrado el selector de proveedores en `InvoiceSubmissionDialog.tsx`, con catalogo autenticado,
   entrada manual de respaldo, labels accesibles y estados de carga/error sin bloquear el flujo actual.
+- Integrado `SupplierCatalogDialog.tsx` en el dashboard manager para alta idempotente y edicion del
+  nombre visible; no expone eliminacion y deja la proteccion de historial en las reglas Firestore.
 - Evidencia: `npm.cmd run test:firebase:emulator` -> 15 archivos/52 tests pasados; `npm.cmd run
   typecheck`; `npm.cmd run build:functions`; `npm.cmd run build`; `npm.cmd run lint` (0 errores,
   7 warnings preexistentes); `npm.cmd run test:provider-guard` (3/3); y `git diff --check` limpio.
 - El E2E de facturas fue intentado con emuladores y llego al flujo de envio/revision, pero el runner
   local quedo retenido durante el apagado; no se cuenta como aprobado y requiere repetirlo en CI o
   con el runner estabilizado.
-- T-011 conserva `en-progreso`: falta la UI manager de proveedores, extraccion OCR/entrenamiento y
-  E2E completo; no se aplicaron migraciones, despliegues ni cambios remotos.
+- T-011 conserva `en-progreso`: falta extraccion OCR/entrenamiento y E2E completo; el E2E local
+  requiere un runner que cierre correctamente los emuladores; no se aplicaron migraciones,
+  despliegues ni cambios remotos.
 
 ## Fuera de alcance hasta cerrar la Fase 2
 
