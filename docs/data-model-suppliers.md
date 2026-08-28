@@ -1,7 +1,8 @@
 # Contrato de proveedores Firebase
 
-Este slice agrega el catalogo de proveedores sin migrar datos remotos. Las facturas actuales
-conservan `supplierName` como snapshot hasta que el flujo de seleccion de proveedor se integre.
+Este slice agrega el catalogo de proveedores sin migrar datos remotos. El formulario de facturas
+ofrece el catalogo a builders autenticados y conserva `supplierName` como snapshot; la entrada
+manual sigue disponible para proveedores que aun no esten en el catalogo.
 
 ## Coleccion `suppliers/{supplierId}`
 
@@ -15,8 +16,9 @@ conservan `supplierName` como snapshot hasta que el flujo de seleccion de provee
 
 El ID se deriva de `name` normalizado. Crear el mismo nombre canonico devuelve el documento
 existente y evita duplicados sin un indice compuesto. Los managers pueden crear y editar solo la
-identidad canonica; builders y managers autenticados pueden leer. No se permiten borrados para no
-romper referencias futuras desde facturas o entrenamiento de extraccion.
+capitalizacion del nombre visible desde el catalogo manager; builders y managers autenticados pueden
+leer. No se permiten borrados para no romper referencias futuras desde facturas o entrenamiento de
+extraccion.
 
 ## Rollback
 
