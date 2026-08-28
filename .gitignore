@@ -17,6 +17,8 @@ dist-ssr
 .superpowers/sdd/
 qa/reports/
 qa/test-results/
+.tools/
+graphify-out/
 
 # Editor directories and files
 .vscode/*

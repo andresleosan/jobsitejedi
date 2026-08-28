@@ -8,13 +8,14 @@ export default defineConfig({
   reporter: [["list"], ["html", { outputFolder: "qa/reports", open: "never" }]],
   use: {
     headless: true,
-    baseURL: "http://127.0.0.1:5173",
+    channel: process.env.PLAYWRIGHT_CHANNEL || undefined,
+    baseURL: "http://localhost:5173",
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "npm.cmd run dev -- --host 127.0.0.1 --port 5173",
-    url: "http://127.0.0.1:5173",
+    command: "npm.cmd run dev -- --host localhost --port 5173",
+    url: "http://localhost:5173",
     reuseExistingServer: false,
     timeout: 120_000,
     env: {

@@ -64,6 +64,31 @@ migración podrán coexistir artefactos históricos, pero no una nueva ruta híb
 - Toda regla de acceso se prueba para anónimo, propietario, usuario ajeno y manager.
 - Las funciones validan rol e input; el frontend no es frontera de seguridad.
 
+## Contrato de autenticación Google (T-020)
+
+- Firebase Authentication conserva un solo contrato de sesión para email/contraseña y Google.
+- Google prueba identidad, pero no concede autorización: después del popup se exige un custom claim
+  `manager` o `builder`; si falta, el cliente cierra la sesión y muestra una explicación segura.
+- Las cuentas Google deben ser provisionadas por el flujo operativo autorizado antes de acceder.
+  Crear una identidad en Firebase no crea perfiles, proyectos ni permisos de negocio.
+- El proveedor `Google` y cada dominio de despliegue se habilitan en Firebase Console por el operador;
+  este cambio externo no se ejecuta desde el frontend ni forma parte de un despliegue automático.
+- Se usa popup con selector explícito de cuenta. Cancelación, popup bloqueado, dominio no autorizado,
+  proveedor deshabilitado y conflicto de método de acceso se normalizan sin filtrar errores internos.
+
+## Criterio visual para autenticación Google (T-020)
+
+- **Paleta:** la acción principal de email mantiene `primary`; Google usa un botón `outline` neutro y
+  su marca multicolor solo dentro del icono, sin introducir una paleta paralela.
+- **Tipografía:** texto y jerarquía existentes en la tarjeta de acceso; el proveedor alternativo no
+  compite con el título del producto.
+- **Layout:** Google aparece primero como alternativa de acceso y un separador textual conduce al
+  formulario email/contraseña; ambos ocupan el ancho completo y funcionan en móvil.
+- **Elemento firma:** la tarjeta conserva el casco de BuildTrack Pro y presenta los dos proveedores
+  dentro de una sola superficie, dejando claro que conducen al mismo workspace por rol.
+- **Piso de calidad:** botón con nombre accesible, foco visible, estado de carga independiente,
+  bloqueo de doble envío y error visible cuando la identidad aún no tiene acceso asignado.
+
 ## Testing y calidad
 
 Comandos objetivo:
@@ -81,6 +106,11 @@ npm.cmd --prefix functions run build
 
 La suite Firebase debe ejecutarse contra emuladores. La suite E2E debe cubrir como mínimo
 login, roles, proyectos, trabajos, fotos, inventario, facturas y reportes.
+
+El runtime reproducible de QA es Node 22.23.2 + JDK 21, con descubrimiento de Functions limitado
+a 30 segundos. Los comandos con emuladores pasan por `scripts/firebase-emulator-runner.mjs`, que
+valida esas versiones antes de iniciar. Node 20 no se adopta porque termino su soporte en marzo de
+2026; la instalacion y operacion quedan documentadas en `docs/runtime-qa.md`.
 
 ## Criterio visual para la vertical de fotos (T-008)
 

@@ -93,6 +93,47 @@ toquen producción necesitan confirmación explícita del operador.
   - Revisión de seguridad: las Functions exigen autenticación, validan payloads y el
     cambio de rol exige claim manager; el cliente no puede autoasignarse manager.
 
+### T-020 — Estabilizar login y añadir autenticación con Google
+
+- **Prioridad:** P0 · **Estado:** en-progreso · **Depende de:** T-003
+- Impedir que una identidad Firebase válida sin claim `manager`/`builder` provoque un bucle entre
+  `/auth` y `/dashboard`; debe cerrar la sesión y mostrar un error accionable sin revelar datos.
+- Añadir Google como proveedor de autenticación mediante Firebase Auth, sin autoasignar roles ni
+  relajar las reglas de Firestore/Storage.
+- Mantener email/contraseña como alternativa y conservar el registro por invitación existente.
+- Documentar la activación operativa de Google y los dominios autorizados en Firebase Console.
+- **Pruebas:** credenciales inválidas, credenciales válidas con rol, identidad sin rol, contrato de
+  errores Google, control accesible en UI y regresión E2E del login.
+- **Aceptación:** ninguna sesión sin rol entra al dashboard ni genera redirecciones repetidas; una
+  cuenta Google ya provisionada con claim llega al dashboard correspondiente.
+- **Avance 2026-08-28:**
+  - La cuenta real de QA autentica correctamente en Firebase, pero no tiene custom claim de rol. El
+    defecto quedó reproducido con 7.629 transiciones `/auth`↔`/dashboard` en 4 segundos.
+  - El adaptador ahora exige rol para email/contraseña, Google y registros por invitación; una sesión
+    sin rol se cierra y devuelve un mensaje seguro. La repetición real quedó estable en `/auth` con
+    2 eventos documentales y cero visitas a `/dashboard`.
+  - Añadido Google con selector de cuenta, errores normalizados, botón accesible y bloqueo de doble
+    envío. El proveedor no autoasigna permisos y la contraseña se limpia después de un rechazo.
+  - El estado sin rol ahora permanece visible con acciones `Cerrar sesion` y `Reintentar`; el mismo
+    estado se activa tanto para email/contrasena como para Google y nunca autoriza el dashboard.
+  - La auditoria remota de solo lectura encontro 1 usuario activo, 0 managers, 0 builders y 1 cuenta
+    sin rol. El procedimiento de asignacion y rollback esta en `docs/auth-role-operations.md`; no se
+    cambiaron usuarios ni configuracion remota.
+  - El runner quedo fijado a Node 22.23.2, JDK 21 y 30 s de descubrimiento. Node 20 no se adopta por
+    haber terminado soporte en marzo de 2026; detalle operativo en `docs/runtime-qa.md`.
+  - Evidencia final: suite Firebase limpia con Node 22/JDK 21 (15 archivos/60 tests) y E2E focalizado
+    de auth (1/1) aprobados, con cierre correcto de emuladores.
+  - La consulta remota de solo lectura confirmo Google habilitado, cliente OAuth configurado y los
+    dominios `localhost`, `jobsitejedi.firebaseapp.com` y `jobsitejedi.web.app` autorizados. El E2E
+    focalizado paso 1/1 despues de cambiar QA a `http://localhost:5173`.
+  - Con autorizacion explicita del operador, se asigno `manager` al unico usuario activo. El dry-run
+    confirmo rol anterior `null`; la relectura Admin confirmo `manager`, el login real verifico el
+    ID token y el smoke UI termino en `/managers` sin estado de rol faltante. No hubo despliegue y
+    las credenciales se ingresaron de forma segura sin persistencia.
+  - T-020 conserva `en-progreso` unicamente hasta validar de forma interactiva una identidad Google
+    real ya provisionada; proveedor, cliente OAuth, dominios, cuenta QA y ruta manager ya quedaron
+    verificados.
+
 ### T-004 — Implementar reglas mínimas de Firestore
 
 - **Prioridad:** P0 · **Estado:** aprobada · **Depende de:** T-003

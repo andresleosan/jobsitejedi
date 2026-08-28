@@ -1,7 +1,9 @@
 import {
   createUserWithEmailAndPassword,
+  GoogleAuthProvider,
   onIdTokenChanged,
   signInWithEmailAndPassword,
+  signInWithPopup,
   signOut as firebaseSignOut,
   updateProfile,
   type User,
@@ -12,6 +14,22 @@ import type { AppRole, SessionUser } from "./types";
 
 const isAppRole = (value: unknown): value is AppRole =>
   value === "manager" || value === "builder";
+
+export const MISSING_ROLE_MESSAGE =
+  "This account has no assigned BuildTrack role. Contact a manager";
+
+const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: "select_account" });
+
+class AuthAdapterError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AuthAdapterError";
+  }
+}
 
 const getErrorCode = (error: unknown) => {
   if (typeof error === "object" && error !== null && "code" in error) {
@@ -38,6 +56,21 @@ export const normalizeAuthError = (error: unknown): Error => {
       return new Error("Unable to connect to authentication service");
     case "auth/too-many-requests":
       return new Error("Too many attempts. Please try again later");
+    case "auth/popup-closed-by-user":
+    case "auth/cancelled-popup-request":
+      return new Error("Google sign-in was cancelled");
+    case "auth/popup-blocked":
+      return new Error("Allow pop-ups in your browser to continue with Google");
+    case "auth/account-exists-with-different-credential":
+      return new Error("This email already uses another sign-in method");
+    case "auth/operation-not-allowed":
+      return new Error("Google sign-in is not enabled for this application");
+    case "auth/unauthorized-domain":
+      return new Error("This domain is not authorized for Google sign-in");
+    case "auth/user-disabled":
+      return new Error("This account has been disabled");
+    case "app/missing-role":
+      return new Error(MISSING_ROLE_MESSAGE);
     case "functions/permission-denied":
       return new Error("You do not have permission to perform this action");
     case "functions/unauthenticated":
@@ -60,6 +93,17 @@ const toSessionUser = async (user: User): Promise<SessionUser> => ({
   fullName: user.displayName ?? "",
   role: await getRoleFromClaims(user),
 });
+
+const toAuthorizedSessionUser = async (user: User): Promise<SessionUser> => {
+  const sessionUser = await toSessionUser(user);
+  if (sessionUser.role) return sessionUser;
+
+  await firebaseSignOut(firebaseAuth).catch(() => undefined);
+  throw new AuthAdapterError(
+    "app/missing-role",
+    "Authenticated identity has no application role",
+  );
+};
 
 const validateRegistrationInput = (input: {
   email: string;
@@ -97,7 +141,16 @@ export const signIn = async (
       email.trim().toLowerCase(),
       password,
     );
-    return await toSessionUser(credential.user);
+    return await toAuthorizedSessionUser(credential.user);
+  } catch (error) {
+    throw normalizeAuthError(error);
+  }
+};
+
+export const signInWithGoogle = async (): Promise<SessionUser> => {
+  try {
+    const credential = await signInWithPopup(firebaseAuth, googleProvider);
+    return await toAuthorizedSessionUser(credential.user);
   } catch (error) {
     throw normalizeAuthError(error);
   }
@@ -119,7 +172,7 @@ export const registerBuilder = async (input: {
     await updateProfile(credential.user, { displayName: input.fullName.trim() });
     await ensureBuilderRole();
     await credential.user.getIdToken(true);
-    return await toSessionUser(credential.user);
+    return await toAuthorizedSessionUser(credential.user);
   } catch (error) {
     throw normalizeAuthError(error);
   }
@@ -143,7 +196,7 @@ export const registerWithInvitation = async (input: {
     await updateProfile(credential.user, { displayName: input.fullName.trim() });
     await invitationOperations.consumeInvitation({ invitationId: input.invitationId.trim(), userId: credential.user.uid });
     await credential.user.getIdToken(true);
-    return await toSessionUser(credential.user);
+    return await toAuthorizedSessionUser(credential.user);
   } catch (error) {
     throw normalizeAuthError(error);
   }

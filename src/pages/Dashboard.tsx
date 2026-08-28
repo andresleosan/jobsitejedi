@@ -11,8 +11,12 @@ const Dashboard = () => {
 
   useEffect(() => {
     if (isAuthLoading) return;
-    if (!user || !user.role) {
-      navigate("/auth");
+    if (!user) {
+      navigate("/auth", { replace: true });
+      return;
+    }
+    if (!user.role) {
+      navigate("/auth?reason=missing-role", { replace: true });
       return;
     }
 

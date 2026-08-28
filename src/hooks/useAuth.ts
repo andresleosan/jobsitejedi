@@ -3,6 +3,7 @@ import {
   registerBuilder,
   registerWithInvitation,
   signIn,
+  signInWithGoogle,
   signOut,
   subscribeToAuth,
 } from "@/lib/firebase/auth";
@@ -25,6 +26,7 @@ export const useAuth = () => {
     user,
     isLoading,
     signIn,
+    signInWithGoogle,
     registerBuilder,
     registerWithInvitation,
     signOut,

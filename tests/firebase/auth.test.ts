@@ -7,24 +7,30 @@ const makeCredentials = (label: string) => ({
 });
 
 let getCurrentRole: typeof import("@/lib/firebase/auth").getCurrentRole;
+let normalizeAuthError: typeof import("@/lib/firebase/auth").normalizeAuthError;
 let registerBuilder: typeof import("@/lib/firebase/auth").registerBuilder;
 let signIn: typeof import("@/lib/firebase/auth").signIn;
 let signOut: typeof import("@/lib/firebase/auth").signOut;
 let subscribeToAuth: typeof import("@/lib/firebase/auth").subscribeToAuth;
 let assignUserRole: typeof import("@/lib/firebase/functions").assignUserRole;
 let invitationOperations: typeof import("@/lib/firebase/functions").invitationOperations;
+let firebaseAuth: typeof import("@/lib/firebase/client").firebaseAuth;
+let createUserWithEmailAndPassword: typeof import("firebase/auth").createUserWithEmailAndPassword;
 
 describe("Firebase Auth adapter", () => {
   beforeAll(async () => {
     vi.stubEnv("VITE_FIREBASE_USE_EMULATORS", "true");
     ({
       getCurrentRole,
+      normalizeAuthError,
       registerBuilder,
       signIn,
       signOut,
       subscribeToAuth,
     } = await import("@/lib/firebase/auth"));
     ({ assignUserRole, invitationOperations } = await import("@/lib/firebase/functions"));
+    ({ firebaseAuth } = await import("@/lib/firebase/client"));
+    ({ createUserWithEmailAndPassword } = await import("firebase/auth"));
   });
 
   beforeEach(async () => {
@@ -72,6 +78,31 @@ describe("Firebase Auth adapter", () => {
     await expect(signIn(credentials.email, credentials.password)).rejects.toThrow(
       "Invalid email or password",
     );
+  });
+
+  test("rejects and signs out an authenticated identity without an application role", async () => {
+    const credentials = makeCredentials("missing-role");
+    await createUserWithEmailAndPassword(
+      firebaseAuth,
+      credentials.email,
+      credentials.password,
+    );
+    await signOut();
+
+    await expect(signIn(credentials.email, credentials.password)).rejects.toThrow(
+      "This account has no assigned BuildTrack role. Contact a manager",
+    );
+    expect(await getCurrentRole()).toBeNull();
+  });
+
+  test.each([
+    ["auth/popup-closed-by-user", "Google sign-in was cancelled"],
+    ["auth/popup-blocked", "Allow pop-ups in your browser to continue with Google"],
+    ["auth/account-exists-with-different-credential", "This email already uses another sign-in method"],
+    ["auth/operation-not-allowed", "Google sign-in is not enabled for this application"],
+    ["auth/unauthorized-domain", "This domain is not authorized for Google sign-in"],
+  ])("normalizes Google error %s", (code, message) => {
+    expect(normalizeAuthError({ code })).toEqual(new Error(message));
   });
 
   test("returns a safe response for an invalid invitation code", async () => {
