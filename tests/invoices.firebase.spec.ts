@@ -101,6 +101,9 @@ test("builder submits a private invoice and manager approves it", async ({ page 
   await expect(page.getByRole("combobox")).toContainText("Invoice E2E Project");
   await expect(page.getByRole("heading", { name: "Reports and risk", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Daily report", exact: true })).toBeVisible();
+  await page.getByLabel("What happened?").fill("Foundation inspection completed; no blockers.");
+  await page.getByRole("button", { name: "Save report", exact: true }).click();
+  await expect(page.getByText("Foundation inspection completed; no blockers.", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Submit an invoice", exact: true }).click();
   let dialog = page.getByRole("dialog");
@@ -138,6 +141,34 @@ test("builder submits a private invoice and manager approves it", async ({ page 
   await expect(page).toHaveURL(/\/managers$/, { timeout: 15_000 });
   await expect(page.getByRole("heading", { name: "Reports and risk", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Upload risk assessment", exact: true })).toBeVisible();
+  await page.getByRole("combobox", { name: "Project for reports and risk", exact: true }).click();
+  await page.getByRole("option", { name: /Invoice E2E Project/ }).click();
+  await expect(page.getByText("Foundation inspection completed; no blockers.", { exact: true })).toBeVisible();
+  await page.getByLabel("Document title").fill("Site risk assessment");
+  const riskAssessmentPdf = Buffer.from("%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF");
+  await page.getByLabel("Private PDF").setInputFiles({
+    name: "site-risk-assessment.pdf",
+    mimeType: "application/pdf",
+    buffer: riskAssessmentPdf,
+  });
+  await page.getByRole("button", { name: "Upload assessment", exact: true }).click();
+  await expect(page.getByText("Site risk assessment", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+
+  await page.locator("#signin-email").fill(builderEmail);
+  await page.locator("#signin-password").fill(password);
+  await page.getByRole("button", { name: "Sign In", exact: true }).click();
+  await expect(page).toHaveURL(/\/builders$/, { timeout: 15_000 });
+  await expect(page.getByText("Site risk assessment", { exact: true })).toBeVisible({ timeout: 15_000 });
+  const assessmentCard = page.getByText("Site risk assessment", { exact: true }).locator("xpath=ancestor::article");
+  await assessmentCard.getByRole("button", { name: "Sign assessment", exact: true }).click();
+  await expect(assessmentCard.getByText("Signed", { exact: true })).toBeVisible({ timeout: 15_000 });
+
+  await page.getByRole("button", { name: "Sign Out", exact: true }).click();
+  await page.locator("#signin-email").fill(managerEmail);
+  await page.locator("#signin-password").fill(password);
+  await page.getByRole("button", { name: "Sign In", exact: true }).click();
+  await expect(page).toHaveURL(/\/managers$/, { timeout: 15_000 });
   await page.getByRole("button", { name: "Invoice review", exact: true }).click();
   dialog = page.getByRole("dialog");
   let managerInvoice = dialog.locator('[data-testid="invoice-review"]').filter({ hasText: "INV-E2E-2048" });

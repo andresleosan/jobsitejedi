@@ -639,6 +639,18 @@ toquen producción necesitan confirmación explícita del operador.
   retenido durante teardown y fue interrumpido después del pass. T-011 conserva `en-progreso` hasta
   cubrir con E2E los envíos de reportes, carga de riesgo y firma; no hubo migraciones ni despliegues.
 
+## Seguimiento de T-011 - 2026-08-28 (E2E de reportes y riesgo)
+
+- El spec `tests/invoices.firebase.spec.ts` ahora cubre el flujo UI completo: builder guarda un parte
+  diario, manager selecciona el proyecto, verifica la actividad, carga un PDF privado y builder vuelve
+  a entrar para firmarlo; la tarjeta confirma el estado `Signed`.
+- Evidencia: `npm run test:e2e:firebase -- tests/invoices.firebase.spec.ts --workers=1` dentro de
+  `firebase emulators:exec` con JDK 21 pasó `1/1` en 18.1 s, junto con `typecheck` y lint sin errores.
+  El runner cerró los emuladores correctamente; permanecen solo warnings no bloqueantes del entorno y
+  un warning React de claves durante la suite concurrente.
+- T-011 continúa `en-progreso` por el alcance pendiente de proveedores/extracción y no se marca
+  aprobada sin cerrar esos frentes; no hubo migraciones ni despliegues.
+
 ## Fuera de alcance hasta cerrar la Fase 2
 
 - Nuevas features de negocio.
