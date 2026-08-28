@@ -55,6 +55,11 @@ const reviewInvoiceCallable = httpsCallable<
   { invoiceId: string; status: InvoiceReviewStatus }
 >(firebaseFunctions, "reviewInvoice");
 
+const extractJobsFromExcelCallable = httpsCallable<
+  { projectId: string; filePath: string },
+  { importId: string; createdJobIds: string[] }
+>(firebaseFunctions, "extractJobsFromExcel");
+
 export const ensureBuilderRole = async (): Promise<void> => {
   const result = await ensureBuilderRoleCallable({ role: "builder" });
 
@@ -98,3 +103,8 @@ export const reviewInvoiceRecord = async (input: {
   status: InvoiceReviewStatus;
   reviewNotes: string | null;
 }) => (await reviewInvoiceCallable(input)).data;
+
+export const extractJobsFromExcelRecord = async (input: {
+  projectId: string;
+  filePath: string;
+}) => (await extractJobsFromExcelCallable(input)).data;

@@ -60,6 +60,29 @@ describe("Firestore authorization rules", () => {
     await assertFails(updateDoc(otherProjectRef, { ownerId: "builder-2" }));
   });
 
+  test("keeps suppliers readable but manager-owned and undeletable", async () => {
+    const supplier = doc(managerDb(), "suppliers/jedi-timber-supplies");
+    await assertSucceeds(setDoc(supplier, {
+      name: "Jedi Timber Supplies",
+      normalizedName: "jedi-timber-supplies",
+      createdBy: "manager-1",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(getDoc(doc(builderDb(), supplier.path)));
+    await assertSucceeds(getDoc(doc(managerDb(), supplier.path)));
+    await assertFails(getDoc(doc(anonymousDb(), supplier.path)));
+    await assertFails(setDoc(doc(builderDb(), "suppliers/forged-supplier"), {
+      name: "Forged supplier",
+      normalizedName: "forged-supplier",
+      createdBy: "builder-1",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(updateDoc(supplier, { name: "Jedi Timber Supplies Ltd" }));
+    await assertFails(deleteDoc(supplier));
+  });
+
   test("keeps the role claim outside user documents", async () => {
     const managerUser = doc(managerDb(), "users/manager-1");
     await assertSucceeds(
@@ -128,6 +151,73 @@ describe("Firestore authorization rules", () => {
     await assertFails(updateDoc(doc(builderDb(), path), { totalAmountMinor: 1 }));
     await assertFails(updateDoc(doc(managerDb(), path), { status: "approved" }));
     await assertFails(deleteDoc(doc(managerDb(), path)));
+  });
+
+  test("keeps daily reports and risk signatures scoped to the project owner", async () => {
+    await assertSucceeds(setDoc(doc(builderDb(), "projects/report-rules-project"), {
+      ownerId: "builder-1",
+      name: "Report rules project",
+    }));
+    await assertSucceeds(setDoc(doc(builderDb(), "dailyReports/report-rules-1"), {
+      builderId: "builder-1",
+      projectId: "report-rules-project",
+      date: "2026-08-28",
+      description: "Daily progress",
+      photoPaths: [],
+      createdAt: serverTimestamp(),
+    }));
+    await assertSucceeds(getDoc(doc(builderDb(), "dailyReports/report-rules-1")));
+    await assertFails(getDoc(doc(otherBuilderDb(), "dailyReports/report-rules-1")));
+    await assertFails(setDoc(doc(builderDb(), "dailyReports/forged-report"), {
+      builderId: "builder-1",
+      projectId: "missing-project",
+      date: "2026-08-28",
+      description: "Forged report",
+      photoPaths: [],
+      createdAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(builderDb(), "dailyReports/report-rules-1"), {
+      description: "Changed report",
+    }));
+
+    await assertSucceeds(setDoc(doc(managerDb(), "riskAssessments/risk-rules-1"), {
+      projectId: "report-rules-project",
+      title: "Site risk assessment",
+      filePath: "documents/report-rules-project/risk-rules-1/assessment.pdf",
+      fileName: "assessment.pdf",
+      contentType: "application/pdf",
+      fileSize: 100,
+      uploadedBy: "manager-1",
+      createdAt: serverTimestamp(),
+    }));
+    await assertSucceeds(getDoc(doc(builderDb(), "riskAssessments/risk-rules-1")));
+    await assertFails(getDoc(doc(otherBuilderDb(), "riskAssessments/risk-rules-1")));
+    await assertFails(setDoc(doc(builderDb(), "riskAssessments/builder-forged"), {
+      projectId: "report-rules-project",
+      title: "Builder forged assessment",
+      filePath: "documents/report-rules-project/builder-forged/assessment.pdf",
+      fileName: "assessment.pdf",
+      contentType: "application/pdf",
+      fileSize: 100,
+      uploadedBy: "builder-1",
+      createdAt: serverTimestamp(),
+    }));
+
+    await assertSucceeds(setDoc(doc(builderDb(), "riskAssessmentSignatures/risk-signature-1"), {
+      riskAssessmentId: "risk-rules-1",
+      userId: "builder-1",
+      signedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(getDoc(doc(builderDb(), "riskAssessmentSignatures/risk-signature-1")));
+    await assertFails(getDoc(doc(otherBuilderDb(), "riskAssessmentSignatures/risk-signature-1")));
+    await assertFails(setDoc(doc(builderDb(), "riskAssessmentSignatures/forged-signature"), {
+      riskAssessmentId: "risk-rules-1",
+      userId: "builder-2",
+      signedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(managerDb(), "riskAssessmentSignatures/risk-signature-1"), {
+      userId: "manager-1",
+    }));
   });
 
   test("protects inventory catalogs and isolates builder operations", async () => {

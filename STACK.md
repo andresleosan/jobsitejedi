@@ -116,6 +116,22 @@ introducir un sistema visual paralelo:
 - **Piso de calidad:** foco visible, labels explícitos, errores junto al flujo, botones con verbos
   consistentes y sin animación obligatoria; los archivos aceptados se explican antes de cargarlos.
 
+## Criterio visual para la importación de trabajos (T-009)
+
+La carga de trabajos extiende la identidad activa de BuildTrack Pro y se mantiene como una acción
+de manager dentro del dashboard:
+
+- **Paleta:** `primary` señala la acción de importar, `muted` describe formatos y límites,
+  `destructive` comunica validaciones fallidas y `background` mantiene el flujo legible.
+- **Tipografía:** tipografía actual del producto; nombre de archivo y cantidad importada usan una
+  jerarquía breve para que la persona confirme el resultado sin leer detalles técnicos.
+- **Layout:** diálogo de dos decisiones en orden — proyecto y archivo — con controles apilados en
+  móvil y botones de cierre/importación siempre visibles al final.
+- **Elemento firma:** la zona de carga punteada funciona como una bandeja de entrada privada y
+  explica formatos, tamaño máximo y columnas requeridas antes de enviar.
+- **Piso de calidad:** labels explícitos, foco visible, bloqueo de doble envío, estado de error junto
+  al control que falló y sin previsualizar ni exponer el contenido del archivo.
+
 ## Criterio visual para detalle de proyecto y estados (T-012)
 
 El cierre del runtime Supabase conserva la identidad activa y convierte dos pantallas heredadas

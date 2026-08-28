@@ -102,8 +102,9 @@ test("builder submits a private invoice and manager approves it", async ({ page 
 
   await page.getByRole("button", { name: "Submit an invoice", exact: true }).click();
   let dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("combobox", { name: "Invoice supplier", exact: true })).toBeVisible();
   await dialog.getByLabel("Invoice number").fill("INV-E2E-2048");
-  await dialog.getByLabel("Supplier").fill("Jedi Timber Supplies");
+  await dialog.getByRole("textbox", { name: "Supplier", exact: true }).fill("Jedi Timber Supplies");
   await dialog.getByLabel("Invoice date").fill("2026-08-24");
   await dialog.getByLabel("Total amount (GBP)").fill("12.345");
   await dialog.getByLabel("Notes (optional)").fill("Timber delivery for the first floor");

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
-import { collection, doc } from "firebase/firestore";
+import { collection, doc, getDoc } from "firebase/firestore";
 
 const credentials = (label: string) => ({
   email: `functions-${label}-${Date.now()}@example.test`,
@@ -19,6 +19,7 @@ let signOut: typeof import("@/lib/firebase/auth").signOut;
 let invitationOperations: typeof import("@/lib/firebase/functions").invitationOperations;
 let submitInvoiceRecord: typeof import("@/lib/firebase/functions").submitInvoiceRecord;
 let reviewInvoiceRecord: typeof import("@/lib/firebase/functions").reviewInvoiceRecord;
+let extractJobsFromExcelRecord: typeof import("@/lib/firebase/functions").extractJobsFromExcelRecord;
 let createProject: typeof import("@/lib/firebase/repositories/projects").createProject;
 let uploadPrivateFile: typeof import("@/lib/firebase/storage").uploadPrivateFile;
 let buildPrivateStoragePath: typeof import("@/lib/firebase/storage").buildPrivateStoragePath;
@@ -35,7 +36,8 @@ describe("Firebase invitation Functions", () => {
       ?? initializeApp({ projectId: "demo-jobsite-jedi" }, "firebase-invitation-tests");
     adminAuth = getAuth(adminApp);
     ({ registerBuilder, registerWithInvitation, signIn, signOut } = await import("@/lib/firebase/auth"));
-    ({ invitationOperations, submitInvoiceRecord, reviewInvoiceRecord } = await import("@/lib/firebase/functions"));
+    ({ invitationOperations, submitInvoiceRecord, reviewInvoiceRecord, extractJobsFromExcelRecord } =
+      await import("@/lib/firebase/functions"));
     ({ createProject } = await import("@/lib/firebase/repositories/projects"));
     ({ uploadPrivateFile, buildPrivateStoragePath } = await import("@/lib/firebase/storage"));
     ({ firebaseDb } = await import("@/lib/firebase/client"));
@@ -71,7 +73,7 @@ describe("Firebase invitation Functions", () => {
         invitationId: validation.invitationId,
         userId: invitedBuilder.id,
       }),
-    ).rejects.toMatchObject({ code: "functions/failed-precondition" });
+    ).resolves.toBeUndefined();
   }, 15_000);
 
   test("submits an invoice idempotently and restricts review to managers", async () => {
@@ -126,4 +128,47 @@ describe("Firebase invitation Functions", () => {
       code: "functions/failed-precondition",
     });
   }, 20_000);
+
+  test("rate-limits repeated manager invitation requests per user", async () => {
+    const managerCredentials = credentials("rate-limit-manager");
+    const manager = await registerBuilder(managerCredentials);
+    await adminAuth.setCustomUserClaims(manager.id, { role: "manager" });
+    await signOut();
+    await signIn(managerCredentials.email, managerCredentials.password);
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await expect(invitationOperations.createInvitation({ role: "builder" })).resolves.toBeDefined();
+    }
+    await expect(invitationOperations.createInvitation({ role: "builder" })).rejects.toMatchObject({
+      code: "functions/resource-exhausted",
+    });
+  }, 20_000);
+
+  test("imports spreadsheet jobs idempotently for managers", async () => {
+    const managerCredentials = credentials("spreadsheet-manager");
+    const manager = await registerBuilder(managerCredentials);
+    await adminAuth.setCustomUserClaims(manager.id, { role: "manager" });
+    await signOut();
+    await signIn(managerCredentials.email, managerCredentials.password);
+
+    const project = await createProject({
+      name: "Spreadsheet import project",
+      clientName: "Spreadsheet client",
+    });
+    const filePath = `job-imports/${manager.id}/jobs.csv`;
+    await uploadPrivateFile(
+      filePath,
+      new Blob([
+        "Title,Description,Section\nInstall vanity,Double sink,Bathroom\nPaint walls,,Living Room",
+      ], { type: "text/csv" }),
+      { contentType: "text/csv" },
+    );
+
+    const first = await extractJobsFromExcelRecord({ projectId: project.id, filePath });
+    const second = await extractJobsFromExcelRecord({ projectId: project.id, filePath });
+    expect(first.createdJobIds).toHaveLength(2);
+    expect(second).toEqual(first);
+    const importedJob = await getDoc(doc(firebaseDb, "jobs", first.createdJobIds[0]));
+    expect(importedJob.exists()).toBe(true);
+  }, 30_000);
 });

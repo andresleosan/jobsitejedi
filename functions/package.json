@@ -6,7 +6,8 @@
   },
   "main": "lib/index.js",
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "test": "npm run build && node --test lib/spreadsheet.test.js"
   },
   "dependencies": {
     "firebase-admin": "^14.2.0",

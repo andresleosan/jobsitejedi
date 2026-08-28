@@ -230,7 +230,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-009 — Implementar Cloud Functions privilegiadas
 
-- **Prioridad:** P1 · **Estado:** en-progreso · **Depende de:** T-003, T-004
+- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-003, T-004
 - Implementar invitaciones, asignación de roles, procesamiento de facturas,
   extracción de Excel y limpieza programada.
 - Validar entradas, rol, rutas, timeouts, reintentos finitos y errores seguros.
@@ -509,6 +509,100 @@ toquen producción necesitan confirmación explícita del operador.
   backup cuando aplique.
 - Requiere confirmación explícita del operador antes de cualquier despliegue o migración.
 - **Aceptación:** solo entonces puede pasar a `desplegada`.
+
+## Seguimiento de T-009 — 2026-08-27
+
+- Se añadió rate limiting persistente por usuario y operación para los callables de roles,
+  invitaciones y facturas, con ventanas y límites explícitos en Firestore.
+- `consumeInvitation` permite reintentar idempotentemente para el mismo usuario y revierte la
+  invitación usada si falla la asignación del custom claim; el error externo no filtra detalles.
+- `cleanupOldProjects` queda programada cada 24 horas para limpiar invitaciones expiradas y límites
+  inactivos. El borrado de proyectos está desactivado por defecto, exige `cleanupEligibleAt` anterior
+  a 30 días, ausencia de registros relacionados y `ENABLE_PROJECT_CLEANUP=true`.
+- El contrato, backup y rollback están documentados en `docs/data-model-functions.md`.
+- Evidencia: `npm.cmd run build:functions`, `npm.cmd run typecheck`, `npm.cmd run lint`,
+  `npm.cmd run test:provider-guard` (3/3) y `git diff --check` aprobados.
+- `npm.cmd run test:firebase:emulator` no pudo iniciar porque el entorno tiene Java 8 y Firebase
+  CLI 15.26 exige JDK 21+. La importación Excel sigue pendiente; T-009 conserva `en-progreso`.
+
+## Seguimiento de T-009 — 2026-08-28
+
+- Implementado `extractJobsFromExcel` para archivos privados `.xlsx`, `.csv` y `.tsv`, con parser
+  acotado sin `xlsx`, límites de 5 MiB/500 filas/16 columnas/2.000 caracteres por celda y rechazo
+  de fórmulas.
+- La callable exige claim `manager`, ruta `job-imports/{managerId}/{fileName}`, MIME permitido,
+  proyecto existente con builder propietario y rate limit de 5 importaciones por hora por manager.
+- Cada importación usa hash de contenido, documento `jobImports/{importId}` e IDs deterministas en
+  `jobs/`; los reintentos devuelven los mismos IDs sin duplicar trabajos.
+- Añadidas reglas de Storage, wrapper frontend, pruebas del parser y prueba emulada de importación
+  idempotente. `npm.cmd --prefix functions test` pasa 3/3; la suite Firebase completa sigue sin
+  poder arrancar mientras el entorno solo tenga Java 8 y Firebase CLI 15.26 exija JDK 21+.
+- T-009 conserva `en-progreso` hasta validar la suite emulada y revisar el flujo desde la UI que
+  subirá los archivos de importación.
+
+## Seguimiento de T-009 — 2026-08-28 (continuación)
+
+- Integrada la carga desde `ManagerDashboard` mediante un diálogo accesible: selección de proyecto,
+  formatos y límite visibles, validación cliente, bloqueo de doble envío y estados de éxito/error.
+- El archivo se sube con nombre temporal a `job-imports/{managerId}/` y se entrega a la callable;
+  no se exponen URLs públicas ni contenido del archivo en la UI.
+- Documentado el criterio visual de esta interacción en `STACK.md`; se conserva el Design DNA de
+  BuildTrack Pro y no se introduce un rediseño paralelo.
+- Corregida la idempotencia para que volver a subir la misma hoja al mismo proyecto no cree trabajos
+  duplicados aunque cambie el nombre temporal de Storage.
+- Evidencia: `npm.cmd --prefix functions run build`, `npm.cmd --prefix functions test` (3/3),
+  `npm.cmd run typecheck`, `npm.cmd run lint` (0 errores, 7 warnings preexistentes),
+  `npm.cmd run build` y `npm.cmd run test:provider-guard` (3/3); `git diff --check` limpio.
+- T-009 continúa `en-progreso`: falta ejecutar la suite Firebase completa contra emuladores con JDK
+  21+; el entorno actual solo tiene Java 8 y Firebase CLI 15.26 no puede iniciar esos emuladores.
+
+## Seguimiento de T-009 - 2026-08-28 (suite emulada)
+
+- La suite completa contra Auth, Firestore, Functions y Storage Emulator se ejecuto con JDK 21
+  usando configuracion Firebase temporal dentro del workspace.
+- Evidencia: `npm.cmd run test:firebase:emulator` -> 14 archivos y 49 tests aprobados; el build de
+  Functions tambien paso durante el comando.
+- Se validaron manager permitido, builder rechazado, payloads invalidos, invitaciones idempotentes,
+  claims server-side, facturas, Storage privado y la importacion idempotente de trabajos.
+- T-009 queda en `revision`: la implementacion y la evidencia automatizada estan completas para el
+  alcance actual; queda la revision humana del flujo y de los criterios de cierre antes de aprobar.
+
+## Seguimiento de T-011 - 2026-08-28 (reportes y riesgo)
+
+- Añadido `src/lib/firebase/repositories/reports.ts` con contratos tipados para reportes diarios,
+  evaluaciones de riesgo y firmas; los builders solo reportan y firman proyectos propios.
+- Las evaluaciones se suben como PDF privado a `documents/{projectId}/{assessmentId}/{fileName}`;
+  si falla la metadata Firestore se borra el archivo como compensacion.
+- Las firmas usan ID determinista `{assessmentId}_{userId}`, reintento seguro y documentos inmutables;
+  el listado builder evita queries amplias no autorizables y el manager conserva lectura completa.
+- Añadidas reglas Firestore/Storage y pruebas de aislamiento builder/manager, propiedad de proyecto,
+  rutas privadas, MIME/tamaño y rechazo de escrituras forjadas. El contrato y rollback están en
+  `docs/data-model-reports.md`.
+- Evidencia: `npm.cmd run test:firebase:emulator` -> 14 archivos/49 tests pasados; `npm.cmd run
+  typecheck`; `npm.cmd run build:functions`; `npm.cmd run build`; `npm.cmd run lint` (0 errores,
+  7 warnings preexistentes); `npm.cmd run test:provider-guard` (3/3); `git diff --check` limpio.
+- T-011 conserva `en-progreso`: proveedores, extracción, integración completa de UI y E2E de este
+  bloque quedan pendientes; no se aplicaron migraciones, despliegues ni cambios remotos.
+
+## Seguimiento de T-011 - 2026-08-28 (proveedores)
+
+- Anadido `src/lib/firebase/repositories/suppliers.ts` con normalizacion canonica de nombres,
+  alta idempotente, lectura autenticada y gestion restringida a managers.
+- Anadidas reglas Firestore para proveedores: builders solo leen, las escrituras exigen rol manager,
+  el ID debe coincidir con `normalizedName` y la eliminacion queda bloqueada para preservar historial.
+- Anadida la prueba de reglas y la prueba de repositorio para idempotencia, edicion de capitalizacion,
+  lectura builder y rechazo de alta forjada; el contrato y rollback estan en
+  `docs/data-model-suppliers.md`.
+- Integrado el selector de proveedores en `InvoiceSubmissionDialog.tsx`, con catalogo autenticado,
+  entrada manual de respaldo, labels accesibles y estados de carga/error sin bloquear el flujo actual.
+- Evidencia: `npm.cmd run test:firebase:emulator` -> 15 archivos/52 tests pasados; `npm.cmd run
+  typecheck`; `npm.cmd run build:functions`; `npm.cmd run build`; `npm.cmd run lint` (0 errores,
+  7 warnings preexistentes); `npm.cmd run test:provider-guard` (3/3); y `git diff --check` limpio.
+- El E2E de facturas fue intentado con emuladores y llego al flujo de envio/revision, pero el runner
+  local quedo retenido durante el apagado; no se cuenta como aprobado y requiere repetirlo en CI o
+  con el runner estabilizado.
+- T-011 conserva `en-progreso`: falta la UI manager de proveedores, extraccion OCR/entrenamiento y
+  E2E completo; no se aplicaron migraciones, despliegues ni cambios remotos.
 
 ## Fuera de alcance hasta cerrar la Fase 2
 

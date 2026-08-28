@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { BriefcaseBusiness, LogOut, Plus, ReceiptText, Trash2, Truck, Users, Warehouse } from "lucide-react";
+import { BriefcaseBusiness, FileSpreadsheet, LogOut, Plus, ReceiptText, Trash2, Truck, Users, Warehouse } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
@@ -12,6 +12,7 @@ import ManagerJobReviewPanel from "./ManagerJobReviewPanel";
 import ManagerMaterialDeliveryDialog from "./ManagerMaterialDeliveryDialog";
 import ManagerRubbishDialog from "./ManagerRubbishDialog";
 import ManagerInvoicesDialog from "./ManagerInvoicesDialog";
+import JobImportDialog from "./JobImportDialog";
 
 interface ManagerDashboardProps {
   userId: string;
@@ -23,6 +24,7 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
   const [isMaterialDeliveryOpen, setIsMaterialDeliveryOpen] = useState(false);
   const [isRubbishDialogOpen, setIsRubbishDialogOpen] = useState(false);
   const [isInvoicesDialogOpen, setIsInvoicesDialogOpen] = useState(false);
+  const [isJobImportOpen, setIsJobImportOpen] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -127,6 +129,10 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
                   <ReceiptText className="h-4 w-4" />
                   Invoice review
                 </Button>
+                <Button variant="outline" onClick={() => setIsJobImportOpen(true)} disabled={projects.length === 0}>
+                  <FileSpreadsheet className="h-4 w-4" />
+                  Import jobs
+                </Button>
                 <Button variant="outline" asChild>
                   <Link to="/invite">
                     <Users className="h-4 w-4" />
@@ -162,6 +168,12 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
       <ManagerInvoicesDialog
         open={isInvoicesDialogOpen}
         onOpenChange={setIsInvoicesDialogOpen}
+      />
+      <JobImportDialog
+        open={isJobImportOpen}
+        onOpenChange={setIsJobImportOpen}
+        projects={projects}
+        userId={_userId}
       />
     </div>
   );

@@ -1,15 +1,23 @@
 import { createHash, randomBytes } from "node:crypto";
 import { initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import { getFirestore, Timestamp, type DocumentReference } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
+import {
+  MAX_SPREADSHEET_BYTES,
+  MAX_SPREADSHEET_ROWS,
+  SpreadsheetParseError,
+  parseSpreadsheet,
+} from "./spreadsheet.js";
 
 initializeApp();
 
 type AppRole = "manager" | "builder";
 type InvitationStatus = "pending" | "used";
 type InvoiceStatus = "submitted" | "approved" | "rejected";
+type JobImportStatus = "processing" | "completed" | "failed";
 
 interface InvoicePayload {
   invoiceId: string;
@@ -20,6 +28,12 @@ interface InvoicePayload {
   totalAmountMinor: number;
   currency: "GBP";
   notes: string | null;
+  filePath: string;
+  fileName: string;
+}
+
+interface JobImportPayload {
+  projectId: string;
   filePath: string;
   fileName: string;
 }
@@ -197,8 +211,122 @@ const getRolePayload = (value: unknown): { userId: string; role: AppRole } => {
   return { userId, role: value.role };
 };
 
+const getJobImportPayload = (value: unknown, managerId: string): JobImportPayload => {
+  if (!isRecord(value)) {
+    throw new HttpsError("invalid-argument", "Spreadsheet import details are required");
+  }
+  const projectId = requireText(value.projectId, "Project id", 128);
+  const filePath = requireText(value.filePath, "Spreadsheet file path", 500);
+  const expectedPrefix = `job-imports/${managerId}/`;
+  const fileName = filePath.slice(expectedPrefix.length);
+  if (
+    !filePath.startsWith(expectedPrefix)
+    || !fileName
+    || fileName.includes("/")
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,179}$/.test(fileName)
+    || fileName.startsWith(".")
+    || !/\.(csv|tsv|xlsx)$/i.test(fileName)
+  ) {
+    throw new HttpsError("invalid-argument", "Spreadsheet file path is invalid");
+  }
+  return { projectId, filePath, fileName };
+};
+
 const wait = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+
+type RateLimitOperation =
+  | "ensureBuilderRole"
+  | "setUserRole"
+  | "createManagerInvitation"
+  | "consumeInvitation"
+  | "extractJobsFromExcel"
+  | "submitInvoice"
+  | "reviewInvoice";
+
+const RATE_LIMITS: Record<RateLimitOperation, { maxRequests: number; windowMs: number }> = {
+  ensureBuilderRole: { maxRequests: 5, windowMs: 60 * 60 * 1000 },
+  setUserRole: { maxRequests: 30, windowMs: 60 * 1000 },
+  createManagerInvitation: { maxRequests: 10, windowMs: 60 * 1000 },
+  consumeInvitation: { maxRequests: 5, windowMs: 15 * 60 * 1000 },
+  extractJobsFromExcel: { maxRequests: 5, windowMs: 60 * 60 * 1000 },
+  submitInvoice: { maxRequests: 10, windowMs: 10 * 60 * 1000 },
+  reviewInvoice: { maxRequests: 30, windowMs: 60 * 1000 },
+};
+
+const getRateLimitReference = (operation: RateLimitOperation, userId: string) =>
+  getFirestore()
+    .collection("functionRateLimits")
+    .doc(createHash("sha256").update(`${operation}:${userId}`).digest("hex"));
+
+const enforceUserRateLimit = async (
+  userId: string,
+  operation: RateLimitOperation,
+): Promise<void> => {
+  const policy = RATE_LIMITS[operation];
+  const now = Date.now();
+  const reference = getRateLimitReference(operation, userId);
+
+  await getFirestore().runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(reference);
+    const data = snapshot.data() ?? {};
+    const startedAt = data.windowStartedAt instanceof Timestamp
+      ? data.windowStartedAt.toMillis()
+      : 0;
+    const requestCount = Number.isSafeInteger(data.requestCount) ? data.requestCount : 0;
+
+    if (startedAt <= 0 || now - startedAt >= policy.windowMs || requestCount < 0) {
+      transaction.set(reference, {
+        operation,
+        windowStartedAt: Timestamp.fromMillis(now),
+        requestCount: 1,
+        updatedAt: Timestamp.fromMillis(now),
+      });
+      return;
+    }
+
+    if (requestCount >= policy.maxRequests) {
+      throw new HttpsError("resource-exhausted", "Too many requests; please try again later");
+    }
+
+    transaction.update(reference, {
+      requestCount: requestCount + 1,
+      updatedAt: Timestamp.fromMillis(now),
+    });
+  });
+};
+
+const assignClaimsOrCompensate = async (
+  userId: string,
+  claims: Record<string, unknown>,
+  invitationReference?: DocumentReference,
+): Promise<void> => {
+  try {
+    await getAuth().setCustomUserClaims(userId, claims);
+  } catch {
+    if (invitationReference) {
+      try {
+        await getFirestore().runTransaction(async (transaction) => {
+          const snapshot = await transaction.get(invitationReference);
+          const data = snapshot.data() ?? {};
+          if (snapshot.exists && data.status === "used" && data.usedBy === userId) {
+            transaction.update(invitationReference, {
+              status: "pending" as const,
+              usedBy: null,
+              usedAt: null,
+            });
+          }
+        });
+      } catch {
+        console.error("Role assignment compensation failed", {
+          operation: "consumeInvitation",
+        });
+      }
+    }
+
+    throw new HttpsError("internal", "Unable to assign the account role; please retry");
+  }
+};
 
 const getUserWithRetry = async (userId: string) => {
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -231,6 +359,8 @@ export const ensureBuilderRole = onCall(async (request) => {
     throw new HttpsError("invalid-argument", "Only the builder role can be self-assigned");
   }
 
+  await enforceUserRateLimit(request.auth.uid, "ensureBuilderRole");
+
   const auth = getAuth();
   const user = await getUserWithRetry(request.auth.uid);
   const currentRole = user.customClaims?.role;
@@ -257,6 +387,7 @@ export const setUserRole = onCall(async (request) => {
   }
 
   const { userId, role } = getRolePayload(request.data);
+  await enforceUserRateLimit(request.auth.uid, "setUserRole");
   const auth = getAuth();
   const user = await getUserWithRetry(userId);
 
@@ -276,6 +407,8 @@ export const createManagerInvitation = onCall(async (request) => {
   if (!isRecord(request.data) || !isAppRole(request.data.role)) {
     throw new HttpsError("invalid-argument", "A valid invitation role is required");
   }
+
+  await enforceUserRateLimit(request.auth.uid, "createManagerInvitation");
 
   const code = createInvitationCode();
   const expiresAt = Timestamp.fromMillis(Date.now() + INVITATION_TTL_MS);
@@ -331,15 +464,24 @@ export const consumeInvitation = onCall(async (request) => {
   const firestore = getFirestore();
   const userId = request.auth.uid;
   const invitationRef = firestore.collection("invitations").doc(request.data.invitationId.trim());
+  await enforceUserRateLimit(userId, "consumeInvitation");
   const user = await getUserWithRetry(userId);
   const currentRole = user.customClaims?.role;
+  let alreadyConsumed = false;
 
   const role = await firestore.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(invitationRef);
     if (!snapshot.exists) throw new HttpsError("not-found", "Invitation was not found");
     const data = snapshot.data() ?? {};
     const expiresAt = data.expiresAt instanceof Timestamp ? data.expiresAt.toMillis() : 0;
-    if (!isAppRole(data.role) || !isInvitationStatus(data.status) || data.status !== "pending" || expiresAt <= Date.now()) {
+    if (!isAppRole(data.role) || !isInvitationStatus(data.status) || expiresAt <= Date.now()) {
+      throw new HttpsError("failed-precondition", "Invitation is invalid or expired");
+    }
+    if (data.status === "used" && data.usedBy === userId && currentRole === data.role) {
+      alreadyConsumed = true;
+      return data.role;
+    }
+    if (data.status !== "pending") {
       throw new HttpsError("failed-precondition", "Invitation is invalid or expired");
     }
     if (currentRole && currentRole !== data.role) {
@@ -354,10 +496,13 @@ export const consumeInvitation = onCall(async (request) => {
     return data.role;
   });
 
-  await auth.setCustomUserClaims(userId, {
-    ...user.customClaims,
-    role,
-  });
+  if (!alreadyConsumed) {
+    await assignClaimsOrCompensate(
+      userId,
+      { ...user.customClaims, role },
+      invitationRef,
+    );
+  }
   return { role };
 });
 
@@ -372,6 +517,7 @@ export const submitInvoice = onCall(
     }
 
     const userId = request.auth.uid;
+    await enforceUserRateLimit(userId, "submitInvoice");
     const uploadedByName = typeof request.auth.token.name === "string"
       ? request.auth.token.name
       : null;
@@ -453,6 +599,183 @@ export const submitInvoice = onCall(
   },
 );
 
+const SPREADSHEET_CONTENT_TYPES = new Set([
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+  "text/csv",
+  "text/tab-separated-values",
+  "application/csv",
+]);
+const IMPORT_LOCK_TTL_MS = 10 * 60 * 1000;
+
+export const extractJobsFromExcel = onCall(
+  { timeoutSeconds: 60, memory: "256MiB", maxInstances: 5 },
+  async (request) => {
+    if (!request.auth || request.auth.token.role !== "manager") {
+      throw new HttpsError("permission-denied", "Manager role is required");
+    }
+
+    const managerId = request.auth.uid;
+    await enforceUserRateLimit(managerId, "extractJobsFromExcel");
+    const payload = getJobImportPayload(request.data, managerId);
+    const firestore = getFirestore();
+    const projectSnapshot = await firestore.collection("projects").doc(payload.projectId).get();
+    if (!projectSnapshot.exists) {
+      throw new HttpsError("not-found", "Project was not found");
+    }
+    const projectData = projectSnapshot.data() ?? {};
+    const builderId = typeof projectData.ownerId === "string" ? projectData.ownerId.trim() : "";
+    if (!builderId) {
+      throw new HttpsError("failed-precondition", "The project has no builder owner");
+    }
+
+    const file = getInvoiceStorageBucket().file(payload.filePath);
+    let metadata;
+    try {
+      [metadata] = await file.getMetadata();
+    } catch {
+      throw new HttpsError("failed-precondition", "Spreadsheet file was not found");
+    }
+    const fileSize = Number(metadata.size);
+    const contentType = String(metadata.contentType ?? "").toLowerCase();
+    if (
+      !Number.isSafeInteger(fileSize)
+      || fileSize <= 0
+      || fileSize > MAX_SPREADSHEET_BYTES
+      || !SPREADSHEET_CONTENT_TYPES.has(contentType)
+    ) {
+      throw new HttpsError("invalid-argument", "Spreadsheet file metadata is invalid");
+    }
+
+    let contents: Buffer;
+    try {
+      [contents] = await file.download();
+    } catch {
+      throw new HttpsError("failed-precondition", "Spreadsheet file could not be read");
+    }
+    if (contents.length !== fileSize || contents.length > MAX_SPREADSHEET_BYTES) {
+      throw new HttpsError("failed-precondition", "Spreadsheet file size is invalid");
+    }
+
+    let importedJobs;
+    try {
+      importedJobs = parseSpreadsheet(contents, contentType, payload.fileName);
+    } catch (error) {
+      if (error instanceof SpreadsheetParseError) {
+        throw new HttpsError("invalid-argument", "Spreadsheet content is invalid");
+      }
+      throw new HttpsError("internal", "Spreadsheet could not be processed");
+    }
+    if (importedJobs.length === 0) {
+      throw new HttpsError("invalid-argument", "Spreadsheet does not contain any jobs");
+    }
+    if (importedJobs.length > MAX_SPREADSHEET_ROWS) {
+      throw new HttpsError("invalid-argument", "Spreadsheet has too many jobs");
+    }
+
+    const importId = createHash("sha256")
+      .update(`${managerId}:${payload.projectId}:`)
+      .update(contents)
+      .digest("hex");
+    const importReference = firestore.collection("jobImports").doc(importId);
+    const now = Date.now();
+    let claimed = false;
+    const claim = await firestore.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(importReference);
+      const data = snapshot.data() ?? {};
+      if (data.status === "completed" && Array.isArray(data.createdJobIds)) {
+        return {
+          completed: true,
+          createdJobIds: data.createdJobIds.filter((id): id is string => typeof id === "string"),
+        };
+      }
+
+      const startedAt = data.startedAt instanceof Timestamp ? data.startedAt.toMillis() : 0;
+      if (data.status === "processing" && startedAt > now - IMPORT_LOCK_TTL_MS) {
+        throw new HttpsError("already-exists", "This spreadsheet import is already in progress");
+      }
+
+      transaction.set(importReference, {
+        managerId,
+        projectId: payload.projectId,
+        filePath: payload.filePath,
+        fileHash: createHash("sha256").update(contents).digest("hex"),
+        status: "processing" as JobImportStatus,
+        rowCount: importedJobs.length,
+        createdJobIds: [],
+        startedAt: Timestamp.fromMillis(now),
+        updatedAt: Timestamp.fromMillis(now),
+      });
+      return { completed: false, createdJobIds: [] };
+    });
+    if (claim.completed) {
+      return { importId, createdJobIds: claim.createdJobIds };
+    }
+    claimed = true;
+
+    try {
+      const jobReferences = importedJobs.map((_, index) =>
+        firestore.collection("jobs").doc(`${importId}-${String(index + 1).padStart(3, "0")}`));
+      const existingJobs = await firestore.getAll(...jobReferences);
+      const batch = firestore.batch();
+      const createdJobIds: string[] = [];
+
+      existingJobs.forEach((snapshot, index) => {
+        const reference = jobReferences[index];
+        const importedJob = importedJobs[index];
+        if (snapshot.exists) {
+          const data = snapshot.data() ?? {};
+          if (
+            data.importId !== importId
+            || data.projectId !== payload.projectId
+            || data.builderId !== builderId
+            || data.title !== importedJob.title
+          ) {
+            throw new HttpsError("already-exists", "A generated job id is already in use");
+          }
+        } else {
+          batch.create(reference, {
+            projectId: payload.projectId,
+            builderId,
+            title: importedJob.title,
+            description: importedJob.description,
+            section: importedJob.section,
+            status: "approved",
+            reviewNotes: null,
+            reviewedBy: null,
+            reviewedAt: null,
+            importId,
+            importRow: index + 1,
+            createdAt: Timestamp.now(),
+            updatedAt: Timestamp.now(),
+          });
+        }
+        createdJobIds.push(reference.id);
+      });
+
+      if (createdJobIds.length > 0 && existingJobs.some((snapshot) => !snapshot.exists)) {
+        await batch.commit();
+      }
+      await importReference.set({
+        status: "completed" as JobImportStatus,
+        createdJobIds,
+        completedAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      }, { merge: true });
+      return { importId, createdJobIds };
+    } catch (error) {
+      await importReference.set({
+        status: "failed" as JobImportStatus,
+        failureCode: error instanceof HttpsError ? error.code : "internal",
+        updatedAt: Timestamp.now(),
+      }, { merge: true }).catch(() => undefined);
+      if (error instanceof HttpsError) throw error;
+      console.error("Spreadsheet job import failed", { operation: "extractJobsFromExcel" });
+      throw new HttpsError("internal", "Spreadsheet import could not be completed");
+    }
+  },
+);
+
 export const reviewInvoice = onCall(
   { timeoutSeconds: 15, memory: "256MiB", maxInstances: 10 },
   async (request) => {
@@ -460,6 +783,7 @@ export const reviewInvoice = onCall(
       throw new HttpsError("permission-denied", "Manager role is required");
     }
     const managerId = request.auth.uid;
+    await enforceUserRateLimit(managerId, "reviewInvoice");
     const payload = getReviewPayload(request.data);
     const invoiceRef = getFirestore().collection("invoices").doc(payload.invoiceId);
     const status = await getFirestore().runTransaction(async (transaction) => {
@@ -486,5 +810,113 @@ export const reviewInvoice = onCall(
       return payload.status;
     });
     return { invoiceId: payload.invoiceId, status };
+  },
+);
+
+const CLEANUP_BATCH_LIMIT = 100;
+const RATE_LIMIT_RETENTION_MS = 24 * 60 * 60 * 1000;
+const PROJECT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+const hasProjectRecords = async (projectId: string): Promise<boolean> => {
+  const firestore = getFirestore();
+  const projectScopedCollections = [
+    "jobs",
+    "timeTracking",
+    "invoices",
+    "materialUsage",
+    "materialDeliveryRequests",
+    "rubbishCollectionRequests",
+    "toolRequests",
+  ];
+
+  for (const collectionName of projectScopedCollections) {
+    const snapshot = await firestore
+      .collection(collectionName)
+      .where("projectId", "==", projectId)
+      .limit(1)
+      .get();
+    if (!snapshot.empty) return true;
+  }
+
+  const [incomingSwitches, outgoingSwitches] = await Promise.all([
+    firestore.collection("projectSwitches").where("toProjectId", "==", projectId).limit(1).get(),
+    firestore.collection("projectSwitches").where("fromProjectId", "==", projectId).limit(1).get(),
+  ]);
+  return !incomingSwitches.empty || !outgoingSwitches.empty;
+};
+
+export const cleanupOldProjects = onSchedule(
+  {
+    schedule: "every 24 hours",
+    timeZone: "Etc/UTC",
+    timeoutSeconds: 60,
+    memory: "256MiB",
+    maxInstances: 1,
+    retryCount: 3,
+  },
+  async () => {
+    const firestore = getFirestore();
+    const now = Date.now();
+    const staleInvitationSnapshot = await firestore
+      .collection("invitations")
+      .where("expiresAt", "<=", Timestamp.fromMillis(now - RATE_LIMIT_RETENTION_MS))
+      .limit(CLEANUP_BATCH_LIMIT)
+      .get();
+    const staleRateLimitSnapshot = await firestore
+      .collection("functionRateLimits")
+      .where("updatedAt", "<=", Timestamp.fromMillis(now - RATE_LIMIT_RETENTION_MS))
+      .limit(CLEANUP_BATCH_LIMIT)
+      .get();
+
+    const cleanupBatch = firestore.batch();
+    staleInvitationSnapshot.docs.forEach((snapshot) => cleanupBatch.delete(snapshot.ref));
+    staleRateLimitSnapshot.docs.forEach((snapshot) => cleanupBatch.delete(snapshot.ref));
+    if (!staleInvitationSnapshot.empty || !staleRateLimitSnapshot.empty) {
+      await cleanupBatch.commit();
+    }
+
+    let deletedProjects = 0;
+    // Project deletion is deliberately opt-in. A missing flag makes the schedule
+    // clean only ephemeral control records, never business data.
+    if (process.env.ENABLE_PROJECT_CLEANUP === "true") {
+      const projectSnapshot = await firestore
+        .collection("projects")
+        .where("status", "==", "finished")
+        .limit(CLEANUP_BATCH_LIMIT)
+        .get();
+      const retentionCutoff = now - PROJECT_RETENTION_MS;
+
+      for (const project of projectSnapshot.docs) {
+        const data = project.data();
+        const cleanupEligibleAt = data.cleanupEligibleAt instanceof Timestamp
+          ? data.cleanupEligibleAt.toMillis()
+          : 0;
+        if (cleanupEligibleAt <= 0 || cleanupEligibleAt > retentionCutoff) continue;
+        if (await hasProjectRecords(project.id)) continue;
+
+        await firestore.runTransaction(async (transaction) => {
+          const current = await transaction.get(project.ref);
+          const currentData = current.data() ?? {};
+          const currentEligibleAt = currentData.cleanupEligibleAt instanceof Timestamp
+            ? currentData.cleanupEligibleAt.toMillis()
+            : 0;
+          if (
+            current.exists
+            && currentData.status === "finished"
+            && currentEligibleAt > 0
+            && currentEligibleAt <= retentionCutoff
+          ) {
+            transaction.delete(project.ref);
+            deletedProjects += 1;
+          }
+        });
+      }
+    }
+
+    console.log("Scheduled cleanup completed", {
+      expiredInvitations: staleInvitationSnapshot.size,
+      staleRateLimits: staleRateLimitSnapshot.size,
+      deletedProjects,
+    });
   },
 );

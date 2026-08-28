@@ -14,6 +14,12 @@ service firebase.storage {
       return isSignedIn() && request.auth.token.role == "builder";
     }
 
+    function ownsProject(projectId) {
+      return isBuilder()
+        && firestore.exists(/databases/(default)/documents/projects/$(projectId))
+        && firestore.get(/databases/(default)/documents/projects/$(projectId)).data.ownerId == request.auth.uid;
+    }
+
     function isValidUpload() {
       return request.resource.size < 10 * 1024 * 1024
         && request.resource.contentType.matches("(image|application)/.*");
@@ -31,7 +37,25 @@ service firebase.storage {
         && (
           request.resource.contentType.matches("image/.*")
           || request.resource.contentType == "application/pdf"
-        );
+      );
+    }
+
+    function isValidPdfUpload() {
+      return request.resource.size > 0
+        && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.contentType == "application/pdf";
+    }
+
+    function isValidSpreadsheetUpload() {
+      return request.resource.size > 0
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType in [
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "application/vnd.ms-excel",
+          "text/csv",
+          "text/tab-separated-values",
+          "application/csv"
+        ];
     }
 
     match /jobs/{jobId}/{builderId}/{allPaths=**} {
@@ -46,10 +70,16 @@ service firebase.storage {
       allow delete: if isManager();
     }
 
-    match /dailyReports/{builderId}/{allPaths=**} {
-      allow read: if isManager() || (isBuilder() && request.auth.uid == builderId);
-      allow create, update: if isManager() || (isBuilder() && request.auth.uid == builderId && isValidUpload());
-      allow delete: if isManager() || (isBuilder() && request.auth.uid == builderId);
+    match /dailyReports/{builderId}/{reportId}/{allPaths=**} {
+      allow read: if isManager() || (isBuilder() && request.auth.uid == builderId &&
+        firestore.exists(/databases/(default)/documents/dailyReports/$(reportId)) &&
+        ownsProject(firestore.get(/databases/(default)/documents/dailyReports/$(reportId)).data.projectId));
+      allow create: if isBuilder()
+        && request.auth.uid == builderId
+        && firestore.exists(/databases/(default)/documents/dailyReports/$(reportId))
+        && firestore.get(/databases/(default)/documents/dailyReports/$(reportId)).data.builderId == request.auth.uid
+        && isValidUpload();
+      allow update, delete: if false;
     }
 
     match /invoices/{builderId}/{invoiceId}/{fileName} {
@@ -65,10 +95,22 @@ service firebase.storage {
         && !firestore.exists(/databases/(default)/documents/invoices/$(invoiceId));
     }
 
-    match /documents/{userId}/{allPaths=**} {
-      allow read: if isManager() || (isSignedIn() && request.auth.uid == userId);
-      allow create, update: if isManager() || (isSignedIn() && request.auth.uid == userId && isValidUpload());
-      allow delete: if isManager() || (isSignedIn() && request.auth.uid == userId);
+    match /job-imports/{managerId}/{fileName} {
+      allow read: if isManager() && request.auth.uid == managerId;
+      allow create: if isManager()
+        && request.auth.uid == managerId
+        && resource == null
+        && fileName.matches("^[A-Za-z0-9][A-Za-z0-9._-]{0,179}$")
+        && fileName.matches(".*\\.(csv|tsv|xlsx)$")
+        && isValidSpreadsheetUpload();
+      allow update: if false;
+      allow delete: if isManager() && request.auth.uid == managerId;
+    }
+
+    match /documents/{projectId}/{documentId}/{allPaths=**} {
+      allow read: if isManager() || ownsProject(projectId);
+      allow create: if isManager() && isValidUpload();
+      allow update, delete: if isManager();
     }
 
     match /materials/{builderId}/{allPaths=**} {

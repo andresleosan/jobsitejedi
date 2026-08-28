@@ -66,8 +66,37 @@ describe("Firebase Storage authorization rules", () => {
     await assertSucceeds(getBytes(ref(managerStorage(), path)));
   });
 
-  test("supports the remaining private domain roots for the owner", async () => {
-    for (const root of ["dailyReports", "documents", "materials", "voiceNotes"]) {
+  test("scopes reports and documents while preserving owner access to other private roots", async () => {
+    await assertSucceeds(setDoc(doc(managerDb(), "projects/report-storage-project"), {
+      ownerId: "builder-1",
+      name: "Report storage project",
+    }));
+    await assertSucceeds(setDoc(doc(builderDb(), "dailyReports/report-storage-1"), {
+      builderId: "builder-1",
+      projectId: "report-storage-project",
+      date: "2026-08-28",
+      description: "Private report",
+      photoPaths: [],
+      createdAt: serverTimestamp(),
+    }));
+    await assertSucceeds(uploadBytes(
+      ref(builderStorage(), "dailyReports/builder-1/report-storage-1/photo.jpg"),
+      await image(),
+    ));
+    await assertFails(getBytes(ref(otherBuilderStorage(), "dailyReports/builder-1/report-storage-1/photo.jpg")));
+
+    await assertSucceeds(uploadBytes(
+      ref(managerStorage(), "documents/report-storage-project/document-1/file.bin"),
+      await image(),
+    ));
+    await assertSucceeds(getBytes(ref(builderStorage(), "documents/report-storage-project/document-1/file.bin")));
+    await assertFails(getBytes(ref(otherBuilderStorage(), "documents/report-storage-project/document-1/file.bin")));
+    await assertFails(uploadBytes(
+      ref(builderStorage(), "documents/report-storage-project/document-2/file.bin"),
+      await image(),
+    ));
+
+    for (const root of ["materials", "voiceNotes"]) {
       await assertSucceeds(
         uploadBytes(ref(builderStorage(), `${root}/builder-1/file.bin`), await image()),
       );
@@ -96,6 +125,18 @@ describe("Firebase Storage authorization rules", () => {
     });
     await assertFails(deleteObject(ref(builderStorage(), path)));
     await assertFails(uploadBytes(ref(builderStorage(), path), pdf));
+  });
+
+  test("restricts spreadsheet imports to the owning manager", async () => {
+    const path = "job-imports/manager-1/jobs.csv";
+    const csv = new Blob(["Title,Section\nInstall vanity,Bathroom"], { type: "text/csv" });
+    await assertSucceeds(uploadBytes(ref(managerStorage(), path), csv));
+    await assertSucceeds(getBytes(ref(managerStorage(), path)));
+    await assertFails(getBytes(ref(builderStorage(), path)));
+    await assertFails(uploadBytes(
+      ref(builderStorage(), "job-imports/builder-1/jobs.csv"),
+      csv,
+    ));
   });
 
   test("keeps rubbish evidence immutable after its request is created", async () => {

@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
@@ -23,6 +24,7 @@ import {
   subscribeToInvoices,
   type InvoiceRecord,
 } from "@/lib/firebase/repositories/invoices";
+import { listSuppliers, type SupplierRecord } from "@/lib/firebase/repositories/suppliers";
 
 interface InvoiceSubmissionDialogProps {
   open: boolean;
@@ -37,6 +39,8 @@ const statusBadge = (status: InvoiceRecord["status"]) => {
   return <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100">Pending review</Badge>;
 };
 
+const MANUAL_SUPPLIER_VALUE = "__manual__";
+
 const InvoiceSubmissionDialog = ({
   open,
   onOpenChange,
@@ -46,6 +50,10 @@ const InvoiceSubmissionDialog = ({
   const [activeTab, setActiveTab] = useState("submit");
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [supplierName, setSupplierName] = useState("");
+  const [supplierMode, setSupplierMode] = useState(MANUAL_SUPPLIER_VALUE);
+  const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
+  const [isLoadingSuppliers, setIsLoadingSuppliers] = useState(false);
+  const [supplierCatalogError, setSupplierCatalogError] = useState<string | null>(null);
   const [invoiceDate, setInvoiceDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
   const [amount, setAmount] = useState("");
   const [notes, setNotes] = useState("");
@@ -86,9 +94,29 @@ const InvoiceSubmissionDialog = ({
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    let stopped = false;
+    setIsLoadingSuppliers(true);
+    setSupplierCatalogError(null);
+    void listSuppliers().then((nextSuppliers) => {
+      if (stopped) return;
+      setSuppliers(nextSuppliers);
+    }).catch(() => {
+      if (stopped) return;
+      setSupplierCatalogError("Supplier catalogue is unavailable; enter the supplier manually.");
+    }).finally(() => {
+      if (!stopped) setIsLoadingSuppliers(false);
+    });
+    return () => {
+      stopped = true;
+    };
+  }, [open]);
+
   const resetForm = () => {
     setInvoiceNumber("");
     setSupplierName("");
+    setSupplierMode(MANUAL_SUPPLIER_VALUE);
     setInvoiceDate(format(new Date(), "yyyy-MM-dd"));
     setAmount("");
     setNotes("");
@@ -181,14 +209,42 @@ const InvoiceSubmissionDialog = ({
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="invoice-supplier">Supplier</Label>
-                <Input
-                  id="invoice-supplier"
-                  value={supplierName}
-                  maxLength={120}
-                  placeholder="Supplier name"
-                  onChange={(event) => setSupplierName(event.target.value)}
-                />
+                <Label htmlFor={supplierMode === MANUAL_SUPPLIER_VALUE ? "invoice-supplier" : "invoice-supplier-select"}>
+                  Supplier
+                </Label>
+                <Select
+                  value={supplierMode === MANUAL_SUPPLIER_VALUE ? MANUAL_SUPPLIER_VALUE : supplierName}
+                  onValueChange={(value) => {
+                    setSupplierMode(value);
+                    setSupplierName(value === MANUAL_SUPPLIER_VALUE ? "" : value);
+                  }}
+                  disabled={isLoadingSuppliers || isSubmitting}
+                >
+                  <SelectTrigger id="invoice-supplier-select" aria-label="Invoice supplier">
+                    <SelectValue placeholder={isLoadingSuppliers ? "Loading suppliers..." : "Choose a supplier"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={MANUAL_SUPPLIER_VALUE}>Enter supplier manually</SelectItem>
+                    {suppliers.map((supplier) => (
+                      <SelectItem key={supplier.id} value={supplier.name}>{supplier.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {supplierMode === MANUAL_SUPPLIER_VALUE && (
+                  <Input
+                    id="invoice-supplier"
+                    value={supplierName}
+                    maxLength={120}
+                    placeholder="Supplier name"
+                    autoComplete="organization"
+                    onChange={(event) => setSupplierName(event.target.value)}
+                  />
+                )}
+                <p className="text-xs text-muted-foreground">
+                  {supplierCatalogError ?? (suppliers.length > 0
+                    ? "Choose a catalogue supplier or enter a different name."
+                    : "No catalogue suppliers yet; enter the name manually.")}
+                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="invoice-date">Invoice date</Label>
