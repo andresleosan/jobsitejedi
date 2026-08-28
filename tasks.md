@@ -623,6 +623,22 @@ toquen producción necesitan confirmación explícita del operador.
   La suite global fue intentada, pero el runner quedó retenido durante el teardown; no se cuenta como
   cierre global. No se aplicaron migraciones ni despliegues.
 
+## Seguimiento de T-011 - 2026-08-28 (UI de reportes y riesgo)
+
+- Integrado `ReportsRiskPanel.tsx` en los dashboards builder y manager: partes diarios por proyecto,
+  carga privada de evaluaciones PDF, apertura del documento sin URL pública, firma idempotente y
+  consulta de firmas.
+- La UI conserva estados de carga, vacío y error, bloquea envíos incompletos y limita el contexto del
+  manager al proyecto seleccionado; los campos y documentos siguen pasando por las validaciones y
+  reglas del repositorio Firebase.
+- Documentado el criterio visual de esta vertical en `STACK.md`, reutilizando los tokens existentes
+  de BuildTrack Pro y una bandeja de actividad por proyecto.
+- Evidencia: `typecheck`, `build`, `lint` (0 errores, 7 warnings preexistentes), `build:functions` y
+  `test:firebase:emulator` (`15/15` archivos, `52/52` tests) pasaron. El E2E focalizado de invoices
+  pasó su caso (`1/1`) y confirmó la superficie builder/manager; el proceso de emuladores quedó
+  retenido durante teardown y fue interrumpido después del pass. T-011 conserva `en-progreso` hasta
+  cubrir con E2E los envíos de reportes, carga de riesgo y firma; no hubo migraciones ni despliegues.
+
 ## Fuera de alcance hasta cerrar la Fase 2
 
 - Nuevas features de negocio.

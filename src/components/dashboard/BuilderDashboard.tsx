@@ -21,6 +21,7 @@ import ToolRequestDialog from "@/components/builders/ToolRequestDialog";
 import MaterialDeliveryDialog from "./MaterialDeliveryDialog";
 import RubbishCollectionDialog from "./RubbishCollectionDialog";
 import InvoiceSubmissionDialog from "./InvoiceSubmissionDialog";
+import ReportsRiskPanel from "./ReportsRiskPanel";
 
 interface BuilderDashboardProps {
   userId: string;
@@ -239,6 +240,12 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
         />
 
         {selectedProjectId && <JobsToDoList projectId={selectedProjectId} />}
+
+        <ReportsRiskPanel
+          role="builder"
+          projects={projects}
+          selectedProjectId={selectedProjectId}
+        />
 
         {/* Firebase verticals still being migrated */}
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">

@@ -98,7 +98,9 @@ test("builder submits a private invoice and manager approves it", async ({ page 
   await page.locator("#signin-password").fill(password);
   await page.getByRole("button", { name: "Sign In", exact: true }).click();
   await expect(page).toHaveURL(/\/builders$/, { timeout: 15_000 });
-  await expect(page.getByText("Invoice E2E Project")).toBeVisible();
+  await expect(page.getByRole("combobox")).toContainText("Invoice E2E Project");
+  await expect(page.getByRole("heading", { name: "Reports and risk", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Daily report", exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Submit an invoice", exact: true }).click();
   let dialog = page.getByRole("dialog");
@@ -134,6 +136,8 @@ test("builder submits a private invoice and manager approves it", async ({ page 
   await page.locator("#signin-password").fill(password);
   await page.getByRole("button", { name: "Sign In", exact: true }).click();
   await expect(page).toHaveURL(/\/managers$/, { timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "Reports and risk", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Upload risk assessment", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Invoice review", exact: true }).click();
   dialog = page.getByRole("dialog");
   let managerInvoice = dialog.locator('[data-testid="invoice-review"]').filter({ hasText: "INV-E2E-2048" });

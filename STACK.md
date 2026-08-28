@@ -132,6 +132,26 @@ de manager dentro del dashboard:
 - **Piso de calidad:** labels explícitos, foco visible, bloqueo de doble envío, estado de error junto
   al control que falló y sin previsualizar ni exponer el contenido del archivo.
 
+## Criterio visual para reportes y riesgo (T-011)
+
+Como no existe `BRIEF.md`, esta vertical reutiliza la identidad activa de BuildTrack Pro para
+mantener el contexto de obra visible sin convertir los documentos privados en una superficie
+técnica:
+
+- **Paleta:** `primary` para registrar actividad y firmar, `muted` para fechas/metadatos,
+  `secondary` para documentos y `destructive` solo para errores; no se introduce una paleta
+  paralela.
+- **Tipografía:** tipografía actual del producto; descripción legible en primer plano y fecha,
+  nombre de archivo y estado como metadatos compactos.
+- **Layout:** una bandeja de actividad por proyecto: el builder registra el parte del día y
+  revisa documentos pendientes; el manager alterna proyecto para inspeccionar reportes y cargar
+  evaluaciones en el mismo flujo.
+- **Elemento firma:** cada evaluación muestra una línea de firma por persona y el estado
+  `Signed` se conserva junto al documento, para que el cierre de riesgo sea verificable de un
+  vistazo.
+- **Piso de calidad:** controles etiquetados, estados vacíos/carga/error explícitos, bloqueo de
+  doble envío, foco visible y acciones privadas de documento sin URLs públicas.
+
 ## Criterio visual para detalle de proyecto y estados (T-012)
 
 El cierre del runtime Supabase conserva la identidad activa y convierte dos pantallas heredadas

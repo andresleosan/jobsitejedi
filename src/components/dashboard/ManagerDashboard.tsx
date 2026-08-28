@@ -14,6 +14,7 @@ import ManagerRubbishDialog from "./ManagerRubbishDialog";
 import ManagerInvoicesDialog from "./ManagerInvoicesDialog";
 import JobImportDialog from "./JobImportDialog";
 import SupplierCatalogDialog from "./SupplierCatalogDialog";
+import ReportsRiskPanel from "./ReportsRiskPanel";
 
 interface ManagerDashboardProps {
   userId: string;
@@ -154,6 +155,8 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
         </Card>
 
         <ManagerJobReviewPanel />
+
+        <ReportsRiskPanel role="manager" projects={projects} />
       </main>
 
       <CreateProjectDialog
