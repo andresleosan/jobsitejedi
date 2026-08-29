@@ -78,6 +78,12 @@ const childEnv = {
     : {}),
 };
 
+// Some host environments define DEBUG for unrelated tooling. Firebase Tools
+// interprets any inherited value as a request for verbose diagnostics, which
+// includes printing the full child environment. Do not let test logs disclose
+// credentials that happen to be present in the parent process.
+delete childEnv.DEBUG;
+
 const runNode = (args) =>
   spawnSync(process.execPath, args, {
     cwd: workspaceRoot,

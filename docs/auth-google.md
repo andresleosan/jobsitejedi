@@ -3,7 +3,8 @@
 ## Estado remoto verificado - 2026-08-28
 
 - Google Sign-In esta habilitado y tiene cliente OAuth configurado.
-- Dominios autorizados: `localhost`, `jobsitejedi.firebaseapp.com` y `jobsitejedi.web.app`.
+- Dominios autorizados: `localhost`, `jobsitejedi.firebaseapp.com`, `jobsitejedi.web.app` y
+  `jobsitejedi.vercel.app`.
 - El sitio Firebase Hosting predeterminado es `jobsitejedi`.
 - `127.0.0.1` no esta autorizado y no se agregara: QA y desarrollo deben abrir
   `http://localhost:<puerto>` para mantener la lista de origenes al minimo.
@@ -11,6 +12,11 @@
   hostname exacto antes de ejecutar la validacion de staging.
 
 La verificacion fue de solo lectura y no mostro ni guardo el secreto del cliente OAuth.
+
+La validacion productiva posterior confirmo el contrato completo: una identidad Google nueva se
+autentica, queda bloqueada con el estado explicito de rol faltante, recibe `manager` solo mediante
+la operacion server-side autorizada y puede volver a entrar normalmente. Una segunda identidad
+Google autorizada repitio creacion, dry-run y asignacion verificada de `manager`.
 
 ## Contrato del cliente
 

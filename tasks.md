@@ -95,7 +95,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-020 — Estabilizar login y añadir autenticación con Google
 
-- **Prioridad:** P0 · **Estado:** en-progreso · **Depende de:** T-003
+- **Prioridad:** P0 · **Estado:** revision · **Depende de:** T-003
 - Impedir que una identidad Firebase válida sin claim `manager`/`builder` provoque un bucle entre
   `/auth` y `/dashboard`; debe cerrar la sesión y mostrar un error accionable sin revelar datos.
 - Añadir Google como proveedor de autenticación mediante Firebase Auth, sin autoasignar roles ni
@@ -130,9 +130,16 @@ toquen producción necesitan confirmación explícita del operador.
     confirmo rol anterior `null`; la relectura Admin confirmo `manager`, el login real verifico el
     ID token y el smoke UI termino en `/managers` sin estado de rol faltante. No hubo despliegue y
     las credenciales se ingresaron de forma segura sin persistencia.
-  - T-020 conserva `en-progreso` unicamente hasta validar de forma interactiva una identidad Google
-    real ya provisionada; proveedor, cliente OAuth, dominios, cuenta QA y ruta manager ya quedaron
-    verificados.
+  - Validacion productiva Google completada: una identidad nueva fue creada sin rol, permanecio en
+    `/auth` con el estado explicito esperado, recibio `manager` mediante dry-run y mutacion
+    server-side autorizada, y el operador confirmo acceso normal posterior. Una segunda identidad
+    Google fue verificada por correo/proveedor y recibio `manager` con el mismo procedimiento.
+  - El helper operativo ahora admite seleccion multiusuario por correo, proveedor y conteo esperado,
+    preserva claims, verifica la escritura y sanitiza fallos del SDK para no imprimir tokens.
+  - Autocritica final: Node 22.23.2/JDK 21 ejecuto 16 archivos y 65/65 pruebas Firebase. El runner
+    elimina `DEBUG` heredado para impedir que Firebase Tools liste variables del proceso; la
+    regresion de fallo del helper confirmo salida de una linea y cero patrones de token, y el
+    dry-run remoto final releyo `manager` sin modificar la cuenta.
 
 ### T-021 — Corregir configuracion de produccion en Vercel
 

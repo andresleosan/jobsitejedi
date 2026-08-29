@@ -28,16 +28,37 @@ El operador autorizo asignar `manager` al unico usuario activo de `jobsitejedi`.
 - Credenciales: entrada segura en memoria; no se guardaron en argumentos, archivos, capturas o logs.
 - Despliegues: ninguno.
 
+## Asignaciones Google dirigidas - 2026-08-28
+
+El operador autorizo `manager` para dos identidades Google concretas despues de que cada persona
+completara Google Sign-In y Firebase creara su usuario sin rol.
+
+- Estado previo: 3 usuarios totales; la cuenta QA por contrasena ya era `manager` y las dos
+  identidades Google tenian rol `null`.
+- Cada operacion exigio correo exacto, proveedor `google.com`, conteo total esperado y confirmacion
+  ligada al proyecto, identidad y rol.
+- Los dos dry-runs verificaron identidad unica, proveedor y rol anterior sin escribir.
+- Cada aplicacion preservo los claims existentes, escribio solo `role: manager` y releyo Firebase
+  para confirmar el resultado.
+- La cuenta Google principal completo el acceso interactivo normal; la segunda debe cerrar sesion
+  y volver a entrar para recibir un ID token nuevo.
+- El script captura errores del SDK y emite solo codigo y mensaje sanitizados; no imprime objetos
+  de transporte, encabezados de autorizacion ni tokens temporales.
+- Verificacion final: el dry-run remoto devolvio `manager` sin escribir; la regresion de fallo
+  controlado termino con codigo 1, una sola linea sanitizada y cero patrones de token.
+
 ## Precondiciones para asignar un rol
 
 1. El operador confirma la identidad objetivo, el rol exacto (`manager` o `builder`) y autoriza
    la mutacion en `jobsitejedi`.
 2. Se vuelve a leer el usuario inmediatamente antes del cambio y se conserva fuera del repositorio
    una copia de todos sus custom claims actuales para rollback.
-3. La operacion server-side preserva los claims no relacionados y cambia solo `role`.
-4. Se vuelve a leer el usuario y se verifica que el claim efectivo sea exactamente el autorizado.
-5. La persona cierra sesion y vuelve a ingresar para obtener un ID token nuevo.
-6. Se ejecuta smoke test del dashboard y de una accion permitida; tambien se confirma que el otro
+3. Cuando ya existen varios usuarios, se exige correo exacto, proveedor esperado y conteo total
+   esperado; cualquier diferencia bloquea la operacion.
+4. La operacion server-side preserva los claims no relacionados y cambia solo `role`.
+5. Se vuelve a leer el usuario y se verifica que el claim efectivo sea exactamente el autorizado.
+6. La persona cierra sesion y vuelve a ingresar para obtener un ID token nuevo.
+7. Se ejecuta smoke test del dashboard y de una accion permitida; tambien se confirma que el otro
    dashboard continua denegado.
 
 ## Rollback
