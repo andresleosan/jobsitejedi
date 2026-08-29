@@ -622,6 +622,12 @@ toquen producción necesitan confirmación explícita del operador.
     completa pasó.
   - La revisión de seguridad confirma acciones oficiales fijadas a SHA, token de solo lectura,
     `persist-credentials: false`, proyecto demo y ausencia de secretos o comandos de despliegue.
+  - La primera ejecución remota (`CI #1`) falló antes de las pruebas porque el lockfile no incluía
+    `esbuild@0.28.2` y sus paquetes opcionales de Linux. Se regeneró con Node 22 y se reprodujo
+    `npm ci` desde cero para raíz y Functions.
+  - La instalación limpia también reveló concurrencia accidental entre seis specs: el runner quedó
+    limitado a dos workers, las aserciones Firebase usan un margen acotado de 15 segundos y reporting
+    filtra su propio proyecto. Sin reintentos, la suite completa volvió a pasar 8/8.
   - T-022 permanece en `en-progreso` hasta publicar el workflow y verificar ambos jobs en GitHub;
     ninguna prueba de carga aplica porque este cambio no añade rutas ni lógica de runtime.
 

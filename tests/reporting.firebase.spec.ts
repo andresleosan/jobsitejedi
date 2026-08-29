@@ -141,6 +141,8 @@ test("manager uses Firebase project details and exports a safe activity ledger",
   await page.getByRole("button", { name: "Project statements", exact: true }).click();
   await expect(page).toHaveURL(/\/statements$/);
   await expect(page.getByRole("heading", { name: "Site statements" })).toBeVisible();
+  await page.getByLabel("Statement project", { exact: true }).click();
+  await page.getByRole("option", { name: "Reporting E2E Project", exact: true }).click();
   await expect(page.getByTestId("statement-row")).toHaveCount(2);
   await expect(page.getByRole("cell", { name: "1.50 h", exact: true })).toBeVisible();
 

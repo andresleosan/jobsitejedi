@@ -14,10 +14,13 @@ Vercel con el mismo runtime del release anterior.
 ## Evidencia previa
 
 - Contrato del workflow: 3/3.
+- `npm ci` desde cero para raíz y Functions: aprobado con el lockfile multiplataforma.
 - Typecheck y builds frontend/Functions: aprobados.
 - ESLint: 0 errores; 7 warnings preexistentes de Fast Refresh.
 - Firebase Emulator Suite: 16 archivos, 65/65 pruebas.
 - Playwright contra emuladores: 8/8 recorridos E2E.
+- Playwright queda limitado a 2 workers y sin reintentos; las aserciones asíncronas tienen un
+  timeout acotado de 15 segundos para no convertir la aceptación funcional en carga accidental.
 - Revisión de seguridad: sin hallazgos críticos, secretos ni comandos de despliegue en el workflow.
 
 ## Validación posterior

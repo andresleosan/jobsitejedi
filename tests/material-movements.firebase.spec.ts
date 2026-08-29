@@ -116,9 +116,10 @@ test("manager records transfers and direct usage with atomic stock deductions", 
   await page.getByLabel("Quantity", { exact: true }).fill("5");
   await page.getByLabel("Notes", { exact: true }).fill("First site issue");
   await page.getByRole("button", { name: "Record transfer", exact: true }).click();
+  await expect(page.getByText("Transfer recorded", { exact: true })).toBeVisible();
 
   let movement = page.getByTestId("material-movement").filter({ hasText: "First site issue" });
-  await expect(movement).toContainText("Transfer");
+  await expect(movement).toContainText("Transfer", { timeout: 15_000 });
   await expect(movement).toContainText("E2E Movement Cement → Movement E2E Project");
   await expect(movement).toContainText("Movement E2E Manager");
   await expect(movement).toContainText("−5 bags");
@@ -131,9 +132,10 @@ test("manager records transfers and direct usage with atomic stock deductions", 
   await page.getByLabel("Quantity", { exact: true }).fill("3");
   await page.getByLabel("Notes", { exact: true }).fill("Direct pour usage");
   await page.getByRole("button", { name: "Record usage", exact: true }).click();
+  await expect(page.getByText("Usage recorded", { exact: true })).toBeVisible();
 
   movement = page.getByTestId("material-movement").filter({ hasText: "Direct pour usage" });
-  await expect(movement).toContainText("Direct usage");
+  await expect(movement).toContainText("Direct usage", { timeout: 15_000 });
   await expect(movement).toContainText("−3 bags");
   await expect(page.getByText("2 records", { exact: true })).toBeVisible();
 

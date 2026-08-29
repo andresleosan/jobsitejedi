@@ -42,8 +42,10 @@ describe("CI workflow contract", () => {
     expect(workflow).toContain("persist-credentials: false");
   });
 
-  test("keeps the Playwright web server command cross-platform", () => {
+  test("keeps the Playwright runner cross-platform and bounded", () => {
     expect(playwrightConfig).toContain('command: "npm run dev -- --host localhost --port 5173"');
     expect(playwrightConfig).not.toContain("npm.cmd run dev");
+    expect(playwrightConfig).toContain("workers: 2");
+    expect(playwrightConfig).toContain("timeout: 15_000");
   });
 });
