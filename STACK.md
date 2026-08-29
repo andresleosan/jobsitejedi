@@ -76,6 +76,18 @@ migración podrán coexistir artefactos históricos, pero no una nueva ruta híb
 - Se usa popup con selector explícito de cuenta. Cancelación, popup bloqueado, dominio no autorizado,
   proveedor deshabilitado y conflicto de método de acceso se normalizan sin filtrar errores internos.
 
+## Contrato de despliegue Vercel (T-021)
+
+- El build exige las seis variables publicas `VITE_FIREBASE_*` de la aplicacion Web SDK de
+  `jobsitejedi`; rechaza valores vacios, placeholders, otro project ID y modo emulador.
+- La validacion nunca imprime valores. Vercel conserva la configuracion remota y Git solo versiona
+  nombres, reglas de formato y el procedimiento operativo.
+- `vercel.json` reescribe rutas de React Router a `/index.html`, de modo que `/auth`, `/dashboard` y
+  los dashboards por rol admiten carga directa y refresh.
+- Google Sign-In requiere ademas que `jobsitejedi.vercel.app` este autorizado en Firebase Auth; las
+  variables correctas no sustituyen ese control OAuth.
+- El contrato completo, verificacion y rollback estan en `docs/vercel-deployment.md`.
+
 ## Criterio visual para autenticación Google (T-020)
 
 - **Paleta:** la acción principal de email mantiene `primary`; Google usa un botón `outline` neutro y

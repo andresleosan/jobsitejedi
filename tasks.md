@@ -134,6 +134,38 @@ toquen producción necesitan confirmación explícita del operador.
     real ya provisionada; proveedor, cliente OAuth, dominios, cuenta QA y ruta manager ya quedaron
     verificados.
 
+### T-021 — Corregir configuracion de produccion en Vercel
+
+- **Prioridad:** P0 · **Estado:** en-progreso · **Depende de:** T-020
+- Sustituir los placeholders `VITE_FIREBASE_*` de Vercel por la configuracion Web SDK oficial de
+  `jobsitejedi`, sin exponer valores en Git, logs ni documentacion.
+- Reescribir rutas SPA a `/index.html` para que `/auth` y los dashboards soporten carga directa.
+- Bloquear builds con variables ausentes, placeholders, proyecto incorrecto o emuladores activos.
+- Autorizar `jobsitejedi.vercel.app` en Firebase Authentication para Google Sign-In.
+- **Pruebas:** validador con configuracion valida/invalida, contrato de rewrite, build, carga directa
+  de `/auth`, login real manager y Google interactivo.
+- **Aceptacion:** produccion no muestra `auth/invalid-api-key`, `/auth` responde la SPA y la cuenta
+  manager entra a `/managers`; Google no falla por dominio no autorizado.
+- **Diagnostico 2026-08-28:**
+  - La raiz publica respondio `200`, pero `/auth` respondio `404 NOT_FOUND`.
+  - El bundle desplegado no contiene una clave web Firebase con formato valido.
+  - La auditoria read-only de Vercel confirmo que las seis variables existen para Production y
+    Preview, pero cada valor coincide exactamente con su propio nombre; no se mostraron valores.
+  - El repositorio incorpora `vercel.json`, validacion previa al build y pruebas de regresion.
+  - Evidencia local: pruebas focalizadas 7/7; suite Firebase 16 archivos/65 tests; E2E auth 1/1;
+    `build`, `typecheck` y sintaxis aprobados; lint con 0 errores/7 warnings preexistentes;
+    `npm audit --omit=dev` con 0 vulnerabilidades y `git diff --check` limpio.
+  - Pruebas avanzadas: el contrato Vercel/Firebase cubre las seis variables, placeholders, proyecto,
+    modo emulador y carga directa SPA. No aplica prueba de carga porque el cambio solo valida el
+    build estatico y no agrega endpoints ni consumo por solicitud.
+  - Revision de seguridad: no se versionan ni imprimen valores; el frontend no recibe secretos de
+    servidor y no se modifican reglas, claims ni autorizacion backend.
+  - Correccion remota autorizada y aplicada: las seis variables fueron recreadas como `Config`
+    para Production y Preview con los valores oficiales del Web SDK; la verificacion individual
+    confirmo presencia, tipo y entornos, y descarto `VITE_FIREBASE_USE_EMULATORS`.
+  - `jobsitejedi.vercel.app` fue agregado y verificado en los dominios autorizados de Firebase
+    Authentication. El redeploy y la validacion del login real siguen pendientes del push.
+
 ### T-004 — Implementar reglas mínimas de Firestore
 
 - **Prioridad:** P0 · **Estado:** aprobada · **Depende de:** T-003

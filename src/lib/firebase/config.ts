@@ -4,18 +4,37 @@ const env = import.meta.env as FirebaseEnv;
 const useEmulators = env.VITE_FIREBASE_USE_EMULATORS === "true";
 const emulatorProjectId = "demo-jobsite-jedi";
 
+const requiredProductionValue = (name: string) => {
+  const value = env[name]?.trim();
+
+  if (!value || value === name) {
+    throw new Error(
+      `Firebase client configuration is invalid: ${name} must be set by the deployment environment.`,
+    );
+  }
+
+  return value;
+};
+
 export const firebaseConfig = {
-  apiKey: env.VITE_FIREBASE_API_KEY ?? "demo-api-key",
-  authDomain:
-    env.VITE_FIREBASE_AUTH_DOMAIN ?? "demo-jobsite-jedi.firebaseapp.com",
+  apiKey: useEmulators
+    ? "demo-api-key"
+    : requiredProductionValue("VITE_FIREBASE_API_KEY"),
+  authDomain: useEmulators
+    ? "demo-jobsite-jedi.firebaseapp.com"
+    : requiredProductionValue("VITE_FIREBASE_AUTH_DOMAIN"),
   projectId: useEmulators
     ? emulatorProjectId
-    : (env.VITE_FIREBASE_PROJECT_ID ?? emulatorProjectId),
+    : requiredProductionValue("VITE_FIREBASE_PROJECT_ID"),
   storageBucket: useEmulators
     ? emulatorProjectId
-    : (env.VITE_FIREBASE_STORAGE_BUCKET ?? "demo-jobsite-jedi.appspot.com"),
-  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID ?? "000000000000",
-  appId: env.VITE_FIREBASE_APP_ID ?? "demo-app-id",
+    : requiredProductionValue("VITE_FIREBASE_STORAGE_BUCKET"),
+  messagingSenderId: useEmulators
+    ? "000000000000"
+    : requiredProductionValue("VITE_FIREBASE_MESSAGING_SENDER_ID"),
+  appId: useEmulators
+    ? "demo-app-id"
+    : requiredProductionValue("VITE_FIREBASE_APP_ID"),
   emulators: {
     auth: 9099,
     firestore: 8080,
