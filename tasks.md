@@ -674,6 +674,9 @@ toquen producción necesitan confirmación explícita del operador.
   - El ruleset Storage se limpio de una funcion no usada, se revalido Firebase 67/67 y compilo
     remotamente sin warnings antes de publicarse. Quedan Google Auth, frontend staging, App Check y
     smoke funcional; el proyecto Vercel productivo no fue modificado.
+  - Por instruccion del operador, la habilitacion de Google OAuth y la transferencia de la
+    configuracion Web SDK a un proyecto Vercel aislado quedan pendientes de autorizacion explicita
+    el 2026-08-30. Hasta entonces tampoco se ejecutan App Check ni el smoke funcional final.
   - T-017 conserva `en-progreso`; produccion permanece intacta.
 
 ### T-018 — Gate de producción
