@@ -136,7 +136,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-021 — Corregir configuracion de produccion en Vercel
 
-- **Prioridad:** P0 · **Estado:** en-progreso · **Depende de:** T-020
+- **Prioridad:** P0 · **Estado:** revision · **Depende de:** T-020
 - Sustituir los placeholders `VITE_FIREBASE_*` de Vercel por la configuracion Web SDK oficial de
   `jobsitejedi`, sin exponer valores en Git, logs ni documentacion.
 - Reescribir rutas SPA a `/index.html` para que `/auth` y los dashboards soporten carga directa.
@@ -159,12 +159,18 @@ toquen producción necesitan confirmación explícita del operador.
     modo emulador y carga directa SPA. No aplica prueba de carga porque el cambio solo valida el
     build estatico y no agrega endpoints ni consumo por solicitud.
   - Revision de seguridad: no se versionan ni imprimen valores; el frontend no recibe secretos de
-    servidor y no se modifican reglas, claims ni autorizacion backend.
+    servidor y la correccion no amplio claims ni incorporo credenciales backend.
   - Correccion remota autorizada y aplicada: las seis variables fueron recreadas como `Config`
     para Production y Preview con los valores oficiales del Web SDK; la verificacion individual
     confirmo presencia, tipo y entornos, y descarto `VITE_FIREBASE_USE_EMULATORS`.
   - `jobsitejedi.vercel.app` fue agregado y verificado en los dominios autorizados de Firebase
-    Authentication. El redeploy y la validacion del login real siguen pendientes del push.
+    Authentication. El commit `3bf789c` quedo desplegado como `Ready`; `/` y `/auth` responden 200
+    con la misma entrada SPA y la pantalla de autenticacion carga sin `auth/invalid-api-key`.
+  - Login productivo aprobado con la cuenta QA: Firebase autentico el claim `manager` y redirigio a
+    `/managers`. La primera carga revelo que produccion aun conservaba la regla inicial `deny all`.
+  - Con autorizacion del operador se desplego exclusivamente `firestore.rules` a `jobsitejedi`.
+    La segunda validacion cargo proyectos y cola de revision sin errores de permisos. La prueba
+    interactiva completa con una identidad Google provisionada permanece acotada a T-020.
 
 ### T-004 — Implementar reglas mínimas de Firestore
 
@@ -184,6 +190,10 @@ toquen producción necesitan confirmación explícita del operador.
   - ESLint focalizado y `git diff --check` → aprobados.
   - `npm.cmd run build` → aprobado. `npm.cmd run typecheck` mantiene el fallo previo de
     import duplicado en `RubbishCollectionDialog.tsx`, asignado a T-014.
+  - **Despliegue 2026-08-28:** el operador autorizo publicar exclusivamente `firestore.rules` en
+    `jobsitejedi`; Firebase compilo y libero las reglas. La regresion productiva con el usuario
+    manager confirmo lectura del dashboard sin `permission-denied`; no se desplegaron indices,
+    Storage, Functions ni datos.
 
 ## Fase 2 — Primera vertical funcional Firebase
 
