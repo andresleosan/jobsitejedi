@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 const projectId = "demo-jobsite-jedi";
 const authBaseUrl = "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1";
 const firestoreBaseUrl = `http://127.0.0.1:8080/v1/projects/${projectId}/databases/(default)/documents`;
-const functionsBaseUrl = `http://127.0.0.1:5001/${projectId}/us-central1`;
+const functionsBaseUrl = `http://127.0.0.1:5001/${projectId}/europe-west1`;
 
 interface AuthResponse {
   idToken: string;
@@ -68,9 +68,14 @@ const createFirestoreDocument = async (
 
 test("builder submits a private invoice and manager approves it", async ({ page }) => {
   test.setTimeout(60_000);
+  const reactKeyWarnings: string[] = [];
   page.on("pageerror", (error) => console.error(`[browser pageerror] ${error.stack ?? error.message}`));
   page.on("console", (message) => {
-    if (message.type() === "error") console.error(`[browser console] ${message.text()}`);
+    if (message.type() === "error") {
+      const text = message.text();
+      console.error(`[browser console] ${text}`);
+      if (text.includes("Encountered two children with the same key")) reactKeyWarnings.push(text);
+    }
   });
 
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -182,4 +187,5 @@ test("builder submits a private invoice and manager approves it", async ({ page 
   managerInvoice = dialog.locator('[data-testid="invoice-review"]').filter({ hasText: "INV-E2E-2048" });
   await expect(managerInvoice).toContainText("Approved");
   await expect(managerInvoice).toContainText("Amount and project matched");
+  expect(reactKeyWarnings).toEqual([]);
 });

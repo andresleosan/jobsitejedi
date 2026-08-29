@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "demo-jobsite-jedi"
+    "default": "demo-jobsite-jedi",
+    "staging": "jobsitejedi-staging",
+    "production": "jobsitejedi"
   }
 }

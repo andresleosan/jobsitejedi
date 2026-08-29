@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 const firebaseProjectId = "demo-jobsite-jedi";
 const authBaseUrl = "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1";
 const firestoreBaseUrl = `http://127.0.0.1:8080/v1/projects/${firebaseProjectId}/databases/(default)/documents`;
-const functionsBaseUrl = `http://127.0.0.1:5001/${firebaseProjectId}/us-central1`;
+const functionsBaseUrl = `http://127.0.0.1:5001/${firebaseProjectId}/europe-west1`;
 
 interface AuthResponse {
   idToken: string;

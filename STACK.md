@@ -29,12 +29,12 @@ La clasificación fue confirmada por el operador el `2026-08-24`.
 | Routing | React Router DOM | Activo |
 | Validación | Zod + React Hook Form | Activo |
 | Estado/cache | TanStack Query, hooks locales | Parcial |
-| Auth | Firebase Authentication | En construcción |
-| Datos | Cloud Firestore | Pendiente |
-| Archivos | Firebase Storage privado | Pendiente |
-| Backend privilegiado | Firebase Cloud Functions | Scaffold |
-| Testing | Vitest + Playwright | Parcial |
-| Infraestructura local | Firebase Emulator Suite | Configurada, no estabilizada |
+| Auth | Firebase Authentication | Activo |
+| Datos | Cloud Firestore | Activo |
+| Archivos | Firebase Storage privado | Activo |
+| Backend privilegiado | Firebase Cloud Functions | Implementado y validado en emuladores |
+| Testing | Vitest + Playwright | Activo en CI |
+| Infraestructura local | Firebase Emulator Suite | Estabilizada |
 | Proveedor legado | Supabase | Solo historial, fuera del runtime |
 
 ## Decisión de proveedor
@@ -232,6 +232,19 @@ backlog.
 - Producción: solo con backup cuando aplique, rollback documentado y confirmación explícita.
 - Antes de usar Functions con APIs externas se debe definir límite de costo, timeout,
   reintentos y alerta presupuestaria.
+
+### Staging aislado y costo
+
+- Target planificado: `jobsitejedi-staging`; nunca se reutiliza `jobsitejedi` para validar.
+- Firestore debe usar `eur3`, igual que produccion, y el frontend debe usar una aplicacion Web
+  separada.
+- Storage y Functions usan `europe-west1` para mantener el backend cerca de Firestore `eur3`; la
+  decision y sus alternativas estan registradas en `docs/adr/ADR-003-region-europea-firebase.md`.
+- Cloud Storage y Cloud Functions requieren Blaze. Para pruebas manuales de bajo volumen se estima
+  USD 0 a 5 por mes, sujeto al consumo real y sin limite duro automatico.
+- Staging usa Blaze con un presupuesto mensual de USD 5 y alertas al 50 %, 90 % y 100 %. Las
+  alertas no constituyen un limite duro; el operador debe detener staging ante consumo inesperado.
+- Contrato, gate, smoke y rollback: `docs/staging-operations.md`.
 
 ## Costo de OCR
 

@@ -1,45 +1,60 @@
 # Baseline de rendimiento
 
-Fecha: 2026-08-25
-Entorno: Vite 5.4.19, Node 24.18.0, build de producción local, Firebase Emulator Suite.
+Fecha inicial: 2026-08-27
+Actualizacion: 2026-08-28
+Alcance: dashboard web, build de produccion y consultas principales de Firestore.
 
-## Medición antes/después
+## Entorno de medicion
 
-| Métrica | Antes | Después | Resultado |
+- Node.js 22.23.2 local del proyecto.
+- Vite 5.4.21.
+- Build ejecutado con `npm run build:dev`.
+- Web Vitals medidos con Chromium y Playwright contra `vite preview` en localhost.
+- Cinco muestras frias por perfil, usando percentil 75.
+
+## Presupuesto
+
+- Bundle inicial JavaScript: menor de 500 kB gzip.
+- LCP: menor o igual a 2.5 s.
+- INP: menor o igual a 200 ms.
+- CLS: menor o igual a 0.1.
+
+## Bundle
+
+| Medicion | Baseline inicial | Actual | Resultado |
 | --- | ---: | ---: | --- |
-| Chunk JavaScript inicial | 1.811,33 kB / 497,78 kB gzip | 330,70 kB / 107,38 kB gzip | -81,7% / -78,4% |
-| Hoja de estilos inicial | 70,41 kB / 12,21 kB gzip | 70,44 kB / 12,22 kB gzip | Sin cambio material |
-| Respuesta HTML de preview | 9,0 ms / 1.256 B | 7,1 ms / 1.256 B | Mejora observada local |
-| Build | 20,42 s | 8,43 s | -58,7% en esta ejecución |
+| Bundle inicial JS | 1811.33 kB / 497.78 kB gzip | 330.75 kB / 107.41 kB gzip | Cumple |
+| Chunk compartido de autenticacion | No separado | 716.01 kB / 177.23 kB gzip | Carga diferida |
 
-La medición se obtuvo con `npm.cmd run build`, leyendo el reporte de tamaños de Vite, y con
-`curl.exe` contra `vite preview` en `127.0.0.1:4173`. Los tiempos HTTP son orientativos del
-servidor local, no sustituyen una medición de red real.
+La reduccion se obtuvo separando rutas con `React.lazy`; el modulo de autenticacion se descarga
+solo cuando la navegacion lo necesita.
 
-## Cambio aplicado
+## Core Web Vitals de laboratorio - 2026-08-28
 
-`src/App.tsx` pasó las páginas a `React.lazy()` dentro de un `Suspense` común. El shell inicial
-ya no carga todos los dashboards y diálogos; cada ruta descarga su propio módulo al navegar.
-Esto no cambia consultas, reglas ni lógica de negocio. El build todavía identifica un chunk
-compartido de autenticación de 713,23 kB, por lo que queda como candidato de una iteración futura
-si el perfil real de `/auth` lo justifica.
+| Perfil | LCP p75 | INP p75 | CLS p75 | FCP p75 | TTFB p75 | Resultado |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Desktop 1440x900 | 128 ms | 16 ms | 0 | 68 ms | 2 ms | Cumple |
+| Mobile 390x844 | 120 ms | 16 ms | 0 | 56 ms | 1.4 ms | Cumple |
+
+Los umbrales usados son los publicados para Core Web Vitals: LCP 2.5 s, INP 200 ms y CLS 0.1.
+Estos resultados son datos de laboratorio local, no sustituyen telemetria de usuarios reales.
+Referencia: https://web.dev/articles/vitals?hl=en
+
+Comando reproducible:
+
+```bash
+npm run build:dev
+npm run perf:web-vitals
+```
 
 ## Consultas revisadas
 
-- `ProjectDetails`: 2 lecturas principales (`getProject` y `listJobsForProject`) ejecutadas con
-  `Promise.all`.
-- `Statements`: 5 lecturas (`projects`, `timeEntries`, `invoices`, `materialUsage`, `jobs`) con
-  `Promise.all`; no hay bucle de consulta por fila.
-- Dashboards: las listas principales se solicitan una vez por carga; `JobsToDoList` hace una
-  consulta por proyecto seleccionado y las suscripciones de diálogos solo se activan al abrirlos.
+- Listados principales usan `limit` y cursores.
+- Facturas y ordenes de cambio usan indices compuestos declarados en `firestore.indexes.json`.
+- No se observaron lecturas sin limite en los flujos principales revisados.
+- La validacion local cubrio 65 pruebas sobre emuladores y 8 escenarios E2E.
 
-No se modificaron consultas ni índices porque la medición estática no mostró un N+1 claro. Una
-medición de Web Vitals con navegador real queda pendiente: el ejecutable Chromium de Playwright
-no está instalado en este entorno.
+## Estado
 
-## Verificación
-
-- `npm.cmd run typecheck` → aprobado.
-- `npm.cmd run lint` → 0 errores, 7 warnings preexistentes de Fast Refresh.
-- `npm.cmd run test:e2e:firebase:emulator` → 7 E2E aprobadas contra emuladores.
-- No hubo despliegue, migración ni acceso a servicios remotos o APIs pagas.
+El presupuesto de bundle y los Web Vitals de laboratorio cumplen. La siguiente medicion relevante
+debe hacerse en staging con red y datos representativos antes de autorizar produccion.

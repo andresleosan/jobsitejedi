@@ -13,7 +13,10 @@ export const firebaseApp = getApps().length
 
 export const firebaseAuth = getAuth(firebaseApp);
 export const firebaseDb = getFirestore(firebaseApp);
-export const firebaseFunctions = getFunctions(firebaseApp);
+export const firebaseFunctions = getFunctions(
+  firebaseApp,
+  firebaseConfig.functionsRegion,
+);
 
 if (useEmulators) {
   connectAuthEmulator(

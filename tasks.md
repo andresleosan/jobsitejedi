@@ -44,11 +44,12 @@ toquen producción necesitan confirmación explícita del operador.
   T-006, T-008 y T-012, con repositorios Firebase, E2E y cero imports runtime de Supabase.
 - T-021 pasa de `revision` a `aprobada`: Vercel, Firebase Auth, reglas, login email y dos cuentas
   Google provisionadas cumplieron la aceptación productiva.
-- T-009, T-010, T-011, T-012, T-013, T-014, T-015, T-016 y T-019 permanecen en `revisión` hasta
-  su cierre humano; no se infiere aprobación solo por tener pruebas.
-- T-017 y T-018 siguen pendientes: staging y el gate de producción no se consideran completados.
-- WIP=0: T-022 completó el gate y pasa a `revisión`; no se abre una tarea nueva hasta su cierre
-  humano y la selección explícita del siguiente corte.
+- El operador aprobó explícitamente T-005, T-009, T-010, T-011, T-012, T-013, T-014, T-015,
+  T-016, T-019 y T-022 el 2026-08-29, incluyendo el cierre de T-013 por aislamiento y la
+  aceptación temporal del riesgo de tooling documentado.
+- T-017 pasa a `en-progreso` para preparar un staging aislado. T-018 sigue pendiente y no existe
+  autorización de producción.
+- WIP=1: T-017 es la única tarea activa.
 
 ## Fase 0 — Decisión y línea base
 
@@ -223,7 +224,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-005 — Crear repositorios tipados de usuarios, proyectos y trabajos
 
-- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-004
+- **Prioridad:** P0 · **Estado:** aprobada · **Depende de:** T-004
 - Crear repositorios bajo `src/lib/firebase/repositories/`.
 - Sacar consultas y escrituras de `ProjectList`, `CreateProjectDialog`,
   `EditProjectDialog`, `ManagerJobsList` y `ProjectDetails`.
@@ -340,7 +341,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-009 — Implementar Cloud Functions privilegiadas
 
-- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-003, T-004
+- **Prioridad:** P1 · **Estado:** aprobada · **Depende de:** T-003, T-004
 - Implementar invitaciones, asignación de roles, procesamiento de facturas,
   extracción de Excel y limpieza programada.
 - Validar entradas, rol, rutas, timeouts, reintentos finitos y errores seguros.
@@ -371,7 +372,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-010 — Migrar inventario, herramientas y solicitudes
 
-- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-005, T-009
+- **Prioridad:** P1 · **Estado:** aprobada · **Depende de:** T-005, T-009
 - Crear repositorios para materiales, uso, entregas, herramientas, checkouts y residuos.
 - Cubrir transiciones de estado, cantidades y operaciones manager-only.
 - Reemplazar listeners `postgres_changes` por listeners Firestore con cleanup.
@@ -447,7 +448,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-011 — Migrar facturas, reportes y evaluaciones de riesgo
 
-- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-007, T-009, T-010
+- **Prioridad:** P1 · **Estado:** aprobada · **Depende de:** T-007, T-009, T-010
 - Migrar facturas, proveedores, extracción, reportes diarios, firmas y documentos.
 - Revisar especialmente que `documents` no exponga archivos de otros usuarios y que la
   ruta/bucket de evaluaciones de riesgo sea coherente.
@@ -475,7 +476,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-012 — Eliminar dependencias runtime de Supabase
 
-- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-005, T-006, T-007, T-008,
+- **Prioridad:** P0 · **Estado:** aprobada · **Depende de:** T-005, T-006, T-007, T-008,
   T-009, T-010, T-011
 - Eliminar imports runtime de Supabase en `src`.
 - Eliminar cliente, tipos y dependencia npm solo cuando no haya consumidores.
@@ -494,7 +495,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-013 — Retirar o aislar infraestructura Supabase antigua
 
-- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-012
+- **Prioridad:** P1 · **Estado:** aprobada · **Depende de:** T-012
 - Documentar qué migraciones se conservan como historial y qué carpetas quedan fuera del
   runtime.
 - Si se aplica la migración Storage anterior, hacerlo primero en staging con backup
@@ -518,7 +519,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-014 — Cerrar TypeScript y lint por lotes
 
-- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-012
+- **Prioridad:** P1 · **Estado:** aprobada · **Depende de:** T-012
 - Corregir primero errores de compilación y después dividir la deuda de `any` por dominio:
   auth, proyectos/trabajos, inventario, finanzas y UI.
 - Resolver dependencias reales de `useEffect`; no silenciar reglas globalmente.
@@ -541,7 +542,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-015 — Completar QA automatizado
 
-- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-012, T-014
+- **Prioridad:** P1 · **Estado:** aprobada · **Depende de:** T-012, T-014
 - Añadir pruebas de reglas Firestore/Storage, Functions y repositorios.
 - Añadir E2E de autenticación, proyectos, trabajos, fotos, inventario, facturas y reportes.
 - Incorporar casos de usuario ajeno, sesión expirada, payload inválido y doble envío.
@@ -562,7 +563,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-016 — Medir y corregir rendimiento
 
-- **Prioridad:** P2 · **Estado:** revisión · **Depende de:** T-015
+- **Prioridad:** P2 · **Estado:** aprobada · **Depende de:** T-015
 - Medir baseline del bundle, carga inicial y consultas principales.
 - Dividir rutas con `React.lazy()` y detectar N+1 en `ProjectDetails`, `Statements` y
   dashboards.
@@ -582,7 +583,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-019 — Cerrar vulnerabilidades de dependencias
 
-- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-011, T-014
+- **Prioridad:** P0 · **Estado:** aprobada · **Depende de:** T-011, T-014
 - Sustituir `xlsx`, usado por reportes y carga masiva, por una alternativa mantenida o aislar su
   procesamiento con límites y validaciones equivalentes; la versión actual no tiene fix publicado.
 - Evaluar la migración controlada a React Router 7 para cerrar los avisos moderados restantes.
@@ -603,7 +604,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-022 — Automatizar el gate de calidad en GitHub Actions
 
-- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-002
+- **Prioridad:** P0 · **Estado:** aprobada · **Depende de:** T-002
 - Ejecutar CI en `push` a `main`, pull requests y disparo manual con Node 22 y JDK 21.
 - Instalar dependencias con lockfiles, compilar frontend/Functions y ejecutar typecheck, lint,
   provider guard, contratos del workflow, suite Firebase y E2E contra emuladores.
@@ -641,12 +642,31 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-017 — Documentar operación y preparar staging
 
-- **Prioridad:** P1 · **Estado:** pendiente · **Depende de:** T-013, T-015, T-016
+- **Prioridad:** P1 · **Estado:** en-progreso · **Depende de:** T-013, T-015, T-016
 - Crear guía de variables, emuladores, despliegue, backup, rollback, alertas de costo y
   smoke tests.
 - Revisar `.env` histórico y rotar cualquier credencial que haya sido versionada.
 - Preparar staging, sin desplegar producción.
 - **Aceptación:** checklist operativo revisado y aprobado por el operador.
+- **Avance 2026-08-29:**
+  - El operador aprobo el inicio de T-017 y mantuvo produccion fuera de alcance.
+  - Se documento el target aislado `jobsitejedi-staging`, variables, gate, costo, backup, rollback,
+    App Check y smoke tests en `docs/staging-operations.md`.
+  - `build:staging` valida que Auth, Firestore y Storage pertenezcan al proyecto de staging y
+    rechaza el project ID productivo, placeholders y emuladores.
+  - El proyecto `jobsitejedi-staging` y su aplicacion Web fueron creados el 2026-08-29. Blaze quedo
+    vinculado con presupuesto mensual de USD 5 y alertas al 50 %, 90 % y 100 %; las alertas no son
+    un limite duro. Firestore Native se creo en `eur3`, Storage privado en `europe-west1` y
+    email/contrasena quedo habilitado. Produccion no fue modificada.
+  - `europe-west1` queda fijada para Functions y Storage por cercania a Firestore `eur3`; decision
+    registrada en `docs/adr/ADR-003-region-europea-firebase.md`.
+  - La autocritica detecto que mover Functions sin mover el cliente rompia las callables. Se
+    corrigio el contrato cliente/backend y la segunda vuelta aprobo: despliegue 10/10, Firebase
+    16 archivos/67 tests, E2E 8/8, provider guard 3/3, typecheck, build de Functions y auditoria
+    runtime con 0 vulnerabilidades; lint conserva 0 errores y 7 warnings conocidos.
+  - El ruleset activo `Protect main` exige PR, bloquea borrado y force-push, no tiene bypass y
+    requiere `Quality and contracts` y `Firebase emulators and E2E`.
+  - T-017 conserva `en-progreso`; no hubo despliegue de codigo ni cambios en produccion.
 
 ### T-018 — Gate de producción
 
@@ -797,6 +817,23 @@ toquen producción necesitan confirmación explícita del operador.
 - T-011 queda en `revision`: proveedores, extracción, reportes, carga privada y firma ya tienen
   implementación y evidencia E2E; falta la revisión humana de los criterios de cierre. No hubo
   migraciones ni despliegues.
+
+## Validacion de cierre - 2026-08-28
+
+- El gate completo esta consolidado en `docs/review-gate-2026-08-28.md`.
+- Evidencia local: contratos 3/3, parser de Functions 3/3, Firebase 65/65, E2E 8/8,
+  typecheck y builds aprobados, 0 vulnerabilidades de runtime y Web Vitals dentro del presupuesto.
+- T-011: se corrigio una carrera de estado que podia duplicar la clave de un reporte o evaluacion;
+  el E2E ahora falla si React vuelve a emitir ese warning.
+- T-016: Chromium ya esta disponible y la medicion reproducible aprobo desktop y mobile. La
+  evidencia detallada vive en `docs/performance-baseline.md`.
+- T-022: `CI #2` paso ambos jobs en GitHub Actions. No hay rulesets activos y la integracion de
+  consulta no tiene permiso administrativo para validar o cambiar la proteccion clasica de `main`.
+- Seguridad: no hay hallazgos criticos. Quedan tres riesgos residuales documentados para decision
+  humana: tooling de desarrollo, revocacion de la clave publicable Supabase retirada y App Check.
+- El operador aprobo las 11 tareas el 2026-08-29, confirmo el aislamiento sin borrado remoto de
+  Supabase, acepto temporalmente el riesgo de tooling y eligio ambos jobs de CI como checks de
+  `main`. T-017 queda activa; T-018 sigue pendiente y este registro no autoriza produccion.
 
 ## Fuera de alcance hasta cerrar la Fase 2
 

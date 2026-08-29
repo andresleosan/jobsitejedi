@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "node scripts/validate-firebase-client-env.mjs production && vite build",
+    "build:staging": "node scripts/validate-firebase-client-env.mjs staging && vite build --mode staging",
     "build:dev": "vite build --mode development",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
     "lint": "eslint .",
@@ -23,6 +24,7 @@
     "test:e2e:auth:emulator": "node scripts/firebase-emulator-runner.mjs auth-e2e",
     "test:ci-contract": "vitest run tests/ci-workflow.test.ts",
     "test:provider-guard": "vitest run tests/provider-guard.test.ts",
+    "perf:web-vitals": "node scripts/measure-web-vitals.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

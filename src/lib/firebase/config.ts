@@ -35,6 +35,7 @@ export const firebaseConfig = {
   appId: useEmulators
     ? "demo-app-id"
     : requiredProductionValue("VITE_FIREBASE_APP_ID"),
+  functionsRegion: "europe-west1",
   emulators: {
     auth: 9099,
     firestore: 8080,
