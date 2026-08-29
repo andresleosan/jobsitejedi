@@ -40,8 +40,8 @@ completara Google Sign-In y Firebase creara su usuario sin rol.
 - Los dos dry-runs verificaron identidad unica, proveedor y rol anterior sin escribir.
 - Cada aplicacion preservo los claims existentes, escribio solo `role: manager` y releyo Firebase
   para confirmar el resultado.
-- La cuenta Google principal completo el acceso interactivo normal; la segunda debe cerrar sesion
-  y volver a entrar para recibir un ID token nuevo.
+- Las dos cuentas Google completaron el acceso interactivo normal. El operador confirmo que la
+  segunda cuenta puede ingresar y cerrar sesion sin problemas despues de renovar su ID token.
 - El script captura errores del SDK y emite solo codigo y mensaje sanitizados; no imprime objetos
   de transporte, encabezados de autorizacion ni tokens temporales.
 - Verificacion final: el dry-run remoto devolvio `manager` sin escribir; la regresion de fallo

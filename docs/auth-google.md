@@ -16,7 +16,8 @@ La verificacion fue de solo lectura y no mostro ni guardo el secreto del cliente
 La validacion productiva posterior confirmo el contrato completo: una identidad Google nueva se
 autentica, queda bloqueada con el estado explicito de rol faltante, recibe `manager` solo mediante
 la operacion server-side autorizada y puede volver a entrar normalmente. Una segunda identidad
-Google autorizada repitio creacion, dry-run y asignacion verificada de `manager`.
+Google autorizada repitio creacion, dry-run y asignacion verificada de `manager`; el operador
+confirmo posteriormente que puede ingresar y cerrar sesion sin problemas.
 
 ## Contrato del cliente
 

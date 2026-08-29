@@ -95,7 +95,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-020 — Estabilizar login y añadir autenticación con Google
 
-- **Prioridad:** P0 · **Estado:** revision · **Depende de:** T-003
+- **Prioridad:** P0 · **Estado:** aprobada · **Depende de:** T-003
 - Impedir que una identidad Firebase válida sin claim `manager`/`builder` provoque un bucle entre
   `/auth` y `/dashboard`; debe cerrar la sesión y mostrar un error accionable sin revelar datos.
 - Añadir Google como proveedor de autenticación mediante Firebase Auth, sin autoasignar roles ni
@@ -140,6 +140,8 @@ toquen producción necesitan confirmación explícita del operador.
     elimina `DEBUG` heredado para impedir que Firebase Tools liste variables del proceso; la
     regresion de fallo del helper confirmo salida de una linea y cero patrones de token, y el
     dry-run remoto final releyo `manager` sin modificar la cuenta.
+  - Cierre humano: el operador confirmo que la segunda cuenta Google con rol `manager` puede
+    ingresar y cerrar sesion sin problemas. T-020 cumple su aceptacion y pasa a `aprobada`.
 
 ### T-021 — Corregir configuracion de produccion en Vercel
 
@@ -177,7 +179,7 @@ toquen producción necesitan confirmación explícita del operador.
     `/managers`. La primera carga revelo que produccion aun conservaba la regla inicial `deny all`.
   - Con autorizacion del operador se desplego exclusivamente `firestore.rules` a `jobsitejedi`.
     La segunda validacion cargo proyectos y cola de revision sin errores de permisos. La prueba
-    interactiva completa con una identidad Google provisionada permanece acotada a T-020.
+    interactiva completa con identidades Google provisionadas quedo completada en T-020.
 
 ### T-004 — Implementar reglas mínimas de Firestore
 
