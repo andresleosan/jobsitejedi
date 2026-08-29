@@ -111,7 +111,7 @@ test("builder requests materials and manager completes the delivery", async ({ p
   await page.locator("#signin-password").fill(password);
   await page.getByRole("button", { name: "Sign In", exact: true }).click();
   await expect(page).toHaveURL(/\/builders$/, { timeout: 15_000 });
-  await expect(page.getByText("Delivery E2E Project")).toBeVisible();
+  await expect(page.getByRole("combobox")).toContainText("Delivery E2E Project - Delivery Client");
 
   await page.getByRole("button", { name: "Request materials", exact: true }).click();
   let dialog = page.getByRole("dialog");

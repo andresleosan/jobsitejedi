@@ -109,7 +109,7 @@ test("builder requests a tool and manager completes its checkout lifecycle", asy
   await page.locator("#signin-password").fill(password);
   await page.getByRole("button", { name: "Sign In", exact: true }).click();
   await expect(page).toHaveURL(/\/builders$/, { timeout: 15_000 });
-  await expect(page.getByText("Inventory E2E Project")).toBeVisible();
+  await expect(page.getByRole("combobox")).toContainText("Inventory E2E Project - Inventory Client");
 
   await page.getByRole("button", { name: "Request a tool" }).click();
   const dialog = page.getByRole("dialog");

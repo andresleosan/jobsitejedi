@@ -123,7 +123,7 @@ test("builder uploads private evidence and submits the job for review", async ({
   await page.getByRole("button", { name: "Sign In", exact: true }).click();
 
   await expect(page).toHaveURL(/\/builders$/, { timeout: 15_000 });
-  await expect(page.getByText("E2E Evidence Project")).toBeVisible();
+  await expect(page.getByRole("combobox")).toContainText("E2E Evidence Project - E2E Client");
   await expect(page.getByRole("heading", { name: "Jobs To Do" })).toBeVisible();
 
   await page.getByRole("button", { name: "Upload photos for Upload completion evidence", exact: true }).click();

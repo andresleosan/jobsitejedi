@@ -98,7 +98,7 @@ test("builder requests rubbish collection and manager resolves it", async ({ pag
   await page.locator("#signin-password").fill(password);
   await page.getByRole("button", { name: "Sign In", exact: true }).click();
   await expect(page).toHaveURL(/\/builders$/, { timeout: 15_000 });
-  await expect(page.getByText("Rubbish E2E Project")).toBeVisible();
+  await expect(page.getByRole("combobox")).toContainText("Rubbish E2E Project - Rubbish Client");
 
   await page.getByRole("button", { name: "Request collection", exact: true }).click();
   let dialog = page.getByRole("dialog");

@@ -21,6 +21,7 @@
     "test:e2e:firebase": "playwright test --config=playwright.firebase.config.ts",
     "test:e2e:firebase:emulator": "node scripts/firebase-emulator-runner.mjs e2e",
     "test:e2e:auth:emulator": "node scripts/firebase-emulator-runner.mjs auth-e2e",
+    "test:ci-contract": "vitest run tests/ci-workflow.test.ts",
     "test:provider-guard": "vitest run tests/provider-guard.test.ts",
     "preview": "vite preview"
   },

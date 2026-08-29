@@ -35,6 +35,20 @@ Firebase que ya no apliquen.
 Una tarea solo puede pasar a `revisión` después de ejecutar sus pruebas. Las tareas que
 toquen producción necesitan confirmación explícita del operador.
 
+## Reconciliación del backlog — 2026-08-28
+
+- Los estados de los encabezados y esta sección son la fuente vigente; los bloques `Seguimiento`
+  conservan la fotografía histórica del momento en que se escribieron.
+- `BRIEF.md` fue restaurado a partir del alcance ya aceptado en `STACK.md`, sin agregar features.
+- T-005 pasa de `en-progreso` a `revisión`: sus pendientes históricos quedaron cubiertos por
+  T-006, T-008 y T-012, con repositorios Firebase, E2E y cero imports runtime de Supabase.
+- T-021 pasa de `revision` a `aprobada`: Vercel, Firebase Auth, reglas, login email y dos cuentas
+  Google provisionadas cumplieron la aceptación productiva.
+- T-009, T-010, T-011, T-012, T-013, T-014, T-015, T-016 y T-019 permanecen en `revisión` hasta
+  su cierre humano; no se infiere aprobación solo por tener pruebas.
+- T-017 y T-018 siguen pendientes: staging y el gate de producción no se consideran completados.
+- WIP=1: T-022 es la única tarea en `en-progreso`; no se abren nuevas features durante este gate.
+
 ## Fase 0 — Decisión y línea base
 
 ### T-001 — Confirmar proveedor objetivo y nivel del proyecto
@@ -145,7 +159,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-021 — Corregir configuracion de produccion en Vercel
 
-- **Prioridad:** P0 · **Estado:** revision · **Depende de:** T-020
+- **Prioridad:** P0 · **Estado:** aprobada · **Depende de:** T-020
 - Sustituir los placeholders `VITE_FIREBASE_*` de Vercel por la configuracion Web SDK oficial de
   `jobsitejedi`, sin exponer valores en Git, logs ni documentacion.
 - Reescribir rutas SPA a `/index.html` para que `/auth` y los dashboards soporten carga directa.
@@ -208,7 +222,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-005 — Crear repositorios tipados de usuarios, proyectos y trabajos
 
-- **Prioridad:** P0 · **Estado:** en-progreso · **Depende de:** T-004
+- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-004
 - Crear repositorios bajo `src/lib/firebase/repositories/`.
 - Sacar consultas y escrituras de `ProjectList`, `CreateProjectDialog`,
   `EditProjectDialog`, `ManagerJobsList` y `ProjectDetails`.
@@ -233,6 +247,9 @@ toquen producción necesitan confirmación explícita del operador.
   - Las fotos y el envío de completados permanecen explícitamente fuera de este corte y
     quedan para T-008/T-006.
   - Suite del emulador tras la migración de jobs → 8 archivos, 20 tests aprobados.
+  - Reconciliación 2026-08-28: T-006/T-008 completaron estados, tiempo, fotos y evidencia; T-012
+    confirmó cero imports Supabase bajo `src`, y la suite vigente alcanzó 16 archivos/65 tests.
+    T-005 pasa a `revisión`; falta solo el cierre humano de sus criterios.
 
 ### T-006 — Migrar seguimiento de tiempo y transiciones de trabajo
 
@@ -429,7 +446,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-011 — Migrar facturas, reportes y evaluaciones de riesgo
 
-- **Prioridad:** P1 · **Estado:** revision · **Depende de:** T-007, T-009, T-010
+- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-007, T-009, T-010
 - Migrar facturas, proveedores, extracción, reportes diarios, firmas y documentos.
 - Revisar especialmente que `documents` no exponga archivos de otros usuarios y que la
   ruta/bucket de evaluaciones de riesgo sea coherente.
@@ -582,6 +599,31 @@ toquen producción necesitan confirmación explícita del operador.
   - `npm.cmd audit --omit=dev` → 0 vulnerabilidades. El audit completo conserva 6 altas y
     7 moderadas únicamente en tooling de desarrollo; no forman parte del bundle/runtime y se
     mantienen visibles para el lote de calidad, sin usar `npm audit fix --force`.
+
+### T-022 — Automatizar el gate de calidad en GitHub Actions
+
+- **Prioridad:** P0 · **Estado:** en-progreso · **Depende de:** T-002
+- Ejecutar CI en `push` a `main`, pull requests y disparo manual con Node 22 y JDK 21.
+- Instalar dependencias con lockfiles, compilar frontend/Functions y ejecutar typecheck, lint,
+  provider guard, contratos del workflow, suite Firebase y E2E contra emuladores.
+- Fijar acciones oficiales a revisiones inmutables, limitar `GITHUB_TOKEN` a lectura y no incluir
+  secretos, credenciales productivas, despliegues ni mutaciones remotas.
+- **Pruebas:** contrato Vitest del YAML, comandos locales equivalentes y primera ejecución real de
+  GitHub Actions después de publicar el workflow.
+- **Aceptación:** los jobs `Quality and contracts` y `Firebase emulators and E2E` pasan en GitHub;
+  el workflow no puede desplegar y queda disponible como check requerido para proteger `main`.
+- **Evidencia local 2026-08-28:**
+  - Contrato del workflow → 3/3; provider guard → 3/3; typecheck y build de Functions/frontend
+    → aprobados; ESLint → 0 errores y 7 warnings preexistentes de Fast Refresh.
+  - Firebase Auth/Firestore/Storage/Functions con Node 22.23.2 y JDK 21 → 16 archivos, 65/65
+    pruebas; Playwright contra emuladores → 8/8 recorridos E2E.
+  - El primer E2E detectó cuatro selectores ambiguos tras mostrar el proyecto también en el panel
+    de reportes; se reemplazaron por aserciones semánticas sobre el `combobox` y la repetición
+    completa pasó.
+  - La revisión de seguridad confirma acciones oficiales fijadas a SHA, token de solo lectura,
+    `persist-credentials: false`, proyecto demo y ausencia de secretos o comandos de despliegue.
+  - T-022 permanece en `en-progreso` hasta publicar el workflow y verificar ambos jobs en GitHub;
+    ninguna prueba de carga aplica porque este cambio no añade rutas ni lógica de runtime.
 
 ## Fase 7 — Release controlado
 
