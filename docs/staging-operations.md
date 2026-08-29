@@ -6,7 +6,8 @@ Fecha: 2026-08-29
 
 La preparacion local esta completa. El proyecto remoto `jobsitejedi-staging` y su aplicacion Web
 fueron creados el 2026-08-29. Staging usa Blaze, Firestore `eur3`, Storage privado en
-`europe-west1` y autenticacion por email/contrasena. Este runbook no autoriza produccion.
+`europe-west1`, autenticacion por email/contrasena y nueve Functions activas. Las reglas e indices
+versionados estan desplegados. Este runbook no autoriza produccion.
 
 | Entorno | Firebase project ID | Uso |
 | --- | --- | --- |
@@ -79,6 +80,14 @@ debe conservar 0 vulnerabilidades de runtime y no puede imprimir valores.
 
 No se usaran datos reales. Los fixtures sinteticos de staging pueden borrarse y recrearse.
 
+El repositorio de imagenes de Functions conserva siete dias y elimina automaticamente artefactos
+anteriores para contener costos. Esta politica no elimina Functions activas ni archivos de usuarios.
+
+El proyecto Vercel productivo conserva variables Firebase de produccion tanto para `Production`
+como para `Preview`; no debe reutilizarse sin aislamiento. La ruta recomendada es un proyecto
+Vercel Hobby separado, `jobsitejedi-staging`, con `npm run build:staging` y solo las seis variables
+Web SDK del proyecto Firebase de staging.
+
 ## Backup y rollback
 
 En el primer despliegue no existe informacion que respaldar. En despliegues posteriores:
@@ -102,8 +111,10 @@ Rollback:
 - [x] Guia de variables, emuladores, costos, backup, rollback y smoke.
 - [x] Proyecto remoto vinculado a Blaze con presupuesto y alertas configurados.
 - [x] Firestore `eur3`, Storage privado `europe-west1` y Email/Password provisionados.
+- [x] Reglas, indices y 9/9 Functions desplegados; cleanup de artefactos fijado a 7 dias.
+- [x] Smoke backend: codigo invalido seguro y callable protegida rechaza sin sesion con HTTP 401.
 - [ ] App Check configurado y validado sin bloquear clientes legitimos.
-- [ ] Gate y smoke ejecutados contra staging.
+- [ ] Frontend staging publicado; gate y smoke funcional completos ejecutados.
 - [ ] Checklist operativo revisado por el operador.
 
 T-017 permanece `en-progreso` hasta completar los tres puntos externos. T-018 no se abre con este

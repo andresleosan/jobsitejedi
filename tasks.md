@@ -666,7 +666,15 @@ toquen producción necesitan confirmación explícita del operador.
     runtime con 0 vulnerabilidades; lint conserva 0 errores y 7 warnings conocidos.
   - El ruleset activo `Protect main` exige PR, bloquea borrado y force-push, no tiene bypass y
     requiere `Quality and contracts` y `Firebase emulators and E2E`.
-  - T-017 conserva `en-progreso`; no hubo despliegue de codigo ni cambios en produccion.
+  - Firestore/Storage Rules e indices fueron desplegados solo a staging. Las 9/9 Functions Node 22
+    estan activas en `europe-west1`; el primer intento parcial 4/9 se completo idempotentemente y
+    se verifico por inventario remoto. Artifact Registry elimina imagenes antiguas a los 7 dias.
+  - Smoke remoto: `validateInvitationCode` responde de forma segura ante codigo invalido y
+    `ensureBuilderRole` sin sesion devuelve HTTP 401 `UNAUTHENTICATED`.
+  - El ruleset Storage se limpio de una funcion no usada, se revalido Firebase 67/67 y compilo
+    remotamente sin warnings antes de publicarse. Quedan Google Auth, frontend staging, App Check y
+    smoke funcional; el proyecto Vercel productivo no fue modificado.
+  - T-017 conserva `en-progreso`; produccion permanece intacta.
 
 ### T-018 — Gate de producción
 

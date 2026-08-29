@@ -40,12 +40,6 @@ service firebase.storage {
       );
     }
 
-    function isValidPdfUpload() {
-      return request.resource.size > 0
-        && request.resource.size <= 10 * 1024 * 1024
-        && request.resource.contentType == "application/pdf";
-    }
-
     function isValidSpreadsheetUpload() {
       return request.resource.size > 0
         && request.resource.size <= 5 * 1024 * 1024
