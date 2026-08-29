@@ -47,7 +47,8 @@ toquen producción necesitan confirmación explícita del operador.
 - T-009, T-010, T-011, T-012, T-013, T-014, T-015, T-016 y T-019 permanecen en `revisión` hasta
   su cierre humano; no se infiere aprobación solo por tener pruebas.
 - T-017 y T-018 siguen pendientes: staging y el gate de producción no se consideran completados.
-- WIP=1: T-022 es la única tarea en `en-progreso`; no se abren nuevas features durante este gate.
+- WIP=0: T-022 completó el gate y pasa a `revisión`; no se abre una tarea nueva hasta su cierre
+  humano y la selección explícita del siguiente corte.
 
 ## Fase 0 — Decisión y línea base
 
@@ -602,7 +603,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-022 — Automatizar el gate de calidad en GitHub Actions
 
-- **Prioridad:** P0 · **Estado:** en-progreso · **Depende de:** T-002
+- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-002
 - Ejecutar CI en `push` a `main`, pull requests y disparo manual con Node 22 y JDK 21.
 - Instalar dependencias con lockfiles, compilar frontend/Functions y ejecutar typecheck, lint,
   provider guard, contratos del workflow, suite Firebase y E2E contra emuladores.
@@ -628,8 +629,13 @@ toquen producción necesitan confirmación explícita del operador.
   - La instalación limpia también reveló concurrencia accidental entre seis specs: el runner quedó
     limitado a dos workers, las aserciones Firebase usan un margen acotado de 15 segundos y reporting
     filtra su propio proyecto. Sin reintentos, la suite completa volvió a pasar 8/8.
-  - T-022 permanece en `en-progreso` hasta publicar el workflow y verificar ambos jobs en GitHub;
-    ninguna prueba de carga aplica porque este cambio no añade rutas ni lógica de runtime.
+  - Ejecución remota final [`CI #2`](https://github.com/andresleosan/jobsitejedi/actions/runs/33232359171):
+    `Quality and contracts` y `Firebase emulators and E2E` terminaron en `success`.
+  - GitHub reportó el estado Vercel en `success`; el smoke productivo de `/auth` respondió HTTP 200,
+    renderizó email/contraseña y Google, y no produjo errores de consola.
+  - T-022 pasa a `revisión`; ninguna prueba de carga aplica porque este cambio no añade rutas ni
+    lógica de runtime. Falta el cierre humano y configurar el check como requerido al proteger
+    `main` si el operador decide habilitar branch protection.
 
 ## Fase 7 — Release controlado
 
