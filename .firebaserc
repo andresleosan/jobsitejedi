@@ -1,7 +1,9 @@
 {
   "projects": {
-    "default": "demo-jobsite-jedi",
+    "default": "jobsitejedi",
     "staging": "jobsitejedi-staging",
     "production": "jobsitejedi"
-  }
+  },
+  "targets": {},
+  "etags": {}
 }

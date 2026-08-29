@@ -242,6 +242,7 @@ type RateLimitOperation =
   | "ensureBuilderRole"
   | "setUserRole"
   | "createManagerInvitation"
+  | "validateInvitationCode"
   | "consumeInvitation"
   | "extractJobsFromExcel"
   | "submitInvoice"
@@ -251,6 +252,7 @@ const RATE_LIMITS: Record<RateLimitOperation, { maxRequests: number; windowMs: n
   ensureBuilderRole: { maxRequests: 5, windowMs: 60 * 60 * 1000 },
   setUserRole: { maxRequests: 30, windowMs: 60 * 1000 },
   createManagerInvitation: { maxRequests: 10, windowMs: 60 * 1000 },
+  validateInvitationCode: { maxRequests: 30, windowMs: 60 * 1000 },
   consumeInvitation: { maxRequests: 5, windowMs: 15 * 60 * 1000 },
   extractJobsFromExcel: { maxRequests: 5, windowMs: 60 * 60 * 1000 },
   submitInvoice: { maxRequests: 10, windowMs: 10 * 60 * 1000 },
@@ -262,13 +264,13 @@ const getRateLimitReference = (operation: RateLimitOperation, userId: string) =>
     .collection("functionRateLimits")
     .doc(createHash("sha256").update(`${operation}:${userId}`).digest("hex"));
 
-const enforceUserRateLimit = async (
-  userId: string,
+const enforceRateLimit = async (
+  subjectId: string,
   operation: RateLimitOperation,
 ): Promise<void> => {
   const policy = RATE_LIMITS[operation];
   const now = Date.now();
-  const reference = getRateLimitReference(operation, userId);
+  const reference = getRateLimitReference(operation, subjectId);
 
   await getFirestore().runTransaction(async (transaction) => {
     const snapshot = await transaction.get(reference);
@@ -362,7 +364,7 @@ export const ensureBuilderRole = onCall(async (request) => {
     throw new HttpsError("invalid-argument", "Only the builder role can be self-assigned");
   }
 
-  await enforceUserRateLimit(request.auth.uid, "ensureBuilderRole");
+  await enforceRateLimit(request.auth.uid, "ensureBuilderRole");
 
   const auth = getAuth();
   const user = await getUserWithRetry(request.auth.uid);
@@ -390,7 +392,7 @@ export const setUserRole = onCall(async (request) => {
   }
 
   const { userId, role } = getRolePayload(request.data);
-  await enforceUserRateLimit(request.auth.uid, "setUserRole");
+  await enforceRateLimit(request.auth.uid, "setUserRole");
   const auth = getAuth();
   const user = await getUserWithRetry(userId);
 
@@ -411,7 +413,7 @@ export const createManagerInvitation = onCall(async (request) => {
     throw new HttpsError("invalid-argument", "A valid invitation role is required");
   }
 
-  await enforceUserRateLimit(request.auth.uid, "createManagerInvitation");
+  await enforceRateLimit(request.auth.uid, "createManagerInvitation");
 
   const code = createInvitationCode();
   const expiresAt = Timestamp.fromMillis(Date.now() + INVITATION_TTL_MS);
@@ -429,31 +431,39 @@ export const createManagerInvitation = onCall(async (request) => {
   return { code, expiresAt: expiresAt.toDate().toISOString() };
 });
 
-export const validateInvitationCode = onCall(async (request) => {
-  const code = normalizeInvitationCode(isRecord(request.data) ? request.data.code : request.data);
-  if (!code) return invalidInvitation();
+export const validateInvitationCode = onCall(
+  { timeoutSeconds: 10, memory: "256MiB", maxInstances: 2 },
+  async (request) => {
+    // This endpoint must remain public so a new user can validate an invitation
+    // before authenticating. A global quota bounds unauthenticated Firestore
+    // lookups until App Check enforcement is enabled in production.
+    await enforceRateLimit("public", "validateInvitationCode");
 
-  const snapshot = await getFirestore()
-    .collection("invitations")
-    .where("codeHash", "==", hashInvitationCode(code))
-    .limit(1)
-    .get();
-  if (snapshot.empty) return invalidInvitation();
+    const code = normalizeInvitationCode(isRecord(request.data) ? request.data.code : request.data);
+    if (!code) return invalidInvitation();
 
-  const invitation = snapshot.docs[0];
-  const data = invitation.data();
-  const expiresAt = data.expiresAt instanceof Timestamp ? data.expiresAt.toMillis() : 0;
-  if (!isAppRole(data.role) || !isInvitationStatus(data.status) || data.status !== "pending" || expiresAt <= Date.now()) {
-    return invalidInvitation();
-  }
+    const snapshot = await getFirestore()
+      .collection("invitations")
+      .where("codeHash", "==", hashInvitationCode(code))
+      .limit(1)
+      .get();
+    if (snapshot.empty) return invalidInvitation();
 
-  return {
-    valid: true,
-    role: data.role,
-    invitationId: invitation.id,
-    errorMessage: null,
-  };
-});
+    const invitation = snapshot.docs[0];
+    const data = invitation.data();
+    const expiresAt = data.expiresAt instanceof Timestamp ? data.expiresAt.toMillis() : 0;
+    if (!isAppRole(data.role) || !isInvitationStatus(data.status) || data.status !== "pending" || expiresAt <= Date.now()) {
+      return invalidInvitation();
+    }
+
+    return {
+      valid: true,
+      role: data.role,
+      invitationId: invitation.id,
+      errorMessage: null,
+    };
+  },
+);
 
 export const consumeInvitation = onCall(async (request) => {
   if (!request.auth) {
@@ -467,7 +477,7 @@ export const consumeInvitation = onCall(async (request) => {
   const firestore = getFirestore();
   const userId = request.auth.uid;
   const invitationRef = firestore.collection("invitations").doc(request.data.invitationId.trim());
-  await enforceUserRateLimit(userId, "consumeInvitation");
+  await enforceRateLimit(userId, "consumeInvitation");
   const user = await getUserWithRetry(userId);
   const currentRole = user.customClaims?.role;
   let alreadyConsumed = false;
@@ -520,7 +530,7 @@ export const submitInvoice = onCall(
     }
 
     const userId = request.auth.uid;
-    await enforceUserRateLimit(userId, "submitInvoice");
+    await enforceRateLimit(userId, "submitInvoice");
     const uploadedByName = typeof request.auth.token.name === "string"
       ? request.auth.token.name
       : null;
@@ -619,7 +629,7 @@ export const extractJobsFromExcel = onCall(
     }
 
     const managerId = request.auth.uid;
-    await enforceUserRateLimit(managerId, "extractJobsFromExcel");
+    await enforceRateLimit(managerId, "extractJobsFromExcel");
     const payload = getJobImportPayload(request.data, managerId);
     const firestore = getFirestore();
     const projectSnapshot = await firestore.collection("projects").doc(payload.projectId).get();
@@ -786,7 +796,7 @@ export const reviewInvoice = onCall(
       throw new HttpsError("permission-denied", "Manager role is required");
     }
     const managerId = request.auth.uid;
-    await enforceUserRateLimit(managerId, "reviewInvoice");
+    await enforceRateLimit(managerId, "reviewInvoice");
     const payload = getReviewPayload(request.data);
     const invoiceRef = getFirestore().collection("invoices").doc(payload.invoiceId);
     const status = await getFirestore().runTransaction(async (transaction) => {

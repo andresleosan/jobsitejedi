@@ -47,9 +47,11 @@ toquen producción necesitan confirmación explícita del operador.
 - El operador aprobó explícitamente T-005, T-009, T-010, T-011, T-012, T-013, T-014, T-015,
   T-016, T-019 y T-022 el 2026-08-29, incluyendo el cierre de T-013 por aislamiento y la
   aceptación temporal del riesgo de tooling documentado.
-- T-017 pasa a `en-progreso` para preparar un staging aislado. T-018 sigue pendiente y no existe
-  autorización de producción.
-- WIP=1: T-017 es la única tarea activa.
+- El operador reemplazó la estrategia de dos proyectos el 2026-08-29: consolidar el backend
+  validado en `jobsitejedi` y retirar `jobsitejedi-staging` solo después de una verificación segura.
+- T-017 queda `bloqueada` por cambio de estrategia; T-018 pasa a `en-progreso` y concentra el
+  despliegue productivo, la observación y el gate destructivo final.
+- WIP=1: T-018 es la única tarea activa.
 
 ## Fase 0 — Decisión y línea base
 
@@ -642,7 +644,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-017 — Documentar operación y preparar staging
 
-- **Prioridad:** P1 · **Estado:** en-progreso · **Depende de:** T-013, T-015, T-016
+- **Prioridad:** P1 · **Estado:** bloqueada · **Depende de:** T-013, T-015, T-016
 - Crear guía de variables, emuladores, despliegue, backup, rollback, alertas de costo y
   smoke tests.
 - Revisar `.env` histórico y rotar cualquier credencial que haya sido versionada.
@@ -677,15 +679,52 @@ toquen producción necesitan confirmación explícita del operador.
   - Por instruccion del operador, la habilitacion de Google OAuth y la transferencia de la
     configuracion Web SDK a un proyecto Vercel aislado quedan pendientes de autorizacion explicita
     el 2026-08-30. Hasta entonces tampoco se ejecutan App Check ni el smoke funcional final.
-  - T-017 conserva `en-progreso`; produccion permanece intacta.
+  - El operador sustituyo este enfoque el 2026-08-29: no se completara un frontend separado ni se
+    incorporaran usuarios o datos en staging. La consolidacion y retirada segura pasan a T-018.
 
 ### T-018 — Gate de producción
 
-- **Prioridad:** P0 · **Estado:** pendiente · **Depende de:** T-017
+- **Prioridad:** P0 · **Estado:** en-progreso · **Depende de:** T-013, T-015, T-016
 - Verificar seguridad sin hallazgos críticos, tests aprobados, E2E final, rollback y
   backup cuando aplique.
 - Requiere confirmación explícita del operador antes de cualquier despliegue o migración.
-- **Aceptación:** solo entonces puede pasar a `desplegada`.
+- Consolidar reglas, índices, Storage y nueve Functions en `jobsitejedi`; conservar sus usuarios
+  y configuración Auth, sin importar fixtures vacíos desde staging.
+- Observar producción durante al menos siete días y eliminar `jobsitejedi-staging` solo tras un
+  inventario final vacío, smoke limpio y confirmación destructiva en el momento de borrado.
+- **Aceptación:** producción queda verificada y recuperable; staging solo se elimina después del
+  periodo de observación y del gate destructivo final.
+- **Avance 2026-08-29:**
+  - Inventario oficial: staging tiene 0 usuarios, 0 colecciones Firestore y 0 archivos Storage;
+    producción conserva 3 usuarios, Firestore vacío y Storage sin habilitar.
+  - Ambos Firestore usan `eur3`, no hay índices compuestos y staging tiene 9/9 Functions Node 22
+    activas en `europe-west1`; producción aún no tiene Functions listables.
+  - Gates locales: audit runtime 0 vulnerabilidades; contratos 3/3; provider guard 3/3;
+    typecheck y builds aprobados; Firebase 16 archivos/67 pruebas y E2E 8/8 aprobados.
+  - Seguridad detectó que `validateInvitationCode` era pública sin límite de abuso. Se añadió
+    cuota global, `maxInstances: 2`, timeout acotado y prueba de rechazo en la solicitud 31.
+  - Segunda vuelta tras la corrección: build de Functions, typecheck y lint aprobados; Firebase
+    16 archivos/68 pruebas y E2E 8/8 aprobados. Treinta validaciones consecutivas tardaron
+    aproximadamente 33-52 ms por llamada caliente en emulador y la solicitud 31 fue rechazada.
+  - El plan de despliegue, rollback, costo y retirada vive en
+    `docs/firebase-consolidation-operations.md`. El gate posterior a la corrección quedó aprobado;
+    el operador autorizó Blaze, la misma facturación de staging, presupuesto USD 5 y bucket en
+    `europe-west1`.
+  - Blaze quedó activo y el presupuesto productivo se creó por COP 16.014 (USD 5 a la TRM vigente),
+    con alertas al 50 %, 90 % y 100 %. El bucket regional permanente
+    `jobsitejedi.firebasestorage.app` fue verificado en `europe-west1`.
+  - Firestore Rules, sus índices y Storage Rules se publicaron explícitamente a `jobsitejedi`.
+    El inventario posterior confirmó 9/9 Functions Gen 2 `ACTIVE`, Node 22, en `europe-west1`;
+    `ENABLE_PROJECT_CLEANUP` estuvo ausente y Auth conservó sus 3 usuarios.
+  - Smoke remoto sin fixtures: invitaciones rechazó protocolo inválido con HTTP 400 y roles rechazó
+    falta de sesión con HTTP 401. La SPA productiva `/auth` cargó correctamente. Los eventos graves
+    revisados fueron el smoke esperado y la carrera transitoria del primer alta, resuelta por un
+    reintento acotado.
+  - La observación de siete días comenzó el 2026-08-29; staging no se elimina antes del
+    2026-09-05 12:02 America/Bogota y aún requiere inventario final y confirmación destructiva.
+  - Artifact Registry quedó sin limpieza automática: la retención de un día fue rechazada por
+    riesgo de eliminar material de rollback y necesita autorización destructiva separada. T-018
+    permanece `en-progreso` durante la observación; `jobsitejedi-staging` sigue intacto.
 
 ## Seguimiento de T-009 — 2026-08-27
 

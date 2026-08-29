@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { collection, doc, getDoc } from "firebase/firestore";
+import { createHash } from "node:crypto";
 
 const credentials = (label: string) => ({
   email: `functions-${label}-${Date.now()}@example.test`,
@@ -24,17 +25,27 @@ let createProject: typeof import("@/lib/firebase/repositories/projects").createP
 let uploadPrivateFile: typeof import("@/lib/firebase/storage").uploadPrivateFile;
 let buildPrivateStoragePath: typeof import("@/lib/firebase/storage").buildPrivateStoragePath;
 let firebaseDb: typeof import("@/lib/firebase/client").firebaseDb;
+let clearPublicInvitationRateLimit: () => Promise<void>;
 
 describe("Firebase invitation Functions", () => {
   beforeAll(async () => {
     vi.stubEnv("VITE_FIREBASE_USE_EMULATORS", "true");
-    const [{ getApps, initializeApp }, { getAuth }] = await Promise.all([
+    const [{ getApps, initializeApp }, { getAuth }, { getFirestore }] = await Promise.all([
       import("../../functions/node_modules/firebase-admin/lib/app/index.js"),
       import("../../functions/node_modules/firebase-admin/lib/auth/index.js"),
+      import("../../functions/node_modules/firebase-admin/lib/firestore/index.js"),
     ]);
     const adminApp = getApps().find((app) => app.name === "firebase-invitation-tests")
       ?? initializeApp({ projectId: "demo-jobsite-jedi" }, "firebase-invitation-tests");
     adminAuth = getAuth(adminApp);
+    const adminDb = getFirestore(adminApp);
+    const publicRateLimitId = createHash("sha256")
+      .update("validateInvitationCode:public")
+      .digest("hex");
+    clearPublicInvitationRateLimit = () => adminDb
+      .collection("functionRateLimits")
+      .doc(publicRateLimitId)
+      .delete();
     ({ registerBuilder, registerWithInvitation, signIn, signOut } = await import("@/lib/firebase/auth"));
     ({ invitationOperations, submitInvoiceRecord, reviewInvoiceRecord, extractJobsFromExcelRecord } =
       await import("@/lib/firebase/functions"));
@@ -142,6 +153,24 @@ describe("Firebase invitation Functions", () => {
     await expect(invitationOperations.createInvitation({ role: "builder" })).rejects.toMatchObject({
       code: "functions/resource-exhausted",
     });
+  }, 20_000);
+
+  test("rate-limits public invitation validation before unbounded Firestore lookups", async () => {
+    await signOut();
+    await clearPublicInvitationRateLimit();
+
+    try {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        await expect(
+          invitationOperations.validateInvitationCode("000000000000"),
+        ).resolves.toMatchObject({ valid: false });
+      }
+      await expect(
+        invitationOperations.validateInvitationCode("000000000000"),
+      ).rejects.toMatchObject({ code: "functions/resource-exhausted" });
+    } finally {
+      await clearPublicInvitationRateLimit();
+    }
   }, 20_000);
 
   test("imports spreadsheet jobs idempotently for managers", async () => {
