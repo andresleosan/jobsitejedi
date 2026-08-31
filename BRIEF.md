@@ -19,6 +19,10 @@ puedan liberarse sin regresiones.
   exclusivamente para `builder`.
 - `builder`: ejecuta trabajos, registra tiempo y materiales, aporta evidencia y consulta su obra.
 
+La invitación de nuevos miembros debe poder completarse sin depender de un proveedor de correo:
+el administrador comparte un código de un solo uso y la persona invitada confirma ese código,
+su correo exacto y una contraseña propia dentro de la aplicación.
+
 Principio de mínimo privilegio: un `admin` puede invitar managers y builders, un manager solo
 builders, y el alta de otro admin usa el runbook administrativo con autorización explícita. No
 existe autoasignación de roles desde el cliente y un `manager` nunca puede elevar privilegios.

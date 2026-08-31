@@ -40,5 +40,11 @@ export interface InvitationOperations {
     role: AppRole;
     expiresAt: Date;
   }>;
+  activateInvitation(input: {
+    code: string;
+    targetEmail: string;
+    password: string;
+    fullName: string;
+  }): Promise<void>;
   consumeInvitation(input: { code: string }): Promise<void>;
 }

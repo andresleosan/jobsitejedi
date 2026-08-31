@@ -24,7 +24,6 @@ interface AuthorizationGrantRecord {
 }
 
 let registerWithInvitation: typeof import("@/lib/firebase/auth").registerWithInvitation;
-let completeInvitationRegistration: typeof import("@/lib/firebase/auth").completeInvitationRegistration;
 let signIn: typeof import("@/lib/firebase/auth").signIn;
 let signOut: typeof import("@/lib/firebase/auth").signOut;
 let invitationOperations: typeof import("@/lib/firebase/functions").invitationOperations;
@@ -346,8 +345,7 @@ describe("Firebase invitation Functions", () => {
       });
       return reference.id;
     };
-    ({ completeInvitationRegistration, registerWithInvitation, signIn, signOut } =
-      await import("@/lib/firebase/auth"));
+    ({ registerWithInvitation, signIn, signOut } = await import("@/lib/firebase/auth"));
     ({ invitationOperations, submitInvoiceRecord, reviewInvoiceRecord, extractJobsFromExcelRecord } =
       await import("@/lib/firebase/functions"));
     ({ createProject } = await import("@/lib/firebase/repositories/projects"));
@@ -466,37 +464,29 @@ describe("Firebase invitation Functions", () => {
       status: "pending",
     });
 
-    const preparedTarget = await prepareInvitationTarget(builderCredentials, false);
-    expect(preparedTarget.uid).toBe(placeholder.uid);
-    expect(preparedTarget.enrollmentId).toBe(enrollmentId);
     await signOut();
     const registration = await registerWithInvitation({
       ...builderCredentials,
       invitationCode: invitation.code,
     });
-    expect(registration).toEqual({
-      status: "verification-required",
-      email: builderCredentials.email,
-    });
-    const pendingUser = firebaseAuth.currentUser;
-    if (!pendingUser) throw new Error("Expected the invited account to remain signed in");
-    expect(pendingUser.emailVerified).toBe(false);
-    expect(await readEmulatorRole(pendingUser.uid)).toBeUndefined();
-    expect((await readEmulatorClaims(pendingUser.uid)).invitationEnrollmentId).toBe(enrollmentId);
-    expect(await readInvitationByCode(invitation.code)).toMatchObject({
-      status: "pending",
-      claimAssignmentState: "not_started",
-      usedBy: null,
-    });
-
-    await setEmulatorEmailVerified(pendingUser.uid, true);
-    expect((await readEmulatorClaims(pendingUser.uid)).invitationEnrollmentId).toBe(enrollmentId);
-    const invitedBuilder = await completeInvitationRegistration({
-      invitationCode: invitation.code,
-    });
+    expect(registration.status).toBe("complete");
+    const invitedBuilder = registration.user;
+    expect(invitedBuilder.id).toBe(placeholder.uid);
     expect(invitedBuilder.role).toBe("builder");
+    expect(firebaseAuth.currentUser?.uid).toBe(placeholder.uid);
+    expect((await readEmulatorIdentityByEmail(builderCredentials.email)).emailVerified).toBe(true);
     expect(await readEmulatorRole(invitedBuilder.id)).toBe("builder");
     const assignedClaims = await readEmulatorClaims(invitedBuilder.id);
+    expect(assignedClaims.invitationEnrollmentId).toBeUndefined();
+    expect(assignedClaims.authorizationGrantId).toMatch(/^[a-f0-9]{32}$/);
+    expect(await readInvitationByCode(invitation.code)).toMatchObject({
+      status: "used",
+      claimAssignmentState: "completed",
+      usedBy: invitedBuilder.id,
+    });
+
+    await invitationOperations.consumeInvitation({ code: invitation.code });
+    expect(await readEmulatorRole(invitedBuilder.id)).toBe("builder");
     expect(assignedClaims).toEqual({
       role: "builder",
       authorizationGrantId: expect.stringMatching(/^[a-f0-9]{32}$/),

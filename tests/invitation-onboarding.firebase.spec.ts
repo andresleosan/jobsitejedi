@@ -5,72 +5,7 @@ import {
   provisionEmulatorUser,
 } from "../scripts/lib/firebase-auth-emulator.mjs";
 
-type EmulatorOobRequestType = "PASSWORD_RESET" | "VERIFY_EMAIL";
-
-interface EmulatorOobCode {
-  email?: string;
-  requestType?: string;
-  oobCode?: string;
-}
-
 const PENDING_INVITATION_STORAGE_KEY = "buildtrack.pendingInvitation";
-
-const listEmulatorOobCodes = async (): Promise<EmulatorOobCode[]> => {
-  const { emulatorHost, projectId } = assertAuthEmulatorOnly();
-  const response = await fetch(
-    `http://${emulatorHost}/emulator/v1/projects/${encodeURIComponent(projectId)}/oobCodes`,
-  );
-  if (!response.ok) {
-    throw new Error(`Unable to read Auth Emulator OOB codes: ${response.status}`);
-  }
-
-  const body = await response.json() as { oobCodes?: EmulatorOobCode[] };
-  return body.oobCodes ?? [];
-};
-
-const findLatestEmulatorOobCode = async (
-  email: string,
-  requestType: EmulatorOobRequestType,
-) => [...await listEmulatorOobCodes()].reverse().find((entry) => (
-  entry.email?.toLowerCase() === email.toLowerCase()
-  && entry.requestType === requestType
-  && typeof entry.oobCode === "string"
-));
-
-const readLatestEmulatorOobCode = async (
-  email: string,
-  requestType: EmulatorOobRequestType,
-): Promise<string> => {
-  await expect.poll(
-    async () => (await findLatestEmulatorOobCode(email, requestType))?.oobCode ?? null,
-    {
-      message: `Expected a ${requestType} OOB code for the invited emulator account`,
-      timeout: 10_000,
-    },
-  ).not.toBeNull();
-
-  const request = await findLatestEmulatorOobCode(email, requestType);
-  if (!request?.oobCode) throw new Error(`Missing ${requestType} Auth Emulator OOB code`);
-  return request.oobCode;
-};
-
-const postAuthEmulatorAction = async (
-  operation: "accounts:resetPassword" | "accounts:update",
-  body: Record<string, string>,
-) => {
-  const { emulatorHost } = assertAuthEmulatorOnly();
-  const response = await fetch(
-    `http://${emulatorHost}/identitytoolkit.googleapis.com/v1/${operation}?key=demo-api-key`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    },
-  );
-  if (!response.ok) {
-    throw new Error(`Auth Emulator ${operation} failed: ${response.status}`);
-  }
-};
 
 const getEmulatorAdminApp = async () => {
   const { projectId } = assertAuthEmulatorOnly();
@@ -96,12 +31,6 @@ const getEmulatorAdminAuth = async () => {
 const readAdminUserByEmail = async (email: string) =>
   (await getEmulatorAdminAuth()).getUserByEmail(email);
 
-const setAdminEmailVerified = async (email: string, emailVerified: boolean) => {
-  const auth = await getEmulatorAdminAuth();
-  const user = await auth.getUserByEmail(email);
-  await auth.updateUser(user.uid, { emailVerified });
-};
-
 const readAdminAuthorizationGrant = async (uid: string) => {
   assertFirestoreEmulatorOnly();
   const [{ getFirestore }, app] = await Promise.all([
@@ -112,7 +41,7 @@ const readAdminAuthorizationGrant = async (uid: string) => {
   return snapshot.exists ? snapshot.data() ?? null : null;
 };
 
-test("manager securely onboards an invited builder through reset and email verification", async ({ page }) => {
+test("manager securely onboards an invited builder without email delivery", async ({ page }) => {
   const onboardingStartedAt = Date.now();
   const suffix = `${onboardingStartedAt}-${Math.random().toString(36).slice(2, 8)}`;
   const managerEmail = `onboarding-manager-${suffix}@example.test`;
@@ -195,41 +124,19 @@ test("manager securely onboards an invited builder through reset and email verif
 
   const signupEmail = page.getByLabel("Email *", { exact: true });
   await signupEmail.fill(unrelatedEmail);
-  await page.getByRole("button", { name: "Send secure activation email", exact: true }).click();
-  await expect(page.getByText("Activation failed", { exact: true })).toBeVisible();
+  await page.getByLabel("Full Name *", { exact: true }).fill("Unrelated E2E User");
+  await page.getByLabel("Password *", { exact: true }).fill(builderPassword);
+  await page.getByRole("button", { name: "Create Account as Builder", exact: true }).click();
+  await expect(page.getByText("Sign up failed", { exact: true })).toBeVisible();
   await expect(page.getByText(
     "Invitation is invalid, expired, or does not match this email",
     { exact: true },
   )).toBeVisible();
-  expect(
-    (await listEmulatorOobCodes()).some((entry) => (
-      entry.email?.toLowerCase() === unrelatedEmail.toLowerCase()
-      && entry.requestType === "PASSWORD_RESET"
-    )),
-  ).toBe(false);
 
   await signupEmail.fill(builderEmail);
-  await page.getByRole("button", { name: "Send secure activation email", exact: true }).click();
-  await expect(page.getByText("Secure activation email sent", { exact: true })).toBeVisible();
-
-  const resetCode = await readLatestEmulatorOobCode(builderEmail, "PASSWORD_RESET");
-  await postAuthEmulatorAction("accounts:resetPassword", {
-    oobCode: resetCode,
-    newPassword: builderPassword,
-  });
-  // The Auth Emulator may treat password-reset completion as email control.
-  // Keep this fixture unverified so the browser exercises the explicit
-  // verification branch that production must also handle safely.
-  await setAdminEmailVerified(builderEmail, false);
-
   await page.getByLabel("Full Name *", { exact: true }).fill("Onboarding E2E Builder");
   await page.getByLabel("Password *", { exact: true }).fill(builderPassword);
-  await page.getByRole("button", { name: "Activate Account as Builder", exact: true }).click();
-  await expect(page.getByText("Check your inbox before we assign the role", { exact: true })).toBeVisible();
-
-  const verificationCode = await readLatestEmulatorOobCode(builderEmail, "VERIFY_EMAIL");
-  await postAuthEmulatorAction("accounts:update", { oobCode: verificationCode });
-  await page.getByRole("button", { name: "I verified my email", exact: true }).click();
+  await page.getByRole("button", { name: "Create Account as Builder", exact: true }).click();
   await expect(page).toHaveURL(/\/builders$/);
 
   await expect.poll(

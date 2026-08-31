@@ -38,9 +38,13 @@ email. El contrato local v4 elimina esa creación cliente y queda definido así:
   idempotencia de 256 bits permanece en el cliente y en Firestore solo queda su hash.
 - Repetir la misma solicitud recupera el mismo código y expiración; otra solicitud al mismo correo
   recibe `already-exists`. El lock y la invitación deben coincidir también en generación.
-- `requestInvitationActivation` valida código y correo antes de pedir a Firebase un password reset.
-  Su `continueUrl` es `/auth` fijo: no contiene correo ni código. El destinatario fija la contraseña,
-  inicia una sesión nueva y completa por separado la verificación del correo si sigue pendiente.
+- `activateInvitation` valida en servidor el código de un solo uso, el correo exacto y el marcador de
+  enrolamiento antes de fijar la contraseña y el nombre elegidos en el placeholder. Está limitada
+  por IP y por destino; no genera password reset, enlace OOB ni envío de correo.
+- `registerWithInvitation` activa la identidad, inicia una sesión nueva y llama a
+  `consumeInvitation({ code })`. El código compartido funciona como factor de posesión operativo;
+  por eso debe entregarse por un canal controlado y expira, aunque el flujo no dependa de un
+  proveedor de correo.
 - `consumeInvitation({ code })` relee Auth, exige cuenta activa, email verificado, sesión no revocada,
   UID/email/enrolamiento/generación exactos y máquina de estados recuperable. Al asignar preserva
   claims ajenos, elimina `invitationEnrollmentId`, crea un `authorizationGrantId` aleatorio y

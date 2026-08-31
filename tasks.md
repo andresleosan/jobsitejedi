@@ -1011,6 +1011,26 @@ T-030 y T-031 siguen como mejoras posteriores y no bloquean el release ya desple
 - **Aceptación:** la documentación coincide con Firebase/Vercel vigentes, no hay runbooks
   contradictorios y cada módulo conserva sus contratos y pruebas.
 
+### T-036 — Simplificar invitaciones y estabilizar ingreso sin correo
+
+- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-032, T-033, T-034
+- Sustituir el tramo de password reset/verificación por un alta directa con código QR, correo
+  exacto, nombre y contraseña elegida por la persona invitada.
+- Mantener la creación server-side del placeholder, el mínimo privilegio, la asignación de rol
+  solo al consumir la invitación y la idempotencia/rechazo de códigos antiguos.
+- Validar de forma server-side el payload, aplicar rate limit, no imprimir contraseñas ni tokens y
+  evitar que un código pueda activar otro correo.
+- **Pruebas:** login de `admin`, `manager` y `builder` en Auth Emulator; onboarding directo
+  manager → builder sin OOB/email; correo incorrecto, código usado/expirado, reintento seguro y
+  rechazo de roles privilegiados desde manager.
+- **Aceptación:** las tres cuentas QA llegan a su dashboard correcto; un manager puede entregar un
+  código y un builder puede elegir contraseña e ingresar sin que se genere ningún correo; el grant,
+  el consumo único y las reglas server-side permanecen intactos.
+- **Evidencia 2026-08-31:** `test:firebase:emulator` pasó 18 archivos/131 pruebas; la E2E de
+  invitación pasó 1/1 y la E2E focal de cuentas QA pasó 1/1 contra el emulador local; typecheck,
+  build de Functions, build de frontend, guardas de proveedor y contrato CI pasaron. Lint quedó
+  sin errores, con 7 warnings históricos de Fast Refresh.
+
 ## Seguimiento de T-009 — 2026-08-27
 
 - Se añadió rate limiting persistente por usuario y operación para los callables de roles,

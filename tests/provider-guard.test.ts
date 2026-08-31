@@ -211,6 +211,7 @@ describe("authorization surface guard", () => {
   test("keeps invitation consumption as the runtime role-assignment path", () => {
     const backend = readFileSync(resolve(process.cwd(), "functions/src/index.ts"), "utf8");
     const client = readFileSync(resolve(process.cwd(), "src/lib/firebase/auth.ts"), "utf8");
+    const functionsClient = readFileSync(resolve(process.cwd(), "src/lib/firebase/functions.ts"), "utf8");
     const authPage = readFileSync(resolve(process.cwd(), "src/pages/Auth.tsx"), "utf8");
     const roleOperation = readFileSync(
       resolve(process.cwd(), "scripts/assign-single-firebase-role.mjs"),
@@ -230,7 +231,11 @@ describe("authorization surface guard", () => {
     );
 
     expect(backend).toContain("export const consumeInvitation");
+    expect(backend).toContain("export const activateInvitation");
+    expect(backend).toContain("normalizeInvitationActivationPassword");
+    expect(backend).toContain("emailVerified: true");
     expect(client).toContain("export const registerWithInvitation");
+    expect(functionsClient).toContain("activateInvitationCallable");
     expect(backend).not.toContain("request.data.invitationId");
     expect(client).not.toContain("invitationId");
     expect(backend).toContain('.where("codeHash", "==", codeHash)');
@@ -246,9 +251,10 @@ describe("authorization surface guard", () => {
     expect(backend).toContain('collection("authorizationGrants")');
     expect(backend).toContain("transaction.create(authorizationGrantReference");
     expect(backend).toContain('claimAssignmentState: "not_started"');
-    expect(client).toContain("export const requestInvitationActivation");
-    expect(client).toContain("sendPasswordResetEmail");
-    expect(client).toContain("export const completeInvitationRegistration");
+    expect(client).toContain("activateInvitation");
+    expect(client).not.toContain("requestInvitationActivation");
+    expect(client).not.toContain("sendPasswordResetEmail");
+    expect(client).not.toContain("completeInvitationRegistration");
     expect(client).toContain("token.claims.authorizationGrantId");
     expect(authPage).toContain("validationSequenceRef");
     expect(authPage).toContain("validatedInvitationCode !== normalizedInvitationCode");
