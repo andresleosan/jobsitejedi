@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import BuilderDashboard from "@/components/dashboard/BuilderDashboard";
+import { roleHomePath } from "@/lib/firebase/types";
 
 const Builders = () => {
   const { user, isLoading } = useAuth();
@@ -14,7 +15,7 @@ const Builders = () => {
       navigate("/auth");
       return;
     }
-    if (user.role !== "builder") navigate("/managers");
+    if (user.role && user.role !== "builder") navigate(roleHomePath(user.role), { replace: true });
   }, [isLoading, navigate, user]);
 
   if (isLoading || !user || user.role !== "builder") {

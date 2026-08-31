@@ -32,6 +32,10 @@ Firebase que ya no apliquen.
 
 `pendiente` → `en-progreso` → `revisión` → `aprobada` → `desplegada`
 
+Estados auxiliares: `bloqueada` cuando existe un impedimento verificable que debe resolverse antes
+de continuar, y `supersedida` cuando otra tarea reemplazó explícitamente su estrategia. Ninguno de
+los dos estados cuenta como trabajo terminado o desplegado.
+
 Una tarea solo puede pasar a `revisión` después de ejecutar sus pruebas. Las tareas que
 toquen producción necesitan confirmación explícita del operador.
 
@@ -49,9 +53,14 @@ toquen producción necesitan confirmación explícita del operador.
   aceptación temporal del riesgo de tooling documentado.
 - El operador reemplazó la estrategia de dos proyectos el 2026-08-29: consolidar el backend
   validado en `jobsitejedi` y retirar `jobsitejedi-staging` solo después de una verificación segura.
-- T-017 queda `bloqueada` por cambio de estrategia; T-018 pasa a `en-progreso` y concentra el
-  despliegue productivo, la observación y el gate destructivo final.
-- WIP=1: T-018 es la única tarea activa.
+- T-017 queda `supersedida` por cambio de estrategia; T-018 concentra el despliegue productivo,
+  la observación y el gate destructivo final.
+- La auditoría del 2026-08-30 detectó un bypass crítico de autorización y defectos en asignación e
+  integridad. La remediación local T-023/T-024/T-025 está en `revisión`; T-018 continúa `bloqueada`
+  hasta aprobar T-023 a T-029 y T-032, y repetir el gate sobre el SHA exacto que eventualmente se proponga
+  desplegar.
+- WIP local verificado: T-023, T-024 y T-025. Ninguna autoriza despliegue, migración remota ni
+  modificación de usuarios productivos.
 
 ## Fase 0 — Decisión y línea base
 
@@ -644,7 +653,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-017 — Documentar operación y preparar staging
 
-- **Prioridad:** P1 · **Estado:** bloqueada · **Depende de:** T-013, T-015, T-016
+- **Prioridad:** P1 · **Estado:** supersedida · **Depende de:** T-013, T-015, T-016
 - Crear guía de variables, emuladores, despliegue, backup, rollback, alertas de costo y
   smoke tests.
 - Revisar `.env` histórico y rotar cualquier credencial que haya sido versionada.
@@ -684,7 +693,8 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-018 — Gate de producción
 
-- **Prioridad:** P0 · **Estado:** en-progreso · **Depende de:** T-013, T-015, T-016
+- **Prioridad:** P0 · **Estado:** bloqueada · **Depende de:** T-013, T-015, T-016, T-023, T-024,
+  T-025, T-026, T-027, T-028, T-029, T-032
 - Verificar seguridad sin hallazgos críticos, tests aprobados, E2E final, rollback y
   backup cuando aplique.
 - Requiere confirmación explícita del operador antes de cualquier despliegue o migración.
@@ -725,6 +735,182 @@ toquen producción necesitan confirmación explícita del operador.
   - Artifact Registry quedó sin limpieza automática: la retención de un día fue rechazada por
     riesgo de eliminar material de rollback y necesita autorización destructiva separada. T-018
     permanece `en-progreso` durante la observación; `jobsitejedi-staging` sigue intacto.
+
+## Fase 8 — Remediación priorizada de la auditoría 2026-08-30
+
+Orden obligatorio de resolución local actualizado por decisión del operador: T-032 → T-026 →
+T-027 → T-028 → T-029. T-023/T-024/T-025 conservan su evidencia previa, pero deben repetirse bajo
+la nueva matriz de tres roles antes de aprobarse. T-030 y T-031 pueden continuar después sin bloquear
+la contención inmediata. Al terminar T-029 se
+repite el gate local completo; cualquier despliegue productivo sigue requiriendo una autorización
+explícita, separada y posterior del operador.
+
+### T-023 — Cerrar autoprovisión de roles y preparar identidades QA
+
+- **Prioridad:** P0 crítica · **Estado:** revisión · **Depende de:** T-003, T-015, T-020
+- Retirar `ensureBuilderRole` del cliente y del backend desplegable; ninguna identidad autenticada
+  puede asignarse un rol por sí misma.
+- Mantener como únicas vías de autorización el consumo transaccional de una invitación válida y la
+  provisión administrativa explícita. Solo `admin` puede emitir invitaciones `admin`/`manager`;
+  `manager` solo puede invitar `builder`. Revocar sesiones al degradar o retirar roles sensibles.
+- Añadir una prueba negativa para usuario autenticado sin rol/invitación y conservar pruebas de
+  consumo único, reintento idempotente y prohibición de escalamiento por `manager`.
+- Crear un seeder exclusivo de Firebase Auth Emulator para `admin@admin.com` (`admin`),
+  `manager@manager.com` (`manager`) y `builder@builder.com` (`builder`). La contraseña se
+  recibe por variable de entorno, nunca se versiona ni se imprime.
+- Documentar un runbook para auditar claims existentes; ejecutarlo contra producción queda fuera
+  de alcance hasta una autorización explícita.
+- **Aceptación:** una cuenta creada sin invitación permanece sin claim y las Rules le deniegan los
+  recursos protegidos; no existe callable cliente/backend de autoasignación; las invitaciones
+  siguen asignando el rol correcto una sola vez; el seeder rechaza cualquier host que no sea el
+  emulador y las pruebas focalizadas pasan.
+
+### T-024 — Implementar asignación manager → builder → proyecto → job
+
+- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-023, T-005
+- Definir el contrato de asignación operativo: admin o manager seleccionan un builder provisionado;
+  el proyecto guarda su UID asignado y cada job hereda el mismo `builderId`.
+- Añadir un listado mínimo y autorizado de builders para el selector del formulario; no aceptar
+  UIDs arbitrarios provenientes del frontend.
+- Asegurar que un builder solo lista proyectos y jobs asignados, mientras admin/manager conservan
+  administración y revisión.
+- Documentar compatibilidad y rollback del campo de asignación antes de cualquier migración. No se
+  aplica ninguna migración remota dentro de esta tarea.
+- **Aceptación:** integración y E2E crean el proyecto desde la UI como manager, lo asignan al builder
+  QA y comprueban que este lo ve; un segundo builder no lo ve y un UID inválido es rechazado.
+
+### T-025 — Endurecer integridad operativa y jornada activa única
+
+- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-004, T-006 y contrato de T-024
+- Aplicar esquemas, tipos, enums, límites, referencias project/job, campos inmutables y timestamps
+  canónicos en Rules para `jobs`, `jobCompletions`, `jobPhotos`, `timeTracking`,
+  `projectSwitches` y firmas de riesgo.
+- Reservar creación/borrado de jobs al manager; permitir al builder solo transiciones y evidencias
+  correspondientes a trabajos asignados, sin reescribir datos ya revisados.
+- Sustituir el patrón consulta→creación de jornada por un ID/lock determinista y transacción que
+  garantice una sola jornada activa por builder.
+- **Aceptación:** pruebas negativas impiden falsificar/borrar registros ajenos o canónicos y una
+  carrera con solicitudes concurrentes produce exactamente una jornada activa.
+
+#### Evidencia local T-023/T-024/T-025 — 2026-08-30
+
+- Base Git inspeccionada: `107d021620f0`; la evidencia corresponde al working tree local actual, no
+  a un SHA desplegable. T-028 conserva el pendiente de CI sobre el commit exacto.
+- Autorización: se retiraron todas las superficies runtime de autoasignación; `consumeInvitation`
+  queda como única ruta de alta por invitación. `test:provider-guard` pasó `8/8`.
+- QA Auth Emulator (evidencia histórica previa a T-032): se crearon, autenticaron y verificaron `admin@admin.com` sin rol,
+  `manager@manager.com` con `manager` y `builder@builder.com` con `builder`; la contraseña entró por
+  variable temporal, no se imprimió ni se persistió.
+- Asignación: callable manager-only, selector de builders provisionados, proyecto con
+  `builderId == ownerId` y jobs heredando la asignación. E2E validó manager → builder seleccionado y
+  denegación al segundo builder.
+- Integridad: proyectos no se crean/borran directamente desde cliente; jobs, fotos, firmas,
+  jornadas y cambios de proyecto tienen esquemas/transiciones/timestamps estrictos. Storage exige
+  job/asignación/estado, prohíbe overwrite y bloquea evidencia tras envío/revisión.
+- Gate Node `22.23.2`/JDK `21`: typecheck; lint `0` errores y `7` warnings conocidos; build; Functions
+  `3/3`; Storage unit `3/3`; OCR `3/3`; contrato CI `3/3`; Firebase Emulator `17/17` archivos y
+  `74/74` pruebas; Playwright Firebase `9/9`; `git diff --check` limpio.
+- Web Vitals local, cinco muestras por perfil: desktop p75 LCP `196 ms`, INP `16 ms`, CLS `0`;
+  móvil LCP `132 ms`, INP `16 ms`, CLS `0`.
+- Auditoría runtime: cliente `0` vulnerabilidades; Functions sin altas/críticas y con `7` moderadas
+  transitivas. No se aplicó el downgrade destructivo sugerido por `npm audit fix --force`.
+- Pendiente previo a cualquier Rules/deploy: dry-run y backfill autorizados de proyectos legacy y
+  reconciliación de jornadas activas sin marcador. No se ejecutó migración ni operación remota.
+
+### T-032 — Incorporar rol admin y bloquear elevación de privilegios
+
+- **Prioridad:** P0 crítica · **Estado:** revisión · **Depende de:** T-003, T-023, T-024, T-025
+- Ampliar el contrato de claims a `admin | manager | builder`; `admin` hereda las capacidades
+  operativas de manager, pero la elevación a `admin` o `manager` queda reservada a admin.
+- Actualizar cliente, rutas, repositorios, callables, Firestore Rules, Storage Rules, seeder y
+  documentación sin introducir una segunda fuente de roles ni una callable directa de promoción.
+- Probar admin permitido en operaciones manager, manager permitido solo al invitar builder,
+  manager rechazado al invitar manager/admin, builder rechazado y usuario sin rol rechazado.
+- Preparar el alta de `admin@admin.com` con claim `admin` exclusivamente en Auth Emulator. Cualquier
+  alta o cambio de claim remoto requiere una autorización productiva separada y revocación de sesión.
+- **Aceptación:** las tres identidades QA inician sesión y llegan al dashboard correcto; las reglas y
+  Functions aplican mínimo privilegio; no existe escalamiento desde manager/builder; suites locales
+  completas aprobadas y ADR/contrato/rollback coherentes.
+- **Evidencia local 2026-08-30:** seeder verificó `admin@admin.com → admin`,
+  `manager@manager.com → manager` y `builder@builder.com → builder` solo en Auth Emulator. Firebase
+  pasó 17 archivos/81 pruebas y E2E 11/11; manager no puede emitir invitaciones privilegiadas.
+
+### T-026 — Validar contenido de facturas y cerrar rutas Storage amplias
+
+- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-023, T-025
+- Detectar el tipo por bytes, validar/parsing de PDF, decodificar imágenes y generar siempre nombre
+  y extensión seguros en servidor. Los archivos no verificados permanecen en cuarentena.
+- Definir una estrategia de escaneo antimalware y costo antes de integrar un servicio de pago.
+- Restringir `/jobs/{jobId}/manager/**` al manager y al builder realmente asignado al job.
+- **Aceptación:** MIME/extensión forjados y payload no válido son rechazados; el manager solo puede
+  descargar archivos aprobados y un builder no puede leer evidencias de otro.
+- **Evidencia local 2026-08-30:** 7/7 tests de Functions, promoción desde cuarentena con nombre/MIME
+  canónicos, rechazo de bytes forjados y contenido PDF activo, límite exacto de 10 MiB y E2E de
+  envío/aprobación aprobados. Estrategia antimalware y costo documentados sin contratar servicios.
+
+### T-027 — Corregir Vite vulnerable y endurecer desarrollo local
+
+- **Prioridad:** P0 local · **Estado:** revisión · **Depende de:** T-002
+- Actualizar Vite a una versión corregida compatible y enlazar el servidor de desarrollo a
+  `127.0.0.1` por defecto; cualquier exposición LAN debe ser una opción explícita y documentada.
+- Revisar si alguna instancia vulnerable estuvo accesible desde una red no confiable; si la hubo,
+  escalar al operador la rotación de credenciales potencialmente expuestas.
+- **Aceptación:** auditoría sin el advisory conocido, build/typecheck/lint aprobados y prueba de que
+  el servidor por defecto no escucha en interfaces externas.
+- **Evidencia local 2026-08-30:** Vite `8.2.2`, plugin React SWC `4.3.3`, binding exclusivo a
+  `127.0.0.1`, contrato 4/4 y build aprobado. Auditoría runtime del cliente 0 vulnerabilidades; no se
+  usó `--force`.
+
+### T-028 — Hacer reproducible y exigente el gate de QA/CI
+
+- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-023, T-024, T-025, T-026, T-027
+- Ejecutar CI sobre el SHA exacto; incluir unit tests de Functions, OCR, Firebase Emulator y E2E.
+- Hacer fallar E2E ante `pageerror` o `console.error` no permitido, centralizar fixtures y reparar la
+  configuración Playwright principal.
+- Cubrir sesión expirada/revocada, pruebas concurrentes reales, límites exactos de Storage y el
+  recorrido manager→builder desde UI. Publicar traces/screenshots/reportes como artefactos de CI.
+- **Aceptación:** gate local Node 22/JDK 21 y CI remoto del mismo SHA pasan con evidencia y conteos
+  consistentes. La ejecución remota no autoriza despliegue.
+- **Avance local 2026-08-30:** CI ahora ejecuta unit tests de Functions, OCR, límites Storage,
+  Firebase y E2E; verifica `GITHUB_SHA`, fija `upload-artifact` a SHA inmutable y conserva reportes.
+  Playwright tiene cero reintentos, `forbidOnly`, un worker en CI y fixture central que falla ante
+  `pageerror`/`console.error`. Gate final: Firebase 81/81, E2E 11/11, tipos/builds/Functions/OCR/
+  Storage/contratos aprobados. Falta publicar un SHA y ejecutar CI remoto sobre ese mismo SHA.
+
+### T-029 — Incorporar App Check y controles de abuso
+
+- **Prioridad:** P1 seguridad · **Estado:** en-progreso · **Depende de:** T-023, T-028
+- Activar App Check primero en observación, medir clientes legítimos y luego preparar enforcement
+  con pruebas de token válido, ausente e inválido.
+- Reemplazar la cuota global `public` de invitaciones por partición resistente a abuso y conservar
+  un techo global de emergencia; añadir límites/lifecycle para cargas Storage.
+- **Aceptación:** el onboarding de un usuario no puede bloquear a todos, los clientes legítimos no
+  se rompen durante observación y el paso a enforcement tiene rollback documentado.
+- **Avance local 2026-08-30:** cliente preparado con reCAPTCHA Enterprise y Functions parametrizadas
+  con `ENFORCE_APP_CHECK=false`; cuota pública separada en 30/min por IP anonimizada y techo global
+  300/min. El límite exacto de cuarentena y el rollback están documentados en
+  `docs/app-check-rollout.md`. Registro remoto, observación y enforcement siguen sin ejecutarse.
+
+### T-030 — Acotar lecturas, listeners y presupuesto de rendimiento
+
+- **Prioridad:** P2 · **Estado:** pendiente · **Depende de:** T-024, T-025
+- Añadir paginación/límites a listados, eliminar listeners N+1 de inventario y fijar presupuestos de
+  lecturas, bundle y Web Vitals para flujos representativos.
+- Medir con datos aislados representativos y después con RUM/producción solo cuando exista
+  autorización y tratamiento de privacidad aprobado.
+- **Aceptación:** consultas críticas tienen límite/cursor, no existe N+1 por solicitud y el informe
+  registra p75, volumen de datos, costo estimado y regresiones del bundle.
+
+### T-031 — Cerrar deuda documental y modularizar sin microservicios
+
+- **Prioridad:** P2 · **Estado:** pendiente · **Depende de:** T-028
+- Sustituir README/AUDITORIA/MEJORAS obsoletos de Lovable/Supabase y consolidar un manifiesto por
+  release con SHA, runtimes, comandos, conteos y decisión de rollback.
+- Mantener monolito modular; separar `functions/src/index.ts` e `inventory.ts` por dominio y activar
+  strictness TypeScript de forma progresiva con lotes verificables.
+- Actualizar Graphify después de retirar nodos obsoletos para que vuelva a ser una fuente útil.
+- **Aceptación:** la documentación coincide con Firebase/Vercel vigentes, no hay runbooks
+  contradictorios y cada módulo conserva sus contratos y pruebas.
 
 ## Seguimiento de T-009 — 2026-08-27
 

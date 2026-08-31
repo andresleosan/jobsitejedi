@@ -5,6 +5,7 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Clock, CheckCircle2, AlertCircle, PlayCircle, Users, Package, Download, XCircle, Edit } from "lucide-react";
+import { isManagementRole, type AppRole } from "@/lib/firebase/types";
 
 interface ProfileSummary {
   full_name?: string | null;
@@ -65,7 +66,7 @@ interface JobCardJob {
 
 interface JobCardProps {
   job: JobCardJob;
-  userRole: "manager" | "builder" | null;
+  userRole: AppRole | null;
   activeWorkers: ActiveWorker[];
   photoUrls: string[];
   managerFeedbackPhotoUrls: string[];
@@ -153,7 +154,7 @@ export const JobCard = ({
             </div>
           </div>
           <div className="flex items-center gap-2 pt-1">
-            {userRole === "manager" && (
+            {isManagementRole(userRole) && (
               <Button
                 variant="outline"
                 size="icon"
@@ -408,7 +409,7 @@ export const JobCard = ({
                 Resubmit Job
               </Button>
             )}
-            {userRole === "manager" && (job.status === "pending" || job.status === "waiting_review") && (
+            {isManagementRole(userRole) && (job.status === "pending" || job.status === "waiting_review") && (
               <>
                 <Button
                   variant="destructive"

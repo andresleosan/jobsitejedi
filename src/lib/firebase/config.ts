@@ -44,3 +44,5 @@ export const firebaseConfig = {
     ui: 4000,
   },
 } as const;
+
+export const firebaseAppCheckSiteKey = env.VITE_FIREBASE_APPCHECK_SITE_KEY?.trim() || null;

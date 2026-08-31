@@ -1,5 +1,16 @@
 # Operacion controlada de roles de Firebase Auth
 
+## Contrato vigente desde T-032 — 2026-08-30
+
+Los roles de aplicación son `admin`, `manager` y `builder`. `admin` hereda la operación de manager
+y es el único rol que puede invitar admins o managers; manager solo puede invitar builders. Este
+cambio no modifica retrospectivamente la evidencia de 2026-08-28 que aparece abajo.
+
+El operador solicitó que `admin@admin.com` tenga claim `admin`, pero esa solicitud se implementa y
+verifica primero en Auth Emulator. Cambiar la cuenta remota requiere un manifiesto con proyecto,
+UID/correo verificado, claim anterior, claim propuesto, revocación de refresh tokens y rollback,
+seguido de una autorización de producción independiente.
+
 ## Auditoria de solo lectura - 2026-08-28
 
 Proyecto auditado: `jobsitejedi`.
@@ -49,7 +60,7 @@ completara Google Sign-In y Firebase creara su usuario sin rol.
 
 ## Precondiciones para asignar un rol
 
-1. El operador confirma la identidad objetivo, el rol exacto (`manager` o `builder`) y autoriza
+1. El operador confirma la identidad objetivo, el rol exacto (`admin`, `manager` o `builder`) y autoriza
    la mutacion en `jobsitejedi`.
 2. Se vuelve a leer el usuario inmediatamente antes del cambio y se conserva fuera del repositorio
    una copia de todos sus custom claims actuales para rollback.
@@ -60,6 +71,10 @@ completara Google Sign-In y Firebase creara su usuario sin rol.
 6. La persona cierra sesion y vuelve a ingresar para obtener un ID token nuevo.
 7. Se ejecuta smoke test del dashboard y de una accion permitida; tambien se confirma que el otro
    dashboard continua denegado.
+
+Si el claim anterior difiere del solicitado, el script exige además
+`--expected-current-role=<valor-auditado>` (`none` representa ausencia de rol). Una aplicación
+correcta revoca los refresh tokens inmediatamente después de verificar el nuevo claim.
 
 ## Rollback
 

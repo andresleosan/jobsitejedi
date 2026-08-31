@@ -9,14 +9,11 @@ import {
   type User,
 } from "firebase/auth";
 import { firebaseAuth } from "./client";
-import { ensureBuilderRole, invitationOperations } from "./functions";
-import type { AppRole, SessionUser } from "./types";
-
-const isAppRole = (value: unknown): value is AppRole =>
-  value === "manager" || value === "builder";
+import { invitationOperations } from "./functions";
+import { isAppRole, type AppRole, type SessionUser } from "./types";
 
 export const MISSING_ROLE_MESSAGE =
-  "This account has no assigned BuildTrack role. Contact a manager";
+  "This account has no assigned BuildTrack role. Contact an administrator";
 
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: "select_account" });
@@ -150,28 +147,6 @@ export const signIn = async (
 export const signInWithGoogle = async (): Promise<SessionUser> => {
   try {
     const credential = await signInWithPopup(firebaseAuth, googleProvider);
-    return await toAuthorizedSessionUser(credential.user);
-  } catch (error) {
-    throw normalizeAuthError(error);
-  }
-};
-
-export const registerBuilder = async (input: {
-  email: string;
-  password: string;
-  fullName: string;
-}): Promise<SessionUser> => {
-  validateRegistrationInput(input);
-
-  try {
-    const credential = await createUserWithEmailAndPassword(
-      firebaseAuth,
-      input.email.trim().toLowerCase(),
-      input.password,
-    );
-    await updateProfile(credential.user, { displayName: input.fullName.trim() });
-    await ensureBuilderRole();
-    await credential.user.getIdToken(true);
     return await toAuthorizedSessionUser(credential.user);
   } catch (error) {
     throw normalizeAuthError(error);

@@ -1,5 +1,4 @@
 import {
-  addDoc,
   collection,
   doc,
   getDoc,
@@ -13,12 +12,16 @@ import {
 } from "firebase/firestore";
 import { getCurrentRole } from "@/lib/firebase/auth";
 import { firebaseAuth, firebaseDb } from "@/lib/firebase/client";
+import { createAssignedProjectRecord } from "@/lib/firebase/functions";
+import { isAppRole, isManagementRole } from "@/lib/firebase/types";
 
 export type ProjectStatus = "active" | "finished" | "on_hold";
 
 export interface ProjectRecord {
   id: string;
+  builderId: string;
   ownerId: string;
+  createdBy: string;
   name: string;
   description: string | null;
   clientName: string;
@@ -29,6 +32,7 @@ export interface ProjectRecord {
 }
 
 export interface ProjectInput {
+  builderId?: string;
   name: string;
   description?: string | null;
   clientName: string;
@@ -48,10 +52,14 @@ const toDate = (value: unknown): Date | null => {
 
 const toProject = (snapshot: { id: string; data: () => DocumentData }): ProjectRecord => {
   const data = snapshot.data();
+  const ownerId = String(data.ownerId ?? "").trim();
+  const builderId = String(data.builderId ?? "").trim();
 
   return {
     id: snapshot.id,
-    ownerId: String(data.ownerId ?? ""),
+    builderId,
+    ownerId,
+    createdBy: String(data.createdBy ?? "").trim(),
     name: String(data.name ?? ""),
     description: typeof data.description === "string" ? data.description : null,
     clientName: String(data.clientName ?? ""),
@@ -85,16 +93,24 @@ const validateProjectInput = (input: ProjectInput) => {
 
 export const createProject = async (input: ProjectInput): Promise<ProjectRecord> => {
   validateProjectInput(input);
-  const user = requireCurrentUser();
-  const project = await addDoc(projectsCollection, {
-    ownerId: user.uid,
+  requireCurrentUser();
+  const role = await getCurrentRole();
+  if (!isManagementRole(role)) throw new Error("Manager access is required");
+
+  const builderId = input.builderId?.trim();
+  if (!builderId) throw new Error("An authorized builder is required");
+  if (input.status && input.status !== "active") {
+    throw new Error("New projects must start as active");
+  }
+
+  const project = doc(projectsCollection);
+  await createAssignedProjectRecord({
+    projectId: project.id,
+    builderId,
     name: input.name.trim(),
     description: input.description?.trim() || null,
     clientName: input.clientName.trim(),
     address: input.address?.trim() || null,
-    status: input.status ?? "active",
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
   });
 
   const created = await getDoc(project);
@@ -102,24 +118,48 @@ export const createProject = async (input: ProjectInput): Promise<ProjectRecord>
   return toProject(created);
 };
 
+const requireProjectManager = async () => {
+  requireCurrentUser();
+  if (!isManagementRole(await getCurrentRole())) {
+    throw new Error("Manager access is required");
+  }
+};
+
+const projectMatchesBuilder = (project: ProjectRecord, builderId: string) =>
+  project.builderId === builderId
+  && project.ownerId === builderId;
+
 export const getProject = async (projectId: string): Promise<ProjectRecord | null> => {
   if (!projectId.trim()) throw new Error("Project id is required");
-  requireCurrentUser();
+  const user = requireCurrentUser();
+  const role = await getCurrentRole();
   const snapshot = await getDoc(doc(projectsCollection, projectId));
-  return snapshot.exists() ? toProject(snapshot) : null;
+  if (!snapshot.exists()) return null;
+  const project = toProject(snapshot);
+  if (role === "builder" && !projectMatchesBuilder(project, user.uid)) return null;
+  return project;
 };
 
 export const listProjects = async (status?: ProjectStatus): Promise<ProjectRecord[]> => {
   const user = requireCurrentUser();
   const role = await getCurrentRole();
-  const constraints = [];
+  if (!isAppRole(role)) {
+    throw new Error("An application role is required");
+  }
 
-  if (role === "builder") constraints.push(where("ownerId", "==", user.uid));
-  if (status) constraints.push(where("status", "==", status));
+  const constraints = role === "builder"
+    ? [where("builderId", "==", user.uid), where("ownerId", "==", user.uid)]
+    : status
+      ? [where("status", "==", status)]
+      : [];
 
   const snapshots = await getDocs(query(projectsCollection, ...constraints));
   return snapshots.docs
     .map(toProject)
+    .filter((project) =>
+      (!status || project.status === status)
+      && (role !== "builder" || projectMatchesBuilder(project, user.uid)),
+    )
     .sort((left, right) =>
       (right.createdAt?.getTime() ?? 0) - (left.createdAt?.getTime() ?? 0),
     );
@@ -130,7 +170,7 @@ export const updateProject = async (
   input: ProjectInput,
 ): Promise<ProjectRecord> => {
   validateProjectInput(input);
-  requireCurrentUser();
+  await requireProjectManager();
   await updateDoc(doc(projectsCollection, projectId), {
     name: input.name.trim(),
     description: input.description?.trim() || null,

@@ -1,53 +1,17 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/qa-test";
+import {
+  provisionAndSignInToAuthEmulator,
+  seedEmulatorProject,
+} from "./helpers/firebase-auth-emulator";
 
 const projectId = "demo-jobsite-jedi";
-const authBaseUrl = "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1";
 const firestoreBaseUrl = `http://127.0.0.1:8080/v1/projects/${projectId}/databases/(default)/documents`;
-const functionsBaseUrl = `http://127.0.0.1:5001/${projectId}/europe-west1`;
-
-interface AuthResponse {
-  idToken: string;
-  localId: string;
-}
 
 const requestJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(url, init);
   const body = await response.text();
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}: ${body}`);
   return body ? (JSON.parse(body) as T) : ({} as T);
-};
-
-const signUpBuilder = async (email: string, password: string) => {
-  const created = await requestJson<AuthResponse>(`${authBaseUrl}/accounts:signUp?key=demo-api-key`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, password, displayName: "E2E Builder", returnSecureToken: true }),
-  });
-  await requestJson(`${functionsBaseUrl}/ensureBuilderRole`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${created.idToken}`, "content-type": "application/json" },
-    body: JSON.stringify({ data: { role: "builder" } }),
-  });
-  return signIn(email, password);
-};
-
-const signIn = (email: string, password: string) => requestJson<AuthResponse>(
-  `${authBaseUrl}/accounts:signInWithPassword?key=demo-api-key`,
-  {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, password, returnSecureToken: true }),
-  },
-);
-
-const promoteToManager = async (userId: string) => {
-  const [{ getApps, initializeApp }, { getAuth }] = await Promise.all([
-    import("../functions/node_modules/firebase-admin/lib/app/index.js"),
-    import("../functions/node_modules/firebase-admin/lib/auth/index.js"),
-  ]);
-  const adminApp = getApps().find((app) => app.name === "inventory-browser-tests")
-    ?? initializeApp({ projectId }, "inventory-browser-tests");
-  await getAuth(adminApp).setCustomUserClaims(userId, { role: "manager" });
 };
 
 const firestoreString = (value: string) => ({ stringValue: value });
@@ -79,20 +43,27 @@ test("builder requests a tool and manager completes its checkout lifecycle", asy
   const managerEmail = `inventory-manager-${suffix}@example.test`;
   const projectDocumentId = `inventory-project-${suffix}`;
   const toolDocumentId = `inventory-tool-${suffix}`;
-  const builder = await signUpBuilder(builderEmail, password);
-  const managerBuilderSession = await signUpBuilder(managerEmail, password);
-  await promoteToManager(managerBuilderSession.localId);
-  const manager = await signIn(managerEmail, password);
+  const builder = await provisionAndSignInToAuthEmulator({
+    email: builderEmail,
+    password,
+    displayName: "E2E Builder",
+    role: "builder",
+  });
+  const manager = await provisionAndSignInToAuthEmulator({
+    email: managerEmail,
+    password,
+    displayName: "E2E Manager",
+    role: "manager",
+  });
 
-  await createFirestoreDocument("projects", projectDocumentId, {
-    ownerId: firestoreString(builder.localId),
-    name: firestoreString("Inventory E2E Project"),
-    description: firestoreString("Tool request browser fixture"),
-    clientName: firestoreString("Inventory Client"),
-    status: firestoreString("active"),
-    createdAt: firestoreTimestamp(),
-    updatedAt: firestoreTimestamp(),
-  }, builder.idToken);
+  await seedEmulatorProject({
+    projectId: projectDocumentId,
+    builderId: builder.localId,
+    createdBy: manager.localId,
+    name: "Inventory E2E Project",
+    description: "Tool request browser fixture",
+    clientName: "Inventory Client",
+  });
 
   await createFirestoreDocument("storageTools", toolDocumentId, {
     name: firestoreString("E2E Cordless Drill"),

@@ -108,6 +108,7 @@ const ManagerJobReviewPanel = () => {
         job={selectedJob}
         kind="completion"
         onUploaded={() => void fetchJobs()}
+        readOnly
       />
 
       {selectedJob && (

@@ -13,6 +13,7 @@ import {
 } from "firebase/firestore";
 import { getCurrentRole } from "@/lib/firebase/auth";
 import { firebaseAuth, firebaseDb } from "@/lib/firebase/client";
+import { isAppRole, isManagementRole } from "@/lib/firebase/types";
 
 export type JobStatus =
   | "approved"
@@ -94,30 +95,33 @@ const validateJobInput = (input: JobInput) => {
   if (input.title.trim().length > 160) throw new Error("Job title is too long");
   if ((input.description?.trim().length ?? 0) > 2_000) throw new Error("Job description is too long");
   if ((input.section?.trim().length ?? 0) > 120) throw new Error("Job section is too long");
+  if (input.status !== undefined && input.status !== "approved") {
+    throw new Error("New jobs must start in approved status");
+  }
 };
 
-const resolveBuilderId = async (input: JobInput, userId: string, role: string | null) => {
-  const requestedBuilderId = input.builderId?.trim();
-  if (requestedBuilderId) return requestedBuilderId;
-  if (role !== "manager") return userId;
-
+const resolveProjectBuilderId = async (input: JobInput) => {
   const project = await getDoc(doc(firebaseDb, "projects", input.projectId.trim()));
-  const ownerId = project.exists() ? project.data().ownerId : null;
-  if (typeof ownerId !== "string" || !ownerId.trim()) {
-    throw new Error("The project must have a builder owner before jobs can be created");
+  if (!project.exists()) throw new Error("Project was not found");
+
+  const data = project.data();
+  const builderId = typeof data.builderId === "string" ? data.builderId.trim() : "";
+  const ownerId = typeof data.ownerId === "string" ? data.ownerId.trim() : "";
+  if (!builderId || ownerId !== builderId) {
+    throw new Error("The project builder assignment is inconsistent");
   }
-  return ownerId.trim();
+  if (input.builderId?.trim() && input.builderId.trim() !== builderId) {
+    throw new Error("The job builder must match the builder assigned to the project");
+  }
+  return builderId;
 };
 
 export const createJob = async (input: JobInput): Promise<JobRecord> => {
   validateJobInput(input);
-  const user = requireCurrentUser();
+  requireCurrentUser();
   const role = await getCurrentRole();
-  const builderId = await resolveBuilderId(input, user.uid, role);
-
-  if (role === "builder" && builderId !== user.uid) {
-    throw new Error("A builder can only create jobs for their own account");
-  }
+  if (!isManagementRole(role)) throw new Error("Manager access is required");
+  const builderId = await resolveProjectBuilderId(input);
 
   const job = await addDoc(jobsCollection, {
     projectId: input.projectId.trim(),
@@ -125,7 +129,7 @@ export const createJob = async (input: JobInput): Promise<JobRecord> => {
     title: input.title.trim(),
     description: input.description?.trim() || null,
     section: input.section?.trim() || null,
-    status: input.status ?? "approved",
+    status: "approved",
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -142,14 +146,17 @@ export const listJobsForProject = async (
   if (!projectId.trim()) throw new Error("Project id is required");
   const user = requireCurrentUser();
   const role = await getCurrentRole();
-  const constraints = [where("projectId", "==", projectId.trim())];
-
-  if (role === "builder") constraints.push(where("builderId", "==", user.uid));
-  if (statuses.length > 0) constraints.push(where("status", "in", statuses));
+  if (!isAppRole(role)) {
+    throw new Error("An application role is required");
+  }
+  const constraints = role === "builder"
+    ? [where("projectId", "==", projectId.trim()), where("builderId", "==", user.uid)]
+    : [where("projectId", "==", projectId.trim())];
 
   const snapshots = await getDocs(query(jobsCollection, ...constraints));
   return snapshots.docs
     .map(toJob)
+    .filter((job) => statuses.length === 0 || statuses.includes(job.status))
     .sort((left, right) => (right.createdAt?.getTime() ?? 0) - (left.createdAt?.getTime() ?? 0));
 };
 
@@ -162,7 +169,7 @@ export const listJobsForManager = async (
   statuses: JobStatus[] = ["waiting_review", "needs_correction", "completed"],
 ): Promise<JobRecord[]> => {
   const role = await getCurrentRole();
-  if (role !== "manager") throw new Error("Manager access is required");
+  if (!isManagementRole(role)) throw new Error("Manager access is required");
   const constraints = statuses.length > 0 ? [where("status", "in", statuses)] : [];
   const snapshots = await getDocs(query(jobsCollection, ...constraints));
   return snapshots.docs
@@ -194,7 +201,7 @@ export const reviewJob = async (
 ): Promise<JobRecord> => {
   const user = requireCurrentUser();
   const role = await getCurrentRole();
-  if (role !== "manager") throw new Error("Manager access is required");
+  if (!isManagementRole(role)) throw new Error("Manager access is required");
   if (status !== "completed" && status !== "needs_correction") {
     throw new Error("Review status is invalid");
   }

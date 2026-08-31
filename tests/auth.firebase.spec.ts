@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/qa-test";
 
 const authBaseUrl = "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1";
 
@@ -32,7 +32,7 @@ test("login offers Google and rejects an identity without a BuildTrack role with
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign In", exact: true }).click();
 
-  await expect(page.getByText("This account has no assigned BuildTrack role. Contact a manager", { exact: true })).toBeVisible();
+  await expect(page.getByText("This account has no assigned BuildTrack role. Contact an administrator", { exact: true })).toBeVisible();
   await expect(page.getByText("La cuenta no tiene un rol asignado", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Cerrar sesi\u00f3n", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Reintentar", exact: true })).toBeVisible();

@@ -21,6 +21,7 @@ import { listMaterialUsage, type MaterialUsageRecord } from "@/lib/firebase/repo
 import { listJobsForManager, type JobRecord } from "@/lib/firebase/repositories/jobs";
 import { listProjects, type ProjectRecord } from "@/lib/firebase/repositories/projects";
 import { listTimeEntries, type TimeEntry } from "@/lib/firebase/repositories/timeTracking";
+import { isManagementRole, roleHomePath } from "@/lib/firebase/types";
 
 type Period = "today" | "last7" | "month" | "all";
 
@@ -84,11 +85,11 @@ const Statements = () => {
   useEffect(() => {
     if (isAuthLoading) return;
     if (!user) navigate("/auth");
-    else if (user.role !== "manager") navigate("/builders");
+    else if (!isManagementRole(user.role) && user.role) navigate(roleHomePath(user.role));
   }, [isAuthLoading, navigate, user]);
 
   const loadLedger = useCallback(async () => {
-    if (!user || user.role !== "manager") return;
+    if (!user || !isManagementRole(user.role)) return;
     setIsLoading(true);
     setErrorMessage(null);
     try {
@@ -112,7 +113,7 @@ const Statements = () => {
   }, [user]);
 
   useEffect(() => {
-    if (!isAuthLoading && user?.role === "manager") void loadLedger();
+    if (!isAuthLoading && isManagementRole(user?.role)) void loadLedger();
   }, [isAuthLoading, loadLedger, user]);
 
   const projectNames = useMemo(
@@ -219,14 +220,14 @@ const Statements = () => {
   if (isAuthLoading || isLoading) {
     return <div className="flex min-h-screen items-center justify-center bg-muted/30"><Loader2 className="h-8 w-8 animate-spin text-primary motion-reduce:animate-none" /></div>;
   }
-  if (!user || user.role !== "manager") return null;
+  if (!user || !isManagementRole(user.role)) return null;
 
   return (
     <div className="min-h-screen bg-muted/30">
       <header className="sticky top-0 z-10 border-b bg-card/95 shadow-sm backdrop-blur">
         <div className="container mx-auto flex flex-wrap items-center justify-between gap-3 px-4 py-4">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" aria-label="Back to manager dashboard" onClick={() => navigate("/managers")}><ArrowLeft className="h-5 w-5" /></Button>
+            <Button variant="ghost" size="icon" aria-label="Back to management dashboard" onClick={() => navigate(roleHomePath(user.role))}><ArrowLeft className="h-5 w-5" /></Button>
             <div className="rounded-lg bg-primary p-2"><FileText className="h-5 w-5 text-primary-foreground" /></div>
             <div><h1 className="text-xl font-bold">Site statements</h1><p className="text-sm text-muted-foreground">Firebase activity ledger</p></div>
           </div>

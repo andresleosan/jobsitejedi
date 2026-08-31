@@ -10,6 +10,7 @@ import {
   type Timestamp,
 } from "firebase/firestore";
 import { getCurrentRole } from "@/lib/firebase/auth";
+import { isManagementRole } from "@/lib/firebase/types";
 import { firebaseAuth, firebaseDb } from "@/lib/firebase/client";
 import {
   reviewInvoiceRecord,
@@ -19,7 +20,6 @@ import {
 import {
   buildPrivateStoragePath,
   createPrivateObjectUrl,
-  deletePrivateFile,
   uploadPrivateFile,
 } from "@/lib/firebase/storage";
 
@@ -104,20 +104,6 @@ const toInvoice = (snapshot: { id: string; data: () => DocumentData }): InvoiceR
   };
 };
 
-const safeFileName = (name: string): string => {
-  const dot = name.lastIndexOf(".");
-  const rawBase = dot > 0 ? name.slice(0, dot) : name;
-  const rawExtension = dot > 0 ? name.slice(dot + 1) : "file";
-  const base = rawBase
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^A-Za-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "invoice";
-  const extension = rawExtension.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8) || "file";
-  return `${base}.${extension}`;
-};
-
 const validateSubmission = (input: InvoiceSubmissionInput) => {
   if (!input.projectId.trim()) throw new Error("Project is required");
   if (!input.invoiceNumber.trim() || input.invoiceNumber.trim().length > 80) {
@@ -163,26 +149,25 @@ export const submitInvoice = async (input: InvoiceSubmissionInput): Promise<Invo
   const user = requireCurrentUser();
   if ((await getCurrentRole()) !== "builder") throw new Error("Only builders can submit invoices");
   const invoiceId = doc(invoicesCollection).id;
-  const fileName = safeFileName(input.file.name);
-  const filePath = buildPrivateStoragePath("invoices", user.uid, invoiceId, fileName);
-  await uploadPrivateFile(filePath, input.file, { contentType: input.file.type });
-  try {
-    await submitInvoiceRecord({
-      invoiceId,
-      projectId: input.projectId.trim(),
-      invoiceNumber: input.invoiceNumber.trim(),
-      supplierName: input.supplierName.trim(),
-      invoiceDate: input.invoiceDate,
-      totalAmountMinor: input.totalAmountMinor,
-      currency: "GBP",
-      notes: input.notes?.trim() || null,
-      filePath,
-      fileName: input.file.name.trim().slice(0, 180) || fileName,
-    });
-  } catch (error) {
-    await Promise.allSettled([deletePrivateFile(filePath)]);
-    throw error;
-  }
+  const quarantinePath = buildPrivateStoragePath(
+    "invoice-quarantine",
+    user.uid,
+    invoiceId,
+    "upload",
+  );
+  await uploadPrivateFile(quarantinePath, input.file, { contentType: input.file.type });
+  await submitInvoiceRecord({
+    invoiceId,
+    projectId: input.projectId.trim(),
+    invoiceNumber: input.invoiceNumber.trim(),
+    supplierName: input.supplierName.trim(),
+    invoiceDate: input.invoiceDate,
+    totalAmountMinor: input.totalAmountMinor,
+    currency: "GBP",
+    notes: input.notes?.trim() || null,
+    quarantinePath,
+    originalFileName: input.file.name.trim().slice(0, 180),
+  });
   const created = await getInvoice(invoiceId);
   if (!created) throw new Error("Invoice was not created");
   return created;
@@ -191,7 +176,7 @@ export const submitInvoice = async (input: InvoiceSubmissionInput): Promise<Invo
 export const listInvoices = async (): Promise<InvoiceRecord[]> => {
   const user = requireCurrentUser();
   const role = await getCurrentRole();
-  const source = role === "manager"
+  const source = isManagementRole(role)
     ? invoicesCollection
     : query(invoicesCollection, where("uploadedBy", "==", user.uid));
   const snapshot = await getDocs(source);
@@ -205,7 +190,7 @@ export const subscribeToInvoices = async (
 ): Promise<() => void> => {
   const user = requireCurrentUser();
   const role = await getCurrentRole();
-  const source = role === "manager"
+  const source = isManagementRole(role)
     ? invoicesCollection
     : query(invoicesCollection, where("uploadedBy", "==", user.uid));
   return onSnapshot(source, (snapshot) => {
@@ -220,7 +205,7 @@ export const reviewInvoice = async (input: {
   reviewNotes?: string | null;
 }): Promise<InvoiceRecord> => {
   requireCurrentUser();
-  if ((await getCurrentRole()) !== "manager") throw new Error("Manager access is required");
+  if (!isManagementRole(await getCurrentRole())) throw new Error("Manager access is required");
   await reviewInvoiceRecord({
     invoiceId: input.invoiceId,
     status: input.status,

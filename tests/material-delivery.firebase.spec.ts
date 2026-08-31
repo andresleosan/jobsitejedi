@@ -1,53 +1,17 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/qa-test";
+import {
+  provisionAndSignInToAuthEmulator,
+  seedEmulatorProject,
+} from "./helpers/firebase-auth-emulator";
 
 const projectId = "demo-jobsite-jedi";
-const authBaseUrl = "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1";
 const firestoreBaseUrl = `http://127.0.0.1:8080/v1/projects/${projectId}/databases/(default)/documents`;
-const functionsBaseUrl = `http://127.0.0.1:5001/${projectId}/europe-west1`;
-
-interface AuthResponse {
-  idToken: string;
-  localId: string;
-}
 
 const requestJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(url, init);
   const body = await response.text();
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}: ${body}`);
   return body ? (JSON.parse(body) as T) : ({} as T);
-};
-
-const signIn = (email: string, password: string) => requestJson<AuthResponse>(
-  `${authBaseUrl}/accounts:signInWithPassword?key=demo-api-key`,
-  {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, password, returnSecureToken: true }),
-  },
-);
-
-const signUpBuilder = async (email: string, password: string, displayName: string) => {
-  const created = await requestJson<AuthResponse>(`${authBaseUrl}/accounts:signUp?key=demo-api-key`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, password, displayName, returnSecureToken: true }),
-  });
-  await requestJson(`${functionsBaseUrl}/ensureBuilderRole`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${created.idToken}`, "content-type": "application/json" },
-    body: JSON.stringify({ data: { role: "builder" } }),
-  });
-  return signIn(email, password);
-};
-
-const promoteToManager = async (userId: string) => {
-  const [{ getApps, initializeApp }, { getAuth }] = await Promise.all([
-    import("../functions/node_modules/firebase-admin/lib/app/index.js"),
-    import("../functions/node_modules/firebase-admin/lib/auth/index.js"),
-  ]);
-  const adminApp = getApps().find((app) => app.name === "delivery-browser-tests")
-    ?? initializeApp({ projectId }, "delivery-browser-tests");
-  await getAuth(adminApp).setCustomUserClaims(userId, { role: "manager" });
 };
 
 const firestoreString = (value: string) => ({ stringValue: value });
@@ -80,20 +44,27 @@ test("builder requests materials and manager completes the delivery", async ({ p
   const managerEmail = `delivery-manager-${suffix}@example.test`;
   const projectDocumentId = `delivery-project-${suffix}`;
   const materialDocumentId = `delivery-material-${suffix}`;
-  const builder = await signUpBuilder(builderEmail, password, "Delivery E2E Builder");
-  const managerBuilderSession = await signUpBuilder(managerEmail, password, "Delivery E2E Manager");
-  await promoteToManager(managerBuilderSession.localId);
-  const manager = await signIn(managerEmail, password);
+  const builder = await provisionAndSignInToAuthEmulator({
+    email: builderEmail,
+    password,
+    displayName: "Delivery E2E Builder",
+    role: "builder",
+  });
+  const manager = await provisionAndSignInToAuthEmulator({
+    email: managerEmail,
+    password,
+    displayName: "Delivery E2E Manager",
+    role: "manager",
+  });
 
-  await createFirestoreDocument("projects", projectDocumentId, {
-    ownerId: firestoreString(builder.localId),
-    name: firestoreString("Delivery E2E Project"),
-    description: firestoreString("Material delivery browser fixture"),
-    clientName: firestoreString("Delivery Client"),
-    status: firestoreString("active"),
-    createdAt: firestoreTimestamp(),
-    updatedAt: firestoreTimestamp(),
-  }, builder.idToken);
+  await seedEmulatorProject({
+    projectId: projectDocumentId,
+    builderId: builder.localId,
+    createdBy: manager.localId,
+    name: "Delivery E2E Project",
+    description: "Material delivery browser fixture",
+    clientName: "Delivery Client",
+  });
 
   await createFirestoreDocument("storageMaterials", materialDocumentId, {
     name: firestoreString("E2E Cement"),

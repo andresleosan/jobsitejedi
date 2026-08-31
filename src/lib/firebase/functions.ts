@@ -3,18 +3,6 @@ import { firebaseFunctions } from "./client";
 import type { AppRole } from "./types";
 import type { InvitationOperations, InvitationValidation } from "./types";
 
-type RoleResponse = { role: AppRole };
-
-const ensureBuilderRoleCallable = httpsCallable<
-  { role: "builder" },
-  RoleResponse
->(firebaseFunctions, "ensureBuilderRole");
-
-const setUserRoleCallable = httpsCallable<
-  { userId: string; role: AppRole },
-  { userId: string; role: AppRole }
->(firebaseFunctions, "setUserRole");
-
 const createManagerInvitationCallable = httpsCallable<
   { role: AppRole },
   { code: string; expiresAt: string }
@@ -39,8 +27,8 @@ export interface SubmitInvoiceCallableInput {
   totalAmountMinor: number;
   currency: "GBP";
   notes: string | null;
-  filePath: string;
-  fileName: string;
+  quarantinePath: string;
+  originalFileName: string;
 }
 
 export type InvoiceReviewStatus = "approved" | "rejected";
@@ -60,20 +48,30 @@ const extractJobsFromExcelCallable = httpsCallable<
   { importId: string; createdJobIds: string[] }
 >(firebaseFunctions, "extractJobsFromExcel");
 
-export const ensureBuilderRole = async (): Promise<void> => {
-  const result = await ensureBuilderRoleCallable({ role: "builder" });
+export interface AssignableBuilder {
+  id: string;
+  email: string | null;
+  displayName: string | null;
+}
 
-  if (result.data.role !== "builder") {
-    throw new Error("Unable to assign the builder role");
-  }
-};
+export interface CreateAssignedProjectCallableInput {
+  projectId: string;
+  builderId: string;
+  name: string;
+  description: string | null;
+  clientName: string;
+  address: string | null;
+}
 
-export const assignUserRole = async (input: {
-  userId: string;
-  role: AppRole;
-}): Promise<void> => {
-  await setUserRoleCallable(input);
-};
+const listAssignableBuildersCallable = httpsCallable<
+  Record<string, never>,
+  { builders: AssignableBuilder[] }
+>(firebaseFunctions, "listAssignableBuilders");
+
+const createAssignedProjectCallable = httpsCallable<
+  CreateAssignedProjectCallableInput,
+  { projectId: string }
+>(firebaseFunctions, "createAssignedProject");
 
 export const invitationOperations: InvitationOperations = {
   async validateInvitationCode(code) {
@@ -90,9 +88,6 @@ export const invitationOperations: InvitationOperations = {
   async consumeInvitation(input) {
     await consumeInvitationCallable(input);
   },
-  async assignRole(input) {
-    await assignUserRole(input);
-  },
 };
 
 export const submitInvoiceRecord = async (input: SubmitInvoiceCallableInput) =>
@@ -108,3 +103,11 @@ export const extractJobsFromExcelRecord = async (input: {
   projectId: string;
   filePath: string;
 }) => (await extractJobsFromExcelCallable(input)).data;
+
+export const listAssignableBuilders = async (): Promise<AssignableBuilder[]> =>
+  (await listAssignableBuildersCallable({})).data.builders;
+
+export const createAssignedProjectRecord = async (
+  input: CreateAssignedProjectCallableInput,
+): Promise<{ projectId: string }> =>
+  (await createAssignedProjectCallable(input)).data;

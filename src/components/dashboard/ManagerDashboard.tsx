@@ -18,10 +18,12 @@ import ReportsRiskPanel from "./ReportsRiskPanel";
 
 interface ManagerDashboardProps {
   userId: string;
+  role: "admin" | "manager";
 }
 
-const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
+const ManagerDashboard = ({ userId: _userId, role }: ManagerDashboardProps) => {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
   const [isMaterialDeliveryOpen, setIsMaterialDeliveryOpen] = useState(false);
   const [isRubbishDialogOpen, setIsRubbishDialogOpen] = useState(false);
@@ -32,12 +34,20 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
   const navigate = useNavigate();
 
   const fetchProjects = useCallback(async () => {
+    setIsLoadingProjects(true);
     try {
       setProjects(await listProjects());
     } catch (error) {
       console.error("Error fetching manager projects:", error);
+      toast({
+        title: "Projects could not be loaded",
+        description: error instanceof Error ? error.message : "Try again in a moment.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingProjects(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     void fetchProjects();
@@ -67,8 +77,8 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
               <Users className="h-5 w-5 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-xl font-bold">Manager Dashboard</h1>
-              <p className="text-sm text-muted-foreground">BuildTrack Pro · Firebase workspace</p>
+              <h1 className="text-xl font-bold">{role === "admin" ? "Admin Dashboard" : "Manager Dashboard"}</h1>
+              <p className="text-sm text-muted-foreground">BuildTrack Pro · {role} workspace</p>
             </div>
           </div>
           <Button variant="outline" size="sm" onClick={handleSignOut}>
@@ -150,7 +160,11 @@ const ManagerDashboard = ({ userId: _userId }: ManagerDashboardProps) => {
             </div>
           </CardHeader>
           <CardContent>
-            <ProjectList onProjectCreated={fetchProjects} />
+            <ProjectList
+              projects={projects.filter((project) => project.status === "active")}
+              isLoading={isLoadingProjects}
+              onProjectsChanged={fetchProjects}
+            />
           </CardContent>
         </Card>
 

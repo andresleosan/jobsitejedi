@@ -10,6 +10,7 @@ import ToolCheckoutsTab from "@/components/storage/ToolCheckoutsTab";
 import ToolRequestsManagement from "@/components/storage/ToolRequestsManagement";
 import MaterialMovementsTab from "@/components/storage/MaterialMovementsTab";
 import { useAuth } from "@/hooks/useAuth";
+import { isManagementRole, roleHomePath } from "@/lib/firebase/types";
 
 const Storage = () => {
   const { user, isLoading } = useAuth();
@@ -22,17 +23,17 @@ const Storage = () => {
       navigate("/auth");
       return;
     }
-    if (user.role !== "manager") {
+    if (!isManagementRole(user.role)) {
       toast({
         title: "Access Denied",
-        description: "Only managers can access storage management",
+        description: "Only admins and managers can access storage management",
         variant: "destructive",
       });
-      navigate("/builders");
+      if (user.role) navigate(roleHomePath(user.role));
     }
   }, [isLoading, navigate, toast, user]);
 
-  if (isLoading || !user || user.role !== "manager") {
+  if (isLoading || !user || !isManagementRole(user.role)) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -45,7 +46,7 @@ const Storage = () => {
       <header className="bg-card border-b shadow-sm sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={() => navigate("/managers")}>
+            <Button variant="ghost" size="icon" onClick={() => navigate(roleHomePath(user.role))}>
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div className="rounded-lg bg-primary p-2">

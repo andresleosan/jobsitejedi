@@ -4,7 +4,7 @@ import { CheckCircle, Clock, Loader2, Package, Plus, Search, Truck, Wrench } fro
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -131,6 +131,9 @@ const ToolRequestDialog = ({
             <Wrench className="h-5 w-5" />
             Request Tools - {projectName || "Project"}
           </DialogTitle>
+          <DialogDescription>
+            Request an available tool or review the status of your existing requests.
+          </DialogDescription>
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-1 flex-col overflow-hidden">

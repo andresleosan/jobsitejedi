@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.cleanupOldProjects = exports.reviewInvoice = exports.extractJobsFromExcel = exports.submitInvoice = exports.consumeInvitation = exports.validateInvitationCode = exports.createManagerInvitation = exports.setUserRole = exports.ensureBuilderRole = void 0;
+exports.cleanupOldProjects = exports.reviewInvoice = exports.extractJobsFromExcel = exports.submitInvoice = exports.createAssignedProject = exports.listAssignableBuilders = exports.consumeInvitation = exports.validateInvitationCode = exports.createManagerInvitation = void 0;
 const node_crypto_1 = require("node:crypto");
 const app_1 = require("firebase-admin/app");
 const auth_1 = require("firebase-admin/auth");
@@ -10,11 +10,18 @@ const v2_1 = require("firebase-functions/v2");
 const https_1 = require("firebase-functions/v2/https");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
 const spreadsheet_js_1 = require("./spreadsheet.js");
+const invoice_file_js_1 = require("./invoice-file.js");
 (0, v2_1.setGlobalOptions)({ region: "europe-west1" });
+// Evaluated only while Firebase discovers the deployment manifest. The release
+// command must opt in explicitly after the observation gate; absence is safe.
+const ENFORCE_APP_CHECK = process.env.ENFORCE_APP_CHECK === "true";
+const appCheckOptions = { enforceAppCheck: ENFORCE_APP_CHECK };
 (0, app_1.initializeApp)();
 const INVITATION_TTL_MS = 5 * 60 * 1000;
 const INVITATION_CODE_LENGTH = 12;
-const isAppRole = (value) => value === "manager" || value === "builder";
+const isAppRole = (value) => value === "admin" || value === "manager" || value === "builder";
+const isManagementRole = (value) => value === "admin" || value === "manager";
+const canInviteRole = (actorRole, targetRole) => actorRole === "admin" || targetRole === "builder";
 const isInvitationStatus = (value) => value === "pending" || value === "used";
 const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const requireText = (value, label, maximumLength) => {
@@ -65,13 +72,10 @@ const getInvoicePayload = (value, userId) => {
     const notes = value.notes == null || value.notes === ""
         ? null
         : requireText(value.notes, "Invoice notes", 1_000);
-    const fileName = requireText(value.fileName, "Invoice file name", 180);
-    const filePath = requireText(value.filePath, "Invoice file path", 500);
-    const expectedPrefix = `invoices/${userId}/${invoiceId}/`;
-    if (!filePath.startsWith(expectedPrefix) ||
-        filePath.slice(expectedPrefix.length).includes("/") ||
-        !/^[A-Za-z0-9._-]+$/.test(filePath.slice(expectedPrefix.length))) {
-        throw new https_1.HttpsError("invalid-argument", "Invoice file path is invalid");
+    const originalFileName = requireText(value.originalFileName, "Invoice file name", 180);
+    const quarantinePath = requireText(value.quarantinePath, "Invoice quarantine path", 500);
+    if (quarantinePath !== `invoice-quarantine/${userId}/${invoiceId}/upload`) {
+        throw new https_1.HttpsError("invalid-argument", "Invoice quarantine path is invalid");
     }
     return {
         invoiceId,
@@ -82,8 +86,8 @@ const getInvoicePayload = (value, userId) => {
         totalAmountMinor: value.totalAmountMinor,
         currency: "GBP",
         notes,
-        filePath,
-        fileName,
+        quarantinePath,
+        originalFileName,
     };
 };
 const invoiceMatchesPayload = (current, payload, userId) => current.uploadedBy === userId &&
@@ -93,9 +97,7 @@ const invoiceMatchesPayload = (current, payload, userId) => current.uploadedBy =
     current.invoiceDate === payload.invoiceDate &&
     current.totalAmountMinor === payload.totalAmountMinor &&
     current.currency === payload.currency &&
-    current.notes === payload.notes &&
-    current.filePath === payload.filePath &&
-    current.fileName === payload.fileName;
+    current.notes === payload.notes;
 const getReviewPayload = (value) => {
     if (!isRecord(value)) {
         throw new https_1.HttpsError("invalid-argument", "Invoice review details are required");
@@ -134,16 +136,6 @@ const invalidInvitation = () => ({
     invitationId: "",
     errorMessage: "Invitation code is invalid or expired",
 });
-const getRolePayload = (value) => {
-    if (!isRecord(value) || typeof value.userId !== "string" || !isAppRole(value.role)) {
-        throw new https_1.HttpsError("invalid-argument", "A valid userId and role are required");
-    }
-    const userId = value.userId.trim();
-    if (!userId) {
-        throw new https_1.HttpsError("invalid-argument", "A valid userId and role are required");
-    }
-    return { userId, role: value.role };
-};
 const getJobImportPayload = (value, managerId) => {
     if (!isRecord(value)) {
         throw new https_1.HttpsError("invalid-argument", "Spreadsheet import details are required");
@@ -162,16 +154,55 @@ const getJobImportPayload = (value, managerId) => {
     }
     return { projectId, filePath, fileName };
 };
+const optionalText = (value, label, maximumLength) => {
+    if (value == null || value === "")
+        return null;
+    return requireText(value, label, maximumLength);
+};
+const getAssignedProjectPayload = (value) => {
+    if (!isRecord(value)) {
+        throw new https_1.HttpsError("invalid-argument", "Project details are required");
+    }
+    const projectId = requireText(value.projectId, "Project id", 128);
+    if (!/^[A-Za-z0-9_-]{10,128}$/.test(projectId)) {
+        throw new https_1.HttpsError("invalid-argument", "Project id is invalid");
+    }
+    const builderId = requireText(value.builderId, "Builder id", 128);
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(builderId)) {
+        throw new https_1.HttpsError("invalid-argument", "Builder id is invalid");
+    }
+    return {
+        projectId,
+        builderId,
+        name: requireText(value.name, "Project name", 160),
+        description: optionalText(value.description, "Project description", 2_000),
+        clientName: requireText(value.clientName, "Client name", 160),
+        address: optionalText(value.address, "Project address", 500),
+    };
+};
+const assignedProjectMatches = (current, payload, managerId) => current.builderId === payload.builderId
+    && current.ownerId === payload.builderId
+    && current.createdBy === managerId
+    && current.name === payload.name
+    && current.description === payload.description
+    && current.clientName === payload.clientName
+    && current.address === payload.address
+    && current.status === "active";
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const RATE_LIMITS = {
-    ensureBuilderRole: { maxRequests: 5, windowMs: 60 * 60 * 1000 },
-    setUserRole: { maxRequests: 30, windowMs: 60 * 1000 },
     createManagerInvitation: { maxRequests: 10, windowMs: 60 * 1000 },
-    validateInvitationCode: { maxRequests: 30, windowMs: 60 * 1000 },
+    validateInvitationCodeRequester: { maxRequests: 30, windowMs: 60 * 1000 },
+    validateInvitationCodeGlobal: { maxRequests: 300, windowMs: 60 * 1000 },
     consumeInvitation: { maxRequests: 5, windowMs: 15 * 60 * 1000 },
+    listAssignableBuilders: { maxRequests: 30, windowMs: 60 * 1000 },
+    createAssignedProject: { maxRequests: 20, windowMs: 60 * 1000 },
     extractJobsFromExcel: { maxRequests: 5, windowMs: 60 * 60 * 1000 },
     submitInvoice: { maxRequests: 10, windowMs: 10 * 60 * 1000 },
     reviewInvoice: { maxRequests: 30, windowMs: 60 * 1000 },
+};
+const anonymizedRequesterId = (rawIp) => {
+    const normalizedIp = rawIp?.split(",", 1)[0]?.trim() || "unknown";
+    return (0, node_crypto_1.createHash)("sha256").update(`invitation-requester:${normalizedIp}`).digest("hex");
 };
 const getRateLimitReference = (operation, userId) => (0, firestore_1.getFirestore)()
     .collection("functionRateLimits")
@@ -251,49 +282,16 @@ const getUserWithRetry = async (userId) => {
     }
     throw new https_1.HttpsError("internal", "Unable to load the authenticated user");
 };
-exports.ensureBuilderRole = (0, https_1.onCall)(async (request) => {
-    if (!request.auth) {
-        throw new https_1.HttpsError("unauthenticated", "Authentication is required");
-    }
-    if (!isRecord(request.data) || request.data.role !== "builder") {
-        throw new https_1.HttpsError("invalid-argument", "Only the builder role can be self-assigned");
-    }
-    await enforceRateLimit(request.auth.uid, "ensureBuilderRole");
-    const auth = (0, auth_1.getAuth)();
-    const user = await getUserWithRetry(request.auth.uid);
-    const currentRole = user.customClaims?.role;
-    if (currentRole !== undefined && currentRole !== "builder") {
-        throw new https_1.HttpsError("permission-denied", "The current role cannot be changed this way");
-    }
-    await auth.setCustomUserClaims(request.auth.uid, {
-        ...user.customClaims,
-        role: "builder",
-    });
-    return { role: "builder" };
-});
-exports.setUserRole = (0, https_1.onCall)(async (request) => {
-    if (!request.auth) {
-        throw new https_1.HttpsError("unauthenticated", "Authentication is required");
-    }
-    if (request.auth.token.role !== "manager") {
-        throw new https_1.HttpsError("permission-denied", "Manager role is required");
-    }
-    const { userId, role } = getRolePayload(request.data);
-    await enforceRateLimit(request.auth.uid, "setUserRole");
-    const auth = (0, auth_1.getAuth)();
-    const user = await getUserWithRetry(userId);
-    await auth.setCustomUserClaims(userId, {
-        ...user.customClaims,
-        role,
-    });
-    return { userId, role };
-});
-exports.createManagerInvitation = (0, https_1.onCall)(async (request) => {
-    if (!request.auth || request.auth.token.role !== "manager") {
-        throw new https_1.HttpsError("permission-denied", "Manager role is required");
+exports.createManagerInvitation = (0, https_1.onCall)(appCheckOptions, async (request) => {
+    const actorRole = request.auth?.token.role;
+    if (!request.auth || !isManagementRole(actorRole)) {
+        throw new https_1.HttpsError("permission-denied", "Admin or manager role is required");
     }
     if (!isRecord(request.data) || !isAppRole(request.data.role)) {
         throw new https_1.HttpsError("invalid-argument", "A valid invitation role is required");
+    }
+    if (!canInviteRole(actorRole, request.data.role)) {
+        throw new https_1.HttpsError("permission-denied", "Only admins can invite admins or managers");
     }
     await enforceRateLimit(request.auth.uid, "createManagerInvitation");
     const code = createInvitationCode();
@@ -303,6 +301,7 @@ exports.createManagerInvitation = (0, https_1.onCall)(async (request) => {
         role: request.data.role,
         status: "pending",
         createdBy: request.auth.uid,
+        createdByRole: actorRole,
         createdAt: firestore_1.Timestamp.now(),
         expiresAt,
         usedBy: null,
@@ -310,11 +309,15 @@ exports.createManagerInvitation = (0, https_1.onCall)(async (request) => {
     });
     return { code, expiresAt: expiresAt.toDate().toISOString() };
 });
-exports.validateInvitationCode = (0, https_1.onCall)({ timeoutSeconds: 10, memory: "256MiB", maxInstances: 2 }, async (request) => {
+exports.validateInvitationCode = (0, https_1.onCall)({ ...appCheckOptions, timeoutSeconds: 10, memory: "256MiB", maxInstances: 2 }, async (request) => {
     // This endpoint must remain public so a new user can validate an invitation
-    // before authenticating. A global quota bounds unauthenticated Firestore
-    // lookups until App Check enforcement is enabled in production.
-    await enforceRateLimit("public", "validateInvitationCode");
+    // before authenticating. A requester-partitioned quota limits abuse without
+    // storing the source IP, while an emergency global ceiling bounds aggregate
+    // Firestore work until App Check enforcement is enabled after observation.
+    await Promise.all([
+        enforceRateLimit(anonymizedRequesterId(request.rawRequest.ip), "validateInvitationCodeRequester"),
+        enforceRateLimit("public-emergency-ceiling", "validateInvitationCodeGlobal"),
+    ]);
     const code = normalizeInvitationCode(isRecord(request.data) ? request.data.code : request.data);
     if (!code)
         return invalidInvitation();
@@ -338,7 +341,7 @@ exports.validateInvitationCode = (0, https_1.onCall)({ timeoutSeconds: 10, memor
         errorMessage: null,
     };
 });
-exports.consumeInvitation = (0, https_1.onCall)(async (request) => {
+exports.consumeInvitation = (0, https_1.onCall)(appCheckOptions, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Authentication is required");
     }
@@ -384,7 +387,79 @@ exports.consumeInvitation = (0, https_1.onCall)(async (request) => {
     }
     return { role };
 });
-exports.submitInvoice = (0, https_1.onCall)({ timeoutSeconds: 30, memory: "256MiB", maxInstances: 10 }, async (request) => {
+exports.listAssignableBuilders = (0, https_1.onCall)({ ...appCheckOptions, timeoutSeconds: 15, memory: "256MiB", maxInstances: 10 }, async (request) => {
+    if (!request.auth) {
+        throw new https_1.HttpsError("unauthenticated", "Authentication is required");
+    }
+    if (!isManagementRole(request.auth.token.role)) {
+        throw new https_1.HttpsError("permission-denied", "Admin or manager role is required");
+    }
+    await enforceRateLimit(request.auth.uid, "listAssignableBuilders");
+    const page = await (0, auth_1.getAuth)().listUsers(1_000);
+    const builders = page.users
+        .filter((user) => !user.disabled && user.customClaims?.role === "builder")
+        .map((user) => ({
+        id: user.uid,
+        email: user.email ?? null,
+        displayName: user.displayName?.trim() || null,
+    }))
+        .sort((left, right) => (left.displayName ?? left.email ?? left.id).localeCompare(right.displayName ?? right.email ?? right.id));
+    return { builders };
+});
+exports.createAssignedProject = (0, https_1.onCall)({ ...appCheckOptions, timeoutSeconds: 15, memory: "256MiB", maxInstances: 10 }, async (request) => {
+    if (!request.auth) {
+        throw new https_1.HttpsError("unauthenticated", "Authentication is required");
+    }
+    if (!isManagementRole(request.auth.token.role)) {
+        throw new https_1.HttpsError("permission-denied", "Admin or manager role is required");
+    }
+    const payload = getAssignedProjectPayload(request.data);
+    const managerId = request.auth.uid;
+    await enforceRateLimit(managerId, "createAssignedProject");
+    let builder;
+    try {
+        builder = await (0, auth_1.getAuth)().getUser(payload.builderId);
+    }
+    catch (error) {
+        if (typeof error === "object"
+            && error !== null
+            && "code" in error
+            && error.code === "auth/user-not-found") {
+            throw new https_1.HttpsError("failed-precondition", "The selected builder is not provisioned");
+        }
+        throw new https_1.HttpsError("internal", "Unable to validate the selected builder");
+    }
+    if (builder.disabled || builder.customClaims?.role !== "builder") {
+        throw new https_1.HttpsError("failed-precondition", "The selected builder is not active or authorized");
+    }
+    const firestore = (0, firestore_1.getFirestore)();
+    const projectReference = firestore.collection("projects").doc(payload.projectId);
+    await firestore.runTransaction(async (transaction) => {
+        const existing = await transaction.get(projectReference);
+        if (existing.exists) {
+            if (!assignedProjectMatches(existing.data() ?? {}, payload, managerId)) {
+                throw new https_1.HttpsError("already-exists", "Project id is already in use");
+            }
+            return;
+        }
+        transaction.create(projectReference, {
+            builderId: payload.builderId,
+            // Compatibility alias for the current Rules contract. Rules must require
+            // ownerId == builderId until all legacy documents have been migrated.
+            ownerId: payload.builderId,
+            createdBy: managerId,
+            name: payload.name,
+            description: payload.description,
+            clientName: payload.clientName,
+            address: payload.address,
+            status: "active",
+            createdAt: firestore_1.Timestamp.now(),
+            updatedAt: firestore_1.Timestamp.now(),
+        });
+    });
+    return { projectId: payload.projectId };
+});
+exports.submitInvoice = (0, https_1.onCall)({ ...appCheckOptions, timeoutSeconds: 60, memory: "512MiB", maxInstances: 5 }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Authentication is required");
     }
@@ -407,63 +482,142 @@ exports.submitInvoice = (0, https_1.onCall)({ timeoutSeconds: 30, memory: "256Mi
         }
         return { invoiceId: payload.invoiceId, status: current.status };
     }
-    let metadata;
+    const projectReference = firestore.collection("projects").doc(payload.projectId);
+    const projectBeforeProcessing = await projectReference.get();
+    const initialProjectData = projectBeforeProcessing.data() ?? {};
+    if (!projectBeforeProcessing.exists
+        || initialProjectData.builderId !== userId
+        || initialProjectData.ownerId !== userId) {
+        throw new https_1.HttpsError("permission-denied", "The selected project does not belong to this builder");
+    }
+    const bucket = getInvoiceStorageBucket();
+    const quarantineFile = bucket.file(payload.quarantinePath);
+    let quarantineMetadata;
+    let contents;
     try {
-        [metadata] = await getInvoiceStorageBucket().file(payload.filePath).getMetadata();
+        [quarantineMetadata] = await quarantineFile.getMetadata();
+        [contents] = await quarantineFile.download();
     }
     catch {
         throw new https_1.HttpsError("failed-precondition", "Invoice file was not found");
     }
-    const fileSize = Number(metadata.size);
-    const contentType = metadata.contentType ?? "";
-    const fileGeneration = String(metadata.generation ?? "");
-    if (!Number.isSafeInteger(fileSize) ||
-        fileSize <= 0 ||
-        fileSize >= 10 * 1024 * 1024 ||
-        !(contentType === "application/pdf" || contentType.startsWith("image/")) ||
-        !fileGeneration) {
+    const quarantinedSize = Number(quarantineMetadata.size);
+    const claimedContentType = String(quarantineMetadata.contentType ?? "").toLowerCase();
+    const quarantineGeneration = String(quarantineMetadata.generation ?? "");
+    if (!Number.isSafeInteger(quarantinedSize)
+        || quarantinedSize <= 0
+        || quarantinedSize >= invoice_file_js_1.MAX_INVOICE_FILE_BYTES
+        || contents.length !== quarantinedSize
+        || !quarantineGeneration) {
         throw new https_1.HttpsError("failed-precondition", "Invoice file metadata is invalid");
     }
-    const status = await firestore.runTransaction(async (transaction) => {
-        const [invoiceSnapshot, projectSnapshot] = await Promise.all([
-            transaction.get(invoiceRef),
-            transaction.get(firestore.collection("projects").doc(payload.projectId)),
-        ]);
-        if (!projectSnapshot.exists || projectSnapshot.data()?.ownerId !== userId) {
-            throw new https_1.HttpsError("permission-denied", "The selected project does not belong to this builder");
-        }
-        if (invoiceSnapshot.exists) {
-            const current = invoiceSnapshot.data() ?? {};
-            if (!invoiceMatchesPayload(current, payload, userId)) {
-                throw new https_1.HttpsError("already-exists", "Invoice id is already in use");
-            }
-            return current.status;
-        }
-        transaction.create(invoiceRef, {
-            projectId: payload.projectId,
-            projectName: String(projectSnapshot.data()?.name ?? ""),
-            invoiceNumber: payload.invoiceNumber,
-            supplierName: payload.supplierName,
-            invoiceDate: payload.invoiceDate,
-            totalAmountMinor: payload.totalAmountMinor,
-            currency: payload.currency,
-            notes: payload.notes,
-            filePath: payload.filePath,
-            fileName: payload.fileName,
-            contentType,
-            fileSize,
-            fileGeneration,
-            fileMd5Hash: metadata.md5Hash ?? null,
-            uploadedBy: userId,
-            uploadedByName,
-            status: "submitted",
-            reviewedBy: null,
-            reviewedAt: null,
-            reviewNotes: null,
-            createdAt: firestore_1.Timestamp.now(),
-            updatedAt: firestore_1.Timestamp.now(),
+    let sanitized;
+    try {
+        sanitized = await (0, invoice_file_js_1.sanitizeInvoiceFile)(contents, claimedContentType, payload.originalFileName);
+    }
+    catch {
+        throw new https_1.HttpsError("invalid-argument", "Invoice file content is invalid");
+    }
+    const filePath = `invoices/${userId}/${payload.invoiceId}/${sanitized.fileName}`;
+    const finalFile = bucket.file(filePath);
+    let promotedByThisRequest = false;
+    try {
+        await finalFile.save(sanitized.bytes, {
+            resumable: false,
+            contentType: sanitized.contentType,
+            metadata: {
+                cacheControl: "private, max-age=0, no-store",
+                metadata: { sourceGeneration: quarantineGeneration },
+            },
+            preconditionOpts: { ifGenerationMatch: 0 },
         });
-        return "submitted";
+        promotedByThisRequest = true;
+    }
+    catch {
+        let existingFinalMetadata;
+        try {
+            [existingFinalMetadata] = await finalFile.getMetadata();
+        }
+        catch {
+            throw new https_1.HttpsError("internal", "Invoice file could not be promoted");
+        }
+        if (existingFinalMetadata.metadata?.sourceGeneration !== quarantineGeneration) {
+            throw new https_1.HttpsError("already-exists", "Invoice file id is already in use");
+        }
+    }
+    let finalMetadata;
+    try {
+        [finalMetadata] = await finalFile.getMetadata();
+    }
+    catch {
+        if (promotedByThisRequest)
+            await finalFile.delete().catch(() => undefined);
+        throw new https_1.HttpsError("internal", "Promoted invoice file could not be verified");
+    }
+    const fileSize = Number(finalMetadata.size);
+    const fileGeneration = String(finalMetadata.generation ?? "");
+    if (!Number.isSafeInteger(fileSize)
+        || fileSize !== sanitized.bytes.length
+        || finalMetadata.contentType !== sanitized.contentType
+        || !fileGeneration) {
+        if (promotedByThisRequest)
+            await finalFile.delete().catch(() => undefined);
+        throw new https_1.HttpsError("internal", "Promoted invoice file metadata is invalid");
+    }
+    let status;
+    try {
+        status = await firestore.runTransaction(async (transaction) => {
+            const [invoiceSnapshot, projectSnapshot] = await Promise.all([
+                transaction.get(invoiceRef),
+                transaction.get(projectReference),
+            ]);
+            const projectData = projectSnapshot.data() ?? {};
+            if (!projectSnapshot.exists
+                || projectData.builderId !== userId
+                || projectData.ownerId !== userId) {
+                throw new https_1.HttpsError("permission-denied", "The selected project does not belong to this builder");
+            }
+            if (invoiceSnapshot.exists) {
+                const current = invoiceSnapshot.data() ?? {};
+                if (!invoiceMatchesPayload(current, payload, userId)) {
+                    throw new https_1.HttpsError("already-exists", "Invoice id is already in use");
+                }
+                return current.status;
+            }
+            transaction.create(invoiceRef, {
+                projectId: payload.projectId,
+                projectName: String(projectData.name ?? ""),
+                invoiceNumber: payload.invoiceNumber,
+                supplierName: payload.supplierName,
+                invoiceDate: payload.invoiceDate,
+                totalAmountMinor: payload.totalAmountMinor,
+                currency: payload.currency,
+                notes: payload.notes,
+                filePath,
+                fileName: sanitized.fileName,
+                contentType: sanitized.contentType,
+                fileSize,
+                fileGeneration,
+                fileMd5Hash: finalMetadata.md5Hash ?? null,
+                uploadedBy: userId,
+                uploadedByName,
+                status: "submitted",
+                reviewedBy: null,
+                reviewedAt: null,
+                reviewNotes: null,
+                createdAt: firestore_1.Timestamp.now(),
+                updatedAt: firestore_1.Timestamp.now(),
+            });
+            return "submitted";
+        });
+    }
+    catch (error) {
+        if (promotedByThisRequest)
+            await finalFile.delete().catch(() => undefined);
+        throw error;
+    }
+    await quarantineFile.delete({ ifGenerationMatch: Number(quarantineGeneration) }).catch(() => {
+        console.warn("Invoice quarantine cleanup deferred", { operation: "submitInvoice" });
     });
     return { invoiceId: payload.invoiceId, status };
 });
@@ -475,9 +629,9 @@ const SPREADSHEET_CONTENT_TYPES = new Set([
     "application/csv",
 ]);
 const IMPORT_LOCK_TTL_MS = 10 * 60 * 1000;
-exports.extractJobsFromExcel = (0, https_1.onCall)({ timeoutSeconds: 60, memory: "256MiB", maxInstances: 5 }, async (request) => {
-    if (!request.auth || request.auth.token.role !== "manager") {
-        throw new https_1.HttpsError("permission-denied", "Manager role is required");
+exports.extractJobsFromExcel = (0, https_1.onCall)({ ...appCheckOptions, timeoutSeconds: 60, memory: "256MiB", maxInstances: 5 }, async (request) => {
+    if (!request.auth || !isManagementRole(request.auth.token.role)) {
+        throw new https_1.HttpsError("permission-denied", "Admin or manager role is required");
     }
     const managerId = request.auth.uid;
     await enforceRateLimit(managerId, "extractJobsFromExcel");
@@ -488,9 +642,14 @@ exports.extractJobsFromExcel = (0, https_1.onCall)({ timeoutSeconds: 60, memory:
         throw new https_1.HttpsError("not-found", "Project was not found");
     }
     const projectData = projectSnapshot.data() ?? {};
-    const builderId = typeof projectData.ownerId === "string" ? projectData.ownerId.trim() : "";
-    if (!builderId) {
-        throw new https_1.HttpsError("failed-precondition", "The project has no builder owner");
+    const builderId = typeof projectData.builderId === "string"
+        ? projectData.builderId.trim()
+        : "";
+    const ownerId = typeof projectData.ownerId === "string"
+        ? projectData.ownerId.trim()
+        : "";
+    if (!builderId || ownerId !== builderId) {
+        throw new https_1.HttpsError("failed-precondition", "The project builder assignment is inconsistent");
     }
     const file = getInvoiceStorageBucket().file(payload.filePath);
     let metadata;
@@ -630,9 +789,9 @@ exports.extractJobsFromExcel = (0, https_1.onCall)({ timeoutSeconds: 60, memory:
         throw new https_1.HttpsError("internal", "Spreadsheet import could not be completed");
     }
 });
-exports.reviewInvoice = (0, https_1.onCall)({ timeoutSeconds: 15, memory: "256MiB", maxInstances: 10 }, async (request) => {
-    if (!request.auth || request.auth.token.role !== "manager") {
-        throw new https_1.HttpsError("permission-denied", "Manager role is required");
+exports.reviewInvoice = (0, https_1.onCall)({ ...appCheckOptions, timeoutSeconds: 15, memory: "256MiB", maxInstances: 10 }, async (request) => {
+    if (!request.auth || !isManagementRole(request.auth.token.role)) {
+        throw new https_1.HttpsError("permission-denied", "Admin or manager role is required");
     }
     const managerId = request.auth.uid;
     await enforceRateLimit(managerId, "reviewInvoice");

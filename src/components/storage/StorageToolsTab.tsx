@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Pencil, Trash2, Loader2, Search, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -241,6 +241,11 @@ const StorageToolsTab = ({ userId }: StorageToolsTabProps) => {
               <DialogContent className="max-w-md">
                 <DialogHeader>
                   <DialogTitle>{editingTool ? "Edit Tool" : "Add New Tool"}</DialogTitle>
+                  <DialogDescription>
+                    {editingTool
+                      ? "Update the selected tool inventory record."
+                      : "Register a tool in the shared inventory."}
+                  </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 pt-4">
                   <div className="space-y-2">

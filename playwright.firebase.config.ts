@@ -3,7 +3,9 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests",
   testMatch: "**/*.firebase.spec.ts",
-  workers: 2,
+  forbidOnly: Boolean(process.env.CI),
+  retries: 0,
+  workers: 1,
   timeout: 90_000,
   expect: {
     timeout: 15_000,
@@ -16,6 +18,7 @@ export default defineConfig({
     baseURL: "http://localhost:5173",
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
+    video: "retain-on-failure",
   },
   webServer: {
     command: "npm run dev -- --host localhost --port 5173",

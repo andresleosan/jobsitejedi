@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
 import * as ts from "typescript";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { assertAuthEmulatorOnly } from "../scripts/lib/firebase-auth-emulator.mjs";
 
 const runtimeRoots = [
   resolve(process.cwd(), "src"),
@@ -119,6 +120,26 @@ function allSupabaseReferences(): string[] {
 
 const references = allSupabaseReferences();
 
+const directRoleAssignmentSources = [
+  "functions/src/index.ts",
+  "functions/lib/index.js",
+  "src/lib/firebase/functions.ts",
+  "src/lib/firebase/auth.ts",
+];
+
+const forbiddenDirectRoleAssignment = /\b(?:ensureBuilderRole|setUserRole|assignUserRole|registerBuilder)\b/g;
+
+function directRoleAssignmentReferences(): string[] {
+  return directRoleAssignmentSources.flatMap((filePath) => {
+    const source = readFileSync(resolve(process.cwd(), filePath), "utf8");
+    const lines = source.split(/\r?\n/);
+    return lines.flatMap((line, index) => {
+      const matches = [...line.matchAll(forbiddenDirectRoleAssignment)];
+      return matches.map((match) => `${filePath}:${index + 1}: ${match[0]}`);
+    });
+  });
+}
+
 describe("provider migration guard", () => {
   test("reports remaining Supabase references under runtime sources", () => {
     expect(
@@ -153,5 +174,63 @@ describe("provider migration guard", () => {
     `;
 
     expect(runtimeSupabaseReferences(fixture, "fixture.ts")).toHaveLength(2);
+  });
+});
+
+describe("authorization surface guard", () => {
+  test("keeps direct role-assignment callables out of runtime code", () => {
+    const roleAssignmentReferences = directRoleAssignmentReferences();
+    expect(
+      roleAssignmentReferences,
+      `Direct role-assignment surfaces were reintroduced:\n${roleAssignmentReferences.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("keeps invitation consumption as the runtime role-assignment path", () => {
+    const backend = readFileSync(resolve(process.cwd(), "functions/src/index.ts"), "utf8");
+    const client = readFileSync(resolve(process.cwd(), "src/lib/firebase/auth.ts"), "utf8");
+
+    expect(backend).toContain("export const consumeInvitation");
+    expect(client).toContain("export const registerWithInvitation");
+  });
+});
+
+describe("QA Auth Emulator fixture guard", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test("rejects a non-loopback Auth host", () => {
+    vi.stubEnv("FIREBASE_AUTH_EMULATOR_HOST", "auth.example.test:9099");
+    vi.stubEnv("GCLOUD_PROJECT", "demo-jobsite-jedi");
+
+    expect(() => assertAuthEmulatorOnly()).toThrow(
+      "Refusing to provision users outside a loopback Firebase Auth emulator",
+    );
+  });
+
+  test("rejects a non-emulator project even on loopback", () => {
+    vi.stubEnv("FIREBASE_AUTH_EMULATOR_HOST", "127.0.0.1:9099");
+    vi.stubEnv("GCLOUD_PROJECT", "jobsitejedi");
+
+    expect(() => assertAuthEmulatorOnly()).toThrow(
+      "Expected emulator project demo-jobsite-jedi",
+    );
+  });
+
+  test("accepts only the local demo project and reads the password from the environment", () => {
+    vi.stubEnv("FIREBASE_AUTH_EMULATOR_HOST", "127.0.0.1:9099");
+    vi.stubEnv("GCLOUD_PROJECT", "demo-jobsite-jedi");
+    const seedScript = readFileSync(resolve(process.cwd(), "scripts/seed-qa-users.mjs"), "utf8");
+
+    expect(assertAuthEmulatorOnly()).toEqual({
+      emulatorHost: "127.0.0.1:9099",
+      projectId: "demo-jobsite-jedi",
+    });
+    expect(seedScript).toContain("process.env.QA_TEST_PASSWORD");
+    expect(seedScript).not.toMatch(/const password\s*=\s*["']/);
+    expect(seedScript).toMatch(/email:\s*["']admin@admin\.com["'][\s\S]*?role:\s*["']admin["']/);
+    expect(seedScript).toMatch(/email:\s*["']manager@manager\.com["'][\s\S]*?role:\s*["']manager["']/);
+    expect(seedScript).toMatch(/email:\s*["']builder@builder\.com["'][\s\S]*?role:\s*["']builder["']/);
   });
 });

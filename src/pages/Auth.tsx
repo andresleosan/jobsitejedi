@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { QRScannerDialog } from "@/components/auth/QRScannerDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { invitationOperations } from "@/lib/firebase/functions";
+import type { AppRole } from "@/lib/firebase/types";
 import { MISSING_ROLE_MESSAGE } from "@/lib/firebase/auth";
 
 // Validation schemas
@@ -34,7 +35,7 @@ const signUpSchema = z.object({
 
 interface InvitationData {
   valid: boolean;
-  role: "builder" | "manager";
+  role: AppRole;
   invitationId: string;
   errorMessage: string | null;
 }
@@ -128,7 +129,7 @@ const Auth = () => {
     if (!invitationData?.valid) {
       toast({
         title: "Invalid Invitation",
-        description: "You need a valid QR code invitation to sign up. Please contact a manager.",
+        description: "You need a valid QR code invitation to sign up. Please contact an administrator.",
         variant: "destructive",
       });
       return;
@@ -293,7 +294,7 @@ const Auth = () => {
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
                   <div>
                     <p className="font-medium text-foreground">La cuenta no tiene un rol asignado</p>
-                    <p className="text-muted-foreground">Un administrador debe asignar el rol manager o builder antes de ingresar.</p>
+                    <p className="text-muted-foreground">Un administrador debe asignar el rol admin, manager o builder antes de ingresar.</p>
                   </div>
                   </div>
                   <div className="flex flex-wrap gap-2 pl-7">

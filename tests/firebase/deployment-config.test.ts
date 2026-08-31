@@ -30,6 +30,7 @@ const validFirebaseEnv = {
   VITE_FIREBASE_STORAGE_BUCKET: "jobsitejedi.firebasestorage.app",
   VITE_FIREBASE_MESSAGING_SENDER_ID: "548508412702",
   VITE_FIREBASE_APP_ID: "1:548508412702:web:abcdef1234567890",
+  VITE_FIREBASE_APPCHECK_SITE_KEY: "enterprise-public-site-key-123456",
   VITE_FIREBASE_USE_EMULATORS: "false",
 };
 
@@ -78,6 +79,15 @@ describe("production deployment configuration", () => {
     expect(firebaseClientSource).toContain(
       "firebaseConfig.functionsRegion",
     );
+  });
+
+  test("prepares App Check in observation mode with an explicit enforcement rollback", () => {
+    expect(firebaseClientSource).toContain("ReCaptchaEnterpriseProvider");
+    expect(firebaseClientSource).toContain("isTokenAutoRefreshEnabled: true");
+    expect(functionsSource).toContain(
+      'process.env.ENFORCE_APP_CHECK === "true"',
+    );
+    expect(functionsSource).toContain("enforceAppCheck: ENFORCE_APP_CHECK");
   });
 
   test("rejects Vercel-style placeholder values without printing them", () => {

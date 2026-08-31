@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { createProject } from "@/lib/firebase/repositories/projects";
+import { listAssignableBuilders, type AssignableBuilder } from "@/lib/firebase/functions";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 
@@ -16,7 +18,11 @@ interface CreateProjectDialogProps {
 
 const CreateProjectDialog = ({ open, onOpenChange, onProjectCreated }: CreateProjectDialogProps) => {
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingBuilders, setIsLoadingBuilders] = useState(false);
+  const [builders, setBuilders] = useState<AssignableBuilder[]>([]);
+  const [builderError, setBuilderError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
+    builder_id: "",
     name: "",
     description: "",
     client_name: "",
@@ -24,10 +30,41 @@ const CreateProjectDialog = ({ open, onOpenChange, onProjectCreated }: CreatePro
   });
   const { toast } = useToast();
 
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setIsLoadingBuilders(true);
+    setBuilderError(null);
+
+    void listAssignableBuilders()
+      .then((nextBuilders) => {
+        if (cancelled) return;
+        setBuilders(nextBuilders);
+        setFormData((current) => ({
+          ...current,
+          builder_id: nextBuilders.some((builder) => builder.id === current.builder_id)
+            ? current.builder_id
+            : "",
+        }));
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setBuilders([]);
+        setBuilderError(error instanceof Error ? error.message : "Builders could not be loaded");
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingBuilders(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.name || !formData.client_name) {
+    if (!formData.name || !formData.client_name || !formData.builder_id) {
       toast({
         title: "Missing information",
         description: "Please fill in all required fields",
@@ -39,6 +76,7 @@ const CreateProjectDialog = ({ open, onOpenChange, onProjectCreated }: CreatePro
     setIsLoading(true);
     try {
       await createProject({
+        builderId: formData.builder_id,
         name: formData.name,
         description: formData.description,
         clientName: formData.client_name,
@@ -50,7 +88,7 @@ const CreateProjectDialog = ({ open, onOpenChange, onProjectCreated }: CreatePro
         description: "New project has been created successfully",
       });
 
-      setFormData({ name: "", description: "", client_name: "", address: "" });
+      setFormData({ builder_id: "", name: "", description: "", client_name: "", address: "" });
       onOpenChange(false);
       onProjectCreated();
     } catch (error) {
@@ -72,6 +110,31 @@ const CreateProjectDialog = ({ open, onOpenChange, onProjectCreated }: CreatePro
           <DialogDescription>Add a new construction project to track</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="project-builder">Assigned Builder *</Label>
+            <Select
+              value={formData.builder_id}
+              onValueChange={(builder_id) => setFormData({ ...formData, builder_id })}
+              disabled={isLoading || isLoadingBuilders || builders.length === 0}
+            >
+              <SelectTrigger id="project-builder" aria-label="Assigned builder">
+                <SelectValue placeholder={isLoadingBuilders ? "Loading authorized builders…" : "Choose a builder"} />
+              </SelectTrigger>
+              <SelectContent>
+                {builders.map((builder) => (
+                  <SelectItem key={builder.id} value={builder.id}>
+                    {builder.displayName || builder.email || `Builder ${builder.id.slice(0, 8)}`}
+                    {builder.displayName && builder.email ? ` · ${builder.email}` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {!isLoadingBuilders && builders.length === 0 && !builderError && (
+              <p className="text-sm text-muted-foreground">No active builders are provisioned. Invite a builder before creating a project.</p>
+            )}
+            {builderError && <p role="alert" className="text-sm text-destructive">{builderError}</p>}
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="name">Project Name *</Label>
             <Input
@@ -123,7 +186,7 @@ const CreateProjectDialog = ({ open, onOpenChange, onProjectCreated }: CreatePro
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isLoading}>
               Cancel
             </Button>
-            <Button type="submit" disabled={isLoading}>
+            <Button type="submit" disabled={isLoading || isLoadingBuilders || builders.length === 0}>
               {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Create Project
             </Button>

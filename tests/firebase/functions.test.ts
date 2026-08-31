@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { collection, doc, getDoc } from "firebase/firestore";
-import { createHash } from "node:crypto";
+import { provisionEmulatorUser } from "../../scripts/lib/firebase-auth-emulator.mjs";
 
 const credentials = (label: string) => ({
   email: `functions-${label}-${Date.now()}@example.test`,
@@ -8,12 +8,6 @@ const credentials = (label: string) => ({
   fullName: `Functions ${label}`,
 });
 
-let adminAuth: typeof import("../../functions/node_modules/firebase-admin/lib/auth/index.js").getAuth extends (
-  ...args: infer Args
-) => infer Result
-  ? (...args: Args) => Result
-  : never;
-let registerBuilder: typeof import("@/lib/firebase/auth").registerBuilder;
 let registerWithInvitation: typeof import("@/lib/firebase/auth").registerWithInvitation;
 let signIn: typeof import("@/lib/firebase/auth").signIn;
 let signOut: typeof import("@/lib/firebase/auth").signOut;
@@ -25,28 +19,23 @@ let createProject: typeof import("@/lib/firebase/repositories/projects").createP
 let uploadPrivateFile: typeof import("@/lib/firebase/storage").uploadPrivateFile;
 let buildPrivateStoragePath: typeof import("@/lib/firebase/storage").buildPrivateStoragePath;
 let firebaseDb: typeof import("@/lib/firebase/client").firebaseDb;
-let clearPublicInvitationRateLimit: () => Promise<void>;
+let clearPublicInvitationRateLimits: () => Promise<void>;
 
 describe("Firebase invitation Functions", () => {
   beforeAll(async () => {
     vi.stubEnv("VITE_FIREBASE_USE_EMULATORS", "true");
-    const [{ getApps, initializeApp }, { getAuth }, { getFirestore }] = await Promise.all([
+    const [{ getApps, initializeApp }, { getFirestore }] = await Promise.all([
       import("../../functions/node_modules/firebase-admin/lib/app/index.js"),
-      import("../../functions/node_modules/firebase-admin/lib/auth/index.js"),
       import("../../functions/node_modules/firebase-admin/lib/firestore/index.js"),
     ]);
     const adminApp = getApps().find((app) => app.name === "firebase-invitation-tests")
       ?? initializeApp({ projectId: "demo-jobsite-jedi" }, "firebase-invitation-tests");
-    adminAuth = getAuth(adminApp);
     const adminDb = getFirestore(adminApp);
-    const publicRateLimitId = createHash("sha256")
-      .update("validateInvitationCode:public")
-      .digest("hex");
-    clearPublicInvitationRateLimit = () => adminDb
-      .collection("functionRateLimits")
-      .doc(publicRateLimitId)
-      .delete();
-    ({ registerBuilder, registerWithInvitation, signIn, signOut } = await import("@/lib/firebase/auth"));
+    clearPublicInvitationRateLimits = async () => {
+      const references = await adminDb.collection("functionRateLimits").listDocuments();
+      await Promise.all(references.map((reference) => reference.delete()));
+    };
+    ({ registerWithInvitation, signIn, signOut } = await import("@/lib/firebase/auth"));
     ({ invitationOperations, submitInvoiceRecord, reviewInvoiceRecord, extractJobsFromExcelRecord } =
       await import("@/lib/firebase/functions"));
     ({ createProject } = await import("@/lib/firebase/repositories/projects"));
@@ -61,9 +50,12 @@ describe("Firebase invitation Functions", () => {
 
   test("creates, validates, consumes once and rejects a second consumption", async () => {
     const managerCredentials = credentials("manager");
-    const manager = await registerBuilder(managerCredentials);
-    await adminAuth.setCustomUserClaims(manager.id, { role: "manager" });
-    await signOut();
+    await provisionEmulatorUser({
+      email: managerCredentials.email,
+      password: managerCredentials.password,
+      displayName: managerCredentials.fullName,
+      role: "manager",
+    });
     await signIn(managerCredentials.email, managerCredentials.password);
 
     const invitation = await invitationOperations.createInvitation({ role: "builder" });
@@ -87,18 +79,89 @@ describe("Firebase invitation Functions", () => {
     ).resolves.toBeUndefined();
   }, 15_000);
 
+  test("reserves privileged invitations for admin and lets admin inherit manager operations", async () => {
+    const builderCredentials = credentials("admin-target-builder");
+    const builder = await provisionEmulatorUser({
+      email: builderCredentials.email,
+      password: builderCredentials.password,
+      displayName: builderCredentials.fullName,
+      role: "builder",
+    });
+    const managerCredentials = credentials("limited-manager");
+    await provisionEmulatorUser({
+      email: managerCredentials.email,
+      password: managerCredentials.password,
+      displayName: managerCredentials.fullName,
+      role: "manager",
+    });
+    const adminCredentials = credentials("admin");
+    await provisionEmulatorUser({
+      email: adminCredentials.email,
+      password: adminCredentials.password,
+      displayName: adminCredentials.fullName,
+      role: "admin",
+    });
+
+    await signIn(managerCredentials.email, managerCredentials.password);
+    await expect(invitationOperations.createInvitation({ role: "manager" }))
+      .rejects.toMatchObject({ code: "functions/permission-denied" });
+    await expect(invitationOperations.createInvitation({ role: "admin" }))
+      .rejects.toMatchObject({ code: "functions/permission-denied" });
+    await expect(invitationOperations.createInvitation({ role: "builder" }))
+      .resolves.toBeDefined();
+
+    await signOut();
+    await signIn(adminCredentials.email, adminCredentials.password);
+    const managerInvitation = await invitationOperations.createInvitation({ role: "manager" });
+    const adminInvitation = await invitationOperations.createInvitation({ role: "admin" });
+    await expect(invitationOperations.validateInvitationCode(managerInvitation.code))
+      .resolves.toMatchObject({ valid: true, role: "manager" });
+    await expect(invitationOperations.validateInvitationCode(adminInvitation.code))
+      .resolves.toMatchObject({ valid: true, role: "admin" });
+
+    await expect(createProject({
+      builderId: builder.uid,
+      name: "Admin assigned project",
+      clientName: "Admin client",
+    })).resolves.toMatchObject({ builderId: builder.uid, createdBy: expect.any(String) });
+  }, 25_000);
+
   test("submits an invoice idempotently and restricts review to managers", async () => {
     const builderCredentials = credentials("invoice-builder");
-    const builder = await registerBuilder(builderCredentials);
+    const builder = await provisionEmulatorUser({
+      email: builderCredentials.email,
+      password: builderCredentials.password,
+      displayName: builderCredentials.fullName,
+      role: "builder",
+    });
+    const managerCredentials = credentials("invoice-manager");
+    await provisionEmulatorUser({
+      email: managerCredentials.email,
+      password: managerCredentials.password,
+      displayName: managerCredentials.fullName,
+      role: "manager",
+    });
+    await signIn(managerCredentials.email, managerCredentials.password);
     const project = await createProject({
+      builderId: builder.uid,
       name: "Functions invoice project",
       clientName: "Invoice client",
     });
+    await signOut();
+    await signIn(builderCredentials.email, builderCredentials.password);
     const invoiceId = doc(collection(firebaseDb, "invoices")).id;
-    const filePath = buildPrivateStoragePath("invoices", builder.id, invoiceId, "invoice.png");
+    const quarantinePath = buildPrivateStoragePath(
+      "invoice-quarantine",
+      builder.uid,
+      invoiceId,
+      "upload",
+    );
     await uploadPrivateFile(
-      filePath,
-      new Blob(["invoice-image"], { type: "image/png" }),
+      quarantinePath,
+      new Blob([Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        "base64",
+      )], { type: "image/png" }),
       { contentType: "image/png" },
     );
     const payload = {
@@ -110,12 +173,18 @@ describe("Firebase invitation Functions", () => {
       totalAmountMinor: 45_678,
       currency: "GBP" as const,
       notes: "Callable integration fixture",
-      filePath,
-      fileName: "invoice.png",
+      quarantinePath,
+      originalFileName: "invoice.png",
     };
 
     await expect(submitInvoiceRecord(payload)).resolves.toEqual({ invoiceId, status: "submitted" });
     await expect(submitInvoiceRecord(payload)).resolves.toEqual({ invoiceId, status: "submitted" });
+    const storedInvoice = await getDoc(doc(firebaseDb, "invoices", invoiceId));
+    expect(storedInvoice.data()).toMatchObject({
+      fileName: "invoice.png",
+      contentType: "image/png",
+      filePath: `invoices/${builder.uid}/${invoiceId}/invoice.png`,
+    });
     await expect(submitInvoiceRecord({ ...payload, totalAmountMinor: 0 })).rejects.toMatchObject({
       code: "functions/invalid-argument",
     });
@@ -125,10 +194,25 @@ describe("Firebase invitation Functions", () => {
       reviewNotes: "Builder cannot approve",
     })).rejects.toMatchObject({ code: "functions/permission-denied" });
 
-    await signOut();
-    const managerCredentials = credentials("invoice-manager");
-    const manager = await registerBuilder(managerCredentials);
-    await adminAuth.setCustomUserClaims(manager.id, { role: "manager" });
+    const forgedInvoiceId = doc(collection(firebaseDb, "invoices")).id;
+    const forgedQuarantinePath = buildPrivateStoragePath(
+      "invoice-quarantine",
+      builder.uid,
+      forgedInvoiceId,
+      "upload",
+    );
+    await uploadPrivateFile(
+      forgedQuarantinePath,
+      new Blob(["not-a-png"], { type: "image/png" }),
+      { contentType: "image/png" },
+    );
+    await expect(submitInvoiceRecord({
+      ...payload,
+      invoiceId: forgedInvoiceId,
+      quarantinePath: forgedQuarantinePath,
+      originalFileName: "forged.png",
+    })).rejects.toMatchObject({ code: "functions/invalid-argument" });
+
     await signOut();
     await signIn(managerCredentials.email, managerCredentials.password);
 
@@ -142,9 +226,12 @@ describe("Firebase invitation Functions", () => {
 
   test("rate-limits repeated manager invitation requests per user", async () => {
     const managerCredentials = credentials("rate-limit-manager");
-    const manager = await registerBuilder(managerCredentials);
-    await adminAuth.setCustomUserClaims(manager.id, { role: "manager" });
-    await signOut();
+    await provisionEmulatorUser({
+      email: managerCredentials.email,
+      password: managerCredentials.password,
+      displayName: managerCredentials.fullName,
+      role: "manager",
+    });
     await signIn(managerCredentials.email, managerCredentials.password);
 
     for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -157,7 +244,7 @@ describe("Firebase invitation Functions", () => {
 
   test("rate-limits public invitation validation before unbounded Firestore lookups", async () => {
     await signOut();
-    await clearPublicInvitationRateLimit();
+    await clearPublicInvitationRateLimits();
 
     try {
       for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -169,22 +256,33 @@ describe("Firebase invitation Functions", () => {
         invitationOperations.validateInvitationCode("000000000000"),
       ).rejects.toMatchObject({ code: "functions/resource-exhausted" });
     } finally {
-      await clearPublicInvitationRateLimit();
+      await clearPublicInvitationRateLimits();
     }
   }, 20_000);
 
   test("imports spreadsheet jobs idempotently for managers", async () => {
+    const builderCredentials = credentials("spreadsheet-builder");
+    const builder = await provisionEmulatorUser({
+      email: builderCredentials.email,
+      password: builderCredentials.password,
+      displayName: builderCredentials.fullName,
+      role: "builder",
+    });
     const managerCredentials = credentials("spreadsheet-manager");
-    const manager = await registerBuilder(managerCredentials);
-    await adminAuth.setCustomUserClaims(manager.id, { role: "manager" });
-    await signOut();
+    const manager = await provisionEmulatorUser({
+      email: managerCredentials.email,
+      password: managerCredentials.password,
+      displayName: managerCredentials.fullName,
+      role: "manager",
+    });
     await signIn(managerCredentials.email, managerCredentials.password);
 
     const project = await createProject({
+      builderId: builder.uid,
       name: "Spreadsheet import project",
       clientName: "Spreadsheet client",
     });
-    const filePath = `job-imports/${manager.id}/jobs.csv`;
+    const filePath = `job-imports/${manager.uid}/jobs.csv`;
     await uploadPrivateFile(
       filePath,
       new Blob([

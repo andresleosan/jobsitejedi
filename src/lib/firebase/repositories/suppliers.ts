@@ -12,6 +12,7 @@ import {
   type Timestamp,
 } from "firebase/firestore";
 import { getCurrentRole } from "@/lib/firebase/auth";
+import { isManagementRole } from "@/lib/firebase/types";
 import { firebaseAuth, firebaseDb } from "@/lib/firebase/client";
 
 export interface SupplierRecord {
@@ -44,7 +45,7 @@ const requireCurrentUser = () => {
 
 const requireManager = async () => {
   requireCurrentUser();
-  if ((await getCurrentRole()) !== "manager") throw new Error("Manager access is required");
+  if (!isManagementRole(await getCurrentRole())) throw new Error("Manager access is required");
 };
 
 export const normalizeSupplierName = (name: string): string => name

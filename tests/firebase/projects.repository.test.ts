@@ -1,25 +1,46 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+import { provisionEmulatorUser } from "../../scripts/lib/firebase-auth-emulator.mjs";
 
-const credentials = {
-  email: `repository-${Date.now()}@example.test`,
+const builderCredentials = {
+  email: `repository-builder-${Date.now()}@example.test`,
   password: "Valid-password-123!",
   fullName: "Repository Builder",
+};
+
+const managerCredentials = {
+  email: `repository-manager-${Date.now()}@example.test`,
+  password: "Valid-password-123!",
+  fullName: "Repository Manager",
 };
 
 let createProject: typeof import("@/lib/firebase/repositories/projects").createProject;
 let getProject: typeof import("@/lib/firebase/repositories/projects").getProject;
 let listProjects: typeof import("@/lib/firebase/repositories/projects").listProjects;
 let updateProject: typeof import("@/lib/firebase/repositories/projects").updateProject;
-let registerBuilder: typeof import("@/lib/firebase/auth").registerBuilder;
+let signIn: typeof import("@/lib/firebase/auth").signIn;
 let signOut: typeof import("@/lib/firebase/auth").signOut;
+let builderId = "";
 
 describe("Firebase project repository", () => {
   beforeAll(async () => {
     vi.stubEnv("VITE_FIREBASE_USE_EMULATORS", "true");
-    ({ registerBuilder, signOut } = await import("@/lib/firebase/auth"));
+    ({ signIn, signOut } = await import("@/lib/firebase/auth"));
     ({ createProject, getProject, listProjects, updateProject } =
       await import("@/lib/firebase/repositories/projects"));
-    await registerBuilder(credentials);
+    const builder = await provisionEmulatorUser({
+      email: builderCredentials.email,
+      password: builderCredentials.password,
+      displayName: builderCredentials.fullName,
+      role: "builder",
+    });
+    builderId = builder.uid;
+    await provisionEmulatorUser({
+      email: managerCredentials.email,
+      password: managerCredentials.password,
+      displayName: managerCredentials.fullName,
+      role: "manager",
+    });
+    await signIn(managerCredentials.email, managerCredentials.password);
   });
 
   afterAll(async () => {
@@ -29,13 +50,15 @@ describe("Firebase project repository", () => {
 
   test("creates, lists, reads and updates an owned project", async () => {
     const created = await createProject({
+      builderId,
       name: "Repository project",
       clientName: "BuildTrack Client",
       description: "Created through the Firebase repository",
       address: "1 Test Street",
     });
 
-    expect(created.ownerId).toBeTruthy();
+    expect(created.builderId).toBe(builderId);
+    expect(created.ownerId).toBe(builderId);
     expect(created.name).toBe("Repository project");
     expect(created.status).toBe("active");
 
@@ -52,5 +75,13 @@ describe("Firebase project repository", () => {
     });
     expect(updated.name).toBe("Updated repository project");
     expect(updated.status).toBe("finished");
+
+    await signOut();
+    await signIn(builderCredentials.email, builderCredentials.password);
+    expect((await listProjects()).map((project) => project.id)).toContain(created.id);
+    await expect(updateProject(created.id, {
+      name: "Unauthorized builder edit",
+      clientName: "Updated client",
+    })).rejects.toThrow("Manager access is required");
   });
 });

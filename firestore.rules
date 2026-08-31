@@ -7,7 +7,11 @@ service cloud.firestore {
     }
 
     function isManager() {
-      return isSignedIn() && request.auth.token.role == "manager";
+      return isSignedIn() && request.auth.token.role in ["admin", "manager"];
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.role == "admin";
     }
 
     function isBuilder() {
@@ -28,9 +32,121 @@ service cloud.firestore {
 
     function ownsProject(projectId) {
       return isBuilder()
-        && projectId is string
+        && validId(projectId)
         && exists(/databases/$(database)/documents/projects/$(projectId))
+        && get(/databases/$(database)/documents/projects/$(projectId)).data.builderId == request.auth.uid
         && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid;
+    }
+
+    function validId(value) {
+      return value is string
+        && value.matches("^[A-Za-z0-9_-]{1,128}$");
+    }
+
+    function validRequiredString(value, maxLength) {
+      return value is string
+        && value.size() > 0
+        && value.size() <= maxLength;
+    }
+
+    function validNullableString(value, maxLength) {
+      return value == null || (
+        value is string
+        && value.size() <= maxLength
+      );
+    }
+
+    function validLocation(value) {
+      return value == null || (
+        value is map
+        && value.keys().hasOnly(["lat", "lng"])
+        && value.lat is number
+        && value.lat >= -90
+        && value.lat <= 90
+        && value.lng is number
+        && value.lng >= -180
+        && value.lng <= 180
+      );
+    }
+
+    function projectHasCanonicalAssignment(projectId, builderId) {
+      return validId(projectId)
+        && validId(builderId)
+        && exists(/databases/$(database)/documents/projects/$(projectId))
+        && get(/databases/$(database)/documents/projects/$(projectId)).data.builderId == builderId
+        && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == builderId;
+    }
+
+    function validProjectDocument(data) {
+      return data.keys().hasOnly([
+          "builderId", "ownerId", "createdBy", "name", "description", "clientName",
+          "address", "status", "createdAt", "updatedAt"
+        ])
+        && validId(data.builderId)
+        && data.ownerId == data.builderId
+        && validId(data.createdBy)
+        && validRequiredString(data.name, 160)
+        && validNullableString(data.description, 2000)
+        && validRequiredString(data.clientName, 160)
+        && validNullableString(data.address, 500)
+        && data.status in ["active", "finished", "on_hold"]
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function validJobDocument(data) {
+      return data.keys().hasOnly([
+          "projectId", "builderId", "title", "description", "section", "status",
+          "reviewNotes", "reviewedBy", "reviewedAt", "importId", "importRow",
+          "createdAt", "updatedAt"
+        ])
+        && validId(data.projectId)
+        && validId(data.builderId)
+        && validRequiredString(data.title, 160)
+        && validNullableString(data.description, 2000)
+        && validNullableString(data.section, 120)
+        && data.status in ["approved", "pending", "needs_correction", "waiting_review", "completed"]
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && (!data.keys().hasAny(["reviewNotes"]) || validNullableString(data.reviewNotes, 2000))
+        && (!data.keys().hasAny(["reviewedBy"]) || data.reviewedBy == null || validId(data.reviewedBy))
+        && (!data.keys().hasAny(["reviewedAt"]) || data.reviewedAt == null || data.reviewedAt is timestamp)
+        && (!data.keys().hasAny(["importId"]) || validId(data.importId))
+        && (!data.keys().hasAny(["importRow"]) || (
+          data.importRow is int && data.importRow > 0 && data.importRow <= 500
+        ));
+    }
+
+    function validTimeEntryDocument(data) {
+      return data.keys().hasOnly([
+          "builderId", "projectId", "clockIn", "clockOut", "location", "notes"
+        ])
+        && validId(data.builderId)
+        && validId(data.projectId)
+        && data.clockIn is timestamp
+        && (data.clockOut == null || data.clockOut is timestamp)
+        && validLocation(data.location)
+        && validNullableString(data.notes, 1000);
+    }
+
+    function activeMarkerAfterMatches(entryId, projectId) {
+      return existsAfter(/databases/$(database)/documents/activeTimeEntries/$(request.auth.uid))
+        && getAfter(/databases/$(database)/documents/activeTimeEntries/$(request.auth.uid)).data.builderId
+          == request.auth.uid
+        && getAfter(/databases/$(database)/documents/activeTimeEntries/$(request.auth.uid)).data.entryId
+          == entryId
+        && getAfter(/databases/$(database)/documents/activeTimeEntries/$(request.auth.uid)).data.projectId
+          == projectId;
+    }
+
+    function activeEntryAfterIsValid(entryId, projectId) {
+      return validId(entryId)
+        && existsAfter(/databases/$(database)/documents/timeTracking/$(entryId))
+        && getAfter(/databases/$(database)/documents/timeTracking/$(entryId)).data.builderId
+          == request.auth.uid
+        && getAfter(/databases/$(database)/documents/timeTracking/$(entryId)).data.projectId
+          == projectId
+        && getAfter(/databases/$(database)/documents/timeTracking/$(entryId)).data.clockOut == null;
     }
 
     function requestedNameMatchesAuth(field) {
@@ -101,10 +217,24 @@ service cloud.firestore {
     }
 
     match /projects/{projectId} {
-      allow read: if isManager() || ownsExistingDocument("ownerId");
-      allow create: if isManager() || ownsNewDocument("ownerId");
-      allow update: if isManager() || ownsUpdatedDocument("ownerId");
-      allow delete: if isManager() || ownsExistingDocument("ownerId");
+      allow read: if isManager() || (
+        isBuilder()
+        && resource.data.builderId == request.auth.uid
+        && resource.data.ownerId == resource.data.builderId
+      );
+      allow create: if false;
+      allow update: if isManager()
+        && validProjectDocument(resource.data)
+        && validProjectDocument(request.resource.data)
+        && request.resource.data.builderId == resource.data.builderId
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "name", "description", "clientName", "address", "status", "updatedAt"
+        ]);
+      allow delete: if false;
     }
 
     match /suppliers/{supplierId} {
@@ -136,43 +266,262 @@ service cloud.firestore {
     }
 
     match /jobs/{jobId} {
-      allow read: if isManager() || ownsExistingDocument("builderId");
-      allow create: if isManager() || ownsNewDocument("builderId");
-      allow update: if isManager() || (
-        ownsUpdatedDocument("builderId")
-        && request.resource.data.status == "waiting_review"
-        && resource.data.status in ["approved", "needs_correction"]
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "updatedAt"])
+      allow read: if isManager() || (
+        isBuilder()
+        && resource.data.builderId == request.auth.uid
+        && projectHasCanonicalAssignment(resource.data.projectId, resource.data.builderId)
       );
-      allow delete: if isManager() || ownsExistingDocument("builderId");
+      allow create: if isManager()
+        && validId(jobId)
+        && validJobDocument(request.resource.data)
+        && request.resource.data.status == "approved"
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && (!request.resource.data.keys().hasAny(["reviewNotes"])
+          || request.resource.data.reviewNotes == null)
+        && (!request.resource.data.keys().hasAny(["reviewedBy"])
+          || request.resource.data.reviewedBy == null)
+        && (!request.resource.data.keys().hasAny(["reviewedAt"])
+          || request.resource.data.reviewedAt == null)
+        && !request.resource.data.keys().hasAny(["importId", "importRow"])
+        && projectHasCanonicalAssignment(
+          request.resource.data.projectId,
+          request.resource.data.builderId
+        );
+      allow update: if validJobDocument(request.resource.data)
+        && projectHasCanonicalAssignment(
+          request.resource.data.projectId,
+          request.resource.data.builderId
+        )
+        && (isBuilder()
+          && resource.data.builderId == request.auth.uid
+          && request.resource.data.builderId == request.auth.uid
+          && request.resource.data.status == "waiting_review"
+          && resource.data.status in ["approved", "needs_correction"]
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "updatedAt"])
+        || isManager()
+          && resource.data.status == "waiting_review"
+          && request.resource.data.status in ["completed", "needs_correction"]
+          && request.resource.data.reviewedBy == request.auth.uid
+          && request.resource.data.reviewedAt == request.time
+          && request.resource.data.updatedAt == request.time
+          && validNullableString(request.resource.data.reviewNotes, 2000)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            "status", "reviewNotes", "reviewedBy", "reviewedAt", "updatedAt"
+          ])
+        );
+      allow delete: if false;
     }
 
     match /jobCompletions/{completionId} {
       allow read: if isManager() || ownsExistingDocument("builderId");
-      allow create: if isManager() || ownsNewDocument("builderId");
-      allow update: if isManager() || ownsUpdatedDocument("builderId");
-      allow delete: if isManager() || ownsExistingDocument("builderId");
+      allow create, update, delete: if false;
     }
 
     match /jobPhotos/{photoId} {
-      allow read: if isManager() || ownsExistingDocument("builderId");
-      allow create: if isManager() || ownsNewDocument("builderId");
-      allow update: if isManager() || ownsUpdatedDocument("builderId");
-      allow delete: if isManager() || ownsExistingDocument("builderId");
+      allow read: if isManager() || (
+        isBuilder()
+        && resource.data.builderId == request.auth.uid
+        && exists(/databases/$(database)/documents/jobs/$(resource.data.jobId))
+        && get(/databases/$(database)/documents/jobs/$(resource.data.jobId)).data.builderId
+          == request.auth.uid
+        && projectHasCanonicalAssignment(
+          get(/databases/$(database)/documents/jobs/$(resource.data.jobId)).data.projectId,
+          request.auth.uid
+        )
+      );
+      allow create: if (isManager() || isBuilder())
+        && validId(photoId)
+        && request.resource.data.keys().hasOnly([
+          "jobId", "builderId", "uploadedBy", "kind", "originalPath", "thumbnailPath",
+          "fileName", "contentType", "createdAt"
+        ])
+        && validId(request.resource.data.jobId)
+        && validId(request.resource.data.builderId)
+        && request.resource.data.uploadedBy == request.auth.uid
+        && request.resource.data.kind in ["reference", "completion", "feedback"]
+        && validRequiredString(request.resource.data.fileName, 180)
+        && request.resource.data.contentType is string
+        && request.resource.data.contentType.matches("^image/[A-Za-z0-9.+-]+$")
+        && request.resource.data.originalPath is string
+        && request.resource.data.originalPath.size() <= 512
+        && request.resource.data.originalPath.matches(
+          "^jobs/" + request.resource.data.jobId + "/" + request.resource.data.builderId
+            + "/" + request.resource.data.kind + "/" + photoId + "-[^/]+$"
+        )
+        && request.resource.data.thumbnailPath is string
+        && request.resource.data.thumbnailPath.size() <= 512
+        && request.resource.data.thumbnailPath.matches(
+          "^jobs/" + request.resource.data.jobId + "/" + request.resource.data.builderId
+            + "/" + request.resource.data.kind + "/thumbnails/" + photoId + "-[^/]+$"
+        )
+        && request.resource.data.createdAt == request.time
+        && exists(/databases/$(database)/documents/jobs/$(request.resource.data.jobId))
+        && get(/databases/$(database)/documents/jobs/$(request.resource.data.jobId)).data.builderId
+          == request.resource.data.builderId
+        && projectHasCanonicalAssignment(
+          get(/databases/$(database)/documents/jobs/$(request.resource.data.jobId)).data.projectId,
+          request.resource.data.builderId
+        )
+        && (
+          isManager()
+            && request.resource.data.kind == "feedback"
+            && get(/databases/$(database)/documents/jobs/$(request.resource.data.jobId)).data.status
+              == "waiting_review"
+          || isBuilder()
+            && request.resource.data.builderId == request.auth.uid
+            && get(/databases/$(database)/documents/jobs/$(request.resource.data.jobId)).data.status
+              in ["approved", "needs_correction"]
+            && request.resource.data.kind in ["reference", "completion"]
+        );
+      allow update: if false;
+      allow delete: if resource.data.uploadedBy == request.auth.uid
+        && exists(/databases/$(database)/documents/jobs/$(resource.data.jobId))
+        && projectHasCanonicalAssignment(
+          get(/databases/$(database)/documents/jobs/$(resource.data.jobId)).data.projectId,
+          resource.data.builderId
+        )
+        && (
+          isBuilder()
+            && resource.data.builderId == request.auth.uid
+            && resource.data.kind in ["reference", "completion"]
+            && get(/databases/$(database)/documents/jobs/$(resource.data.jobId)).data.status
+              in ["approved", "needs_correction"]
+          || isManager()
+            && resource.data.kind == "feedback"
+            && get(/databases/$(database)/documents/jobs/$(resource.data.jobId)).data.status
+              == "waiting_review"
+        );
     }
 
     match /timeTracking/{entryId} {
       allow read: if isManager() || ownsExistingDocument("builderId");
-      allow create: if isManager() || ownsNewDocument("builderId");
-      allow update: if isManager() || ownsUpdatedDocument("builderId");
-      allow delete: if isManager() || ownsExistingDocument("builderId");
+      allow create: if isBuilder()
+        && validId(entryId)
+        && validTimeEntryDocument(request.resource.data)
+        && request.resource.data.builderId == request.auth.uid
+        && request.resource.data.clockIn == request.time
+        && request.resource.data.clockOut == null
+        && ownsProject(request.resource.data.projectId)
+        && activeMarkerAfterMatches(entryId, request.resource.data.projectId);
+      allow update: if isBuilder()
+        && resource.data.builderId == request.auth.uid
+        && validTimeEntryDocument(request.resource.data)
+        && ownsProject(resource.data.projectId)
+        && resource.data.clockOut == null
+        && request.resource.data.clockOut == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["clockOut"])
+        && (
+          !exists(/databases/$(database)/documents/activeTimeEntries/$(request.auth.uid))
+            && !existsAfter(/databases/$(database)/documents/activeTimeEntries/$(request.auth.uid))
+          || exists(/databases/$(database)/documents/activeTimeEntries/$(request.auth.uid))
+            && get(/databases/$(database)/documents/activeTimeEntries/$(request.auth.uid)).data.entryId
+              == entryId
+            && (
+              !existsAfter(/databases/$(database)/documents/activeTimeEntries/$(request.auth.uid))
+              || getAfter(/databases/$(database)/documents/activeTimeEntries/$(request.auth.uid)).data.entryId
+                != entryId
+            )
+        );
+      allow delete: if false;
+    }
+
+    match /activeTimeEntries/{builderId} {
+      allow read: if isManager() || (
+        isBuilder() && builderId == request.auth.uid
+      );
+      allow create: if isBuilder()
+        && builderId == request.auth.uid
+        && request.resource.data.keys().hasOnly(["builderId", "entryId", "projectId", "updatedAt"])
+        && request.resource.data.builderId == request.auth.uid
+        && validId(request.resource.data.entryId)
+        && validId(request.resource.data.projectId)
+        && request.resource.data.updatedAt == request.time
+        && activeEntryAfterIsValid(
+          request.resource.data.entryId,
+          request.resource.data.projectId
+        );
+      allow update: if isBuilder()
+        && builderId == request.auth.uid
+        && resource.data.builderId == request.auth.uid
+        && request.resource.data.keys().hasOnly(["builderId", "entryId", "projectId", "updatedAt"])
+        && request.resource.data.builderId == request.auth.uid
+        && request.resource.data.entryId != resource.data.entryId
+        && validId(request.resource.data.projectId)
+        && request.resource.data.updatedAt == request.time
+        && activeEntryAfterIsValid(
+          request.resource.data.entryId,
+          request.resource.data.projectId
+        )
+        && existsAfter(/databases/$(database)/documents/timeTracking/$(resource.data.entryId))
+        && getAfter(/databases/$(database)/documents/timeTracking/$(resource.data.entryId)).data.clockOut
+          == request.time;
+      allow delete: if isBuilder()
+        && builderId == request.auth.uid
+        && resource.data.builderId == request.auth.uid
+        && existsAfter(/databases/$(database)/documents/timeTracking/$(resource.data.entryId))
+        && getAfter(/databases/$(database)/documents/timeTracking/$(resource.data.entryId)).data.clockOut
+          == request.time;
     }
 
     match /projectSwitches/{switchId} {
       allow read: if isManager() || ownsExistingDocument("builderId");
-      allow create: if isManager() || ownsNewDocument("builderId");
-      allow update: if isManager() || ownsUpdatedDocument("builderId");
-      allow delete: if isManager() || ownsExistingDocument("builderId");
+      allow create: if isBuilder()
+        && validId(switchId)
+        && request.resource.data.keys().hasOnly([
+          "builderId", "fromProjectId", "toProjectId", "travelEntryId",
+          "travelTimeMinutes", "switchedAt", "arrivedAt"
+        ])
+        && request.resource.data.builderId == request.auth.uid
+        && request.resource.data.travelEntryId == switchId
+        && request.resource.data.fromProjectId != request.resource.data.toProjectId
+        && request.resource.data.travelTimeMinutes == null
+        && request.resource.data.switchedAt == request.time
+        && request.resource.data.arrivedAt == null
+        && projectHasCanonicalAssignment(
+          request.resource.data.fromProjectId,
+          request.auth.uid
+        )
+        && projectHasCanonicalAssignment(
+          request.resource.data.toProjectId,
+          request.auth.uid
+        )
+        && activeEntryAfterIsValid(switchId, request.resource.data.fromProjectId)
+        && activeMarkerAfterMatches(switchId, request.resource.data.fromProjectId);
+      allow update: if isBuilder()
+        && resource.data.builderId == request.auth.uid
+        && request.resource.data.builderId == request.auth.uid
+        && request.resource.data.keys().hasOnly([
+          "builderId", "fromProjectId", "toProjectId", "travelEntryId",
+          "travelTimeMinutes", "switchedAt", "arrivedAt"
+        ])
+        && validId(request.resource.data.fromProjectId)
+        && validId(request.resource.data.toProjectId)
+        && request.resource.data.fromProjectId != request.resource.data.toProjectId
+        && request.resource.data.travelEntryId == switchId
+        && request.resource.data.switchedAt is timestamp
+        && projectHasCanonicalAssignment(
+          request.resource.data.fromProjectId,
+          request.auth.uid
+        )
+        && projectHasCanonicalAssignment(
+          request.resource.data.toProjectId,
+          request.auth.uid
+        )
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["arrivedAt"])
+        && (!resource.data.keys().hasAny(["arrivedAt"]) || resource.data.arrivedAt == null)
+        && request.resource.data.arrivedAt == request.time
+        && request.resource.data.travelTimeMinutes == null
+        && existsAfter(/databases/$(database)/documents/timeTracking/$(resource.data.travelEntryId))
+        && getAfter(/databases/$(database)/documents/timeTracking/$(resource.data.travelEntryId)).data.clockOut
+          == request.time
+        && existsAfter(/databases/$(database)/documents/activeTimeEntries/$(request.auth.uid))
+        && getAfter(/databases/$(database)/documents/activeTimeEntries/$(request.auth.uid)).data.projectId
+          == resource.data.toProjectId
+        && getAfter(/databases/$(database)/documents/activeTimeEntries/$(request.auth.uid)).data.updatedAt
+          == request.time;
+      allow delete: if false;
     }
 
     match /invitations/{invitationId} {
@@ -259,11 +608,12 @@ service cloud.firestore {
       );
       allow create: if isBuilder()
         && request.resource.data.keys().hasOnly(["riskAssessmentId", "userId", "signedAt"])
-        && request.resource.data.riskAssessmentId is string
+        && validId(request.resource.data.riskAssessmentId)
+        && signatureId == request.resource.data.riskAssessmentId + "_" + request.auth.uid
         && exists(/databases/$(database)/documents/riskAssessments/$(request.resource.data.riskAssessmentId))
         && ownsProject(get(/databases/$(database)/documents/riskAssessments/$(request.resource.data.riskAssessmentId)).data.projectId)
         && request.resource.data.userId == request.auth.uid
-        && request.resource.data.signedAt is timestamp;
+        && request.resource.data.signedAt == request.time;
       allow update, delete: if false;
     }
 
@@ -297,7 +647,7 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/storageTools/$(request.resource.data.toolId))
         && get(/databases/$(database)/documents/storageTools/$(request.resource.data.toolId)).data.status == "available"
         && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
-        && get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.ownerId == request.auth.uid;
+        && ownsProject(request.resource.data.projectId);
       allow update: if isManager()
         && request.resource.data.toolId == resource.data.toolId
         && request.resource.data.projectId == resource.data.projectId
@@ -400,7 +750,7 @@ service cloud.firestore {
           && request.resource.data.notes.size() <= 1000
         ))
         && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
-        && get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.ownerId == request.auth.uid;
+        && ownsProject(request.resource.data.projectId);
       allow update: if isManager()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           "status", "resolvedAt", "resolvedBy"
@@ -466,7 +816,7 @@ service cloud.firestore {
           && request.resource.data.description.size() <= 1000
         ))
         && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
-        && get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.ownerId == request.auth.uid;
+        && ownsProject(request.resource.data.projectId);
       allow update: if isManager()
         && resource.data.status == "pending"
         && request.resource.data.status == "resolved"

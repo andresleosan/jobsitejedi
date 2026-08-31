@@ -210,7 +210,7 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
               onValueChange={handleProjectSwitch}
               disabled={isClockedIn}
             >
-              <SelectTrigger>
+              <SelectTrigger aria-label="Current project">
                 <SelectValue placeholder="Select a project" />
               </SelectTrigger>
               <SelectContent>

@@ -30,6 +30,7 @@ import {
   type JobStatus,
 } from "@/lib/firebase/repositories/jobs";
 import { getProject, type ProjectRecord } from "@/lib/firebase/repositories/projects";
+import { isManagementRole, roleHomePath } from "@/lib/firebase/types";
 
 const statusConfig: Record<
   JobStatus,
@@ -140,7 +141,7 @@ const ProjectDetails = () => {
             <CardDescription>{errorMessage ?? "This project could not be found."}</CardDescription>
           </CardHeader>
           <CardContent className="flex gap-2">
-            <Button variant="outline" onClick={() => navigate(user.role === "manager" ? "/managers" : "/builders")}>Go back</Button>
+            <Button variant="outline" onClick={() => user.role && navigate(roleHomePath(user.role))}>Go back</Button>
             <Button onClick={() => void loadProject()}><RotateCcw />Retry</Button>
           </CardContent>
         </Card>
@@ -157,7 +158,7 @@ const ProjectDetails = () => {
               variant="ghost"
               size="icon"
               aria-label="Back to dashboard"
-              onClick={() => navigate(user.role === "manager" ? "/managers" : "/builders")}
+              onClick={() => user.role && navigate(roleHomePath(user.role))}
             >
               <ArrowLeft className="h-5 w-5" />
             </Button>
@@ -168,8 +169,8 @@ const ProjectDetails = () => {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            {user.role === "manager" && <Button variant="outline" onClick={() => navigate("/statements")}>Project statements</Button>}
-            {user.role === "manager" && <Button onClick={() => setIsCreateOpen(true)}><Plus />Add job</Button>}
+            {isManagementRole(user.role) && <Button variant="outline" onClick={() => navigate("/statements")}>Project statements</Button>}
+            {isManagementRole(user.role) && <Button onClick={() => setIsCreateOpen(true)}><Plus />Add job</Button>}
           </div>
         </div>
       </header>
@@ -183,7 +184,7 @@ const ProjectDetails = () => {
         </section>
 
         {jobs.length === 0 ? (
-          <Card className="border-dashed"><CardContent className="py-14 text-center"><BriefcaseBusiness className="mx-auto mb-3 h-8 w-8 text-muted-foreground" /><p className="font-medium">No jobs in this project</p><p className="mt-1 text-sm text-muted-foreground">{user.role === "manager" ? "Add the first job to start the site ledger." : "Your manager has not assigned work yet."}</p></CardContent></Card>
+          <Card className="border-dashed"><CardContent className="py-14 text-center"><BriefcaseBusiness className="mx-auto mb-3 h-8 w-8 text-muted-foreground" /><p className="font-medium">No jobs in this project</p><p className="mt-1 text-sm text-muted-foreground">{isManagementRole(user.role) ? "Add the first job to start the site ledger." : "Your manager has not assigned work yet."}</p></CardContent></Card>
         ) : groupedJobs.map(([section, sectionJobs]) => (
           <section key={section} aria-labelledby={`section-${section.replace(/[^a-z0-9]+/gi, "-")}`}>
             <div className="mb-3 flex items-center justify-between gap-3">
@@ -204,11 +205,11 @@ const ProjectDetails = () => {
                     <CardContent className="space-y-3 p-4">
                       {job.reviewNotes && <p className="rounded-md bg-muted/70 p-3 text-sm">Manager note: {job.reviewNotes}</p>}
                       <div className="flex flex-wrap gap-2">
-                        {user.role === "manager" && <Button size="sm" variant="outline" onClick={() => setPhotoState({ job, kind: "reference", readOnly: false })}><ImageIcon />Reference photos</Button>}
-                        {user.role === "manager" && ["waiting_review", "completed", "needs_correction"].includes(job.status) && <Button size="sm" variant="outline" onClick={() => setPhotoState({ job, kind: "completion", readOnly: true })}><ImageIcon />Review evidence</Button>}
+                        {isManagementRole(user.role) && <Button size="sm" variant="outline" onClick={() => setPhotoState({ job, kind: "reference", readOnly: false })}><ImageIcon />Reference photos</Button>}
+                        {isManagementRole(user.role) && ["waiting_review", "completed", "needs_correction"].includes(job.status) && <Button size="sm" variant="outline" onClick={() => setPhotoState({ job, kind: "completion", readOnly: true })}><ImageIcon />Review evidence</Button>}
                         {user.role === "builder" && ["approved", "pending", "needs_correction"].includes(job.status) && <Button size="sm" onClick={() => setPhotoState({ job, kind: "completion", readOnly: false })}><ImageIcon />Work evidence</Button>}
                       </div>
-                      {user.role === "manager" && job.status === "waiting_review" && (
+                      {isManagementRole(user.role) && job.status === "waiting_review" && (
                         <div className="space-y-2 border-t pt-3">
                           <Textarea
                             aria-label={`Review notes for ${job.title}`}

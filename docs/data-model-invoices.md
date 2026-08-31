@@ -1,6 +1,6 @@
 # Contrato de datos — facturas Firebase
 
-Estado: primer slice de T-009/T-011 con OCR local opcional para imagenes.
+Estado: contrato endurecido por T-026 con cuarentena y saneamiento server-side.
 
 ## Colección `invoices/{invoiceId}`
 
@@ -14,9 +14,9 @@ Estado: primer slice de T-009/T-011 con OCR local opcional para imagenes.
 | `totalAmountMinor` | integer | Importe positivo en unidad monetaria menor; máximo 1 billón. |
 | `currency` | string | `GBP` en este slice. |
 | `notes` | string \| null | Máximo 1.000 caracteres. |
-| `filePath` | string | Ruta privada `invoices/{uid}/{invoiceId}/{archivo}`. |
-| `fileName` | string | Nombre visible normalizado, máximo 180 caracteres. |
-| `contentType` | string | Imagen o PDF verificado desde metadata de Storage. |
+| `filePath` | string | Ruta final `invoices/{uid}/{invoiceId}/invoice.{ext}`, derivada por servidor. |
+| `fileName` | string | Nombre canónico `invoice.pdf`, `invoice.jpg`, `invoice.png` o `invoice.webp`. |
+| `contentType` | string | MIME detectado después de parsear/decodificar y sanear el contenido. |
 | `fileSize` | integer | 1 byte a menos de 10 MB, verificado server-side. |
 | `fileGeneration` | string | Generación inmutable observada al registrar el archivo. |
 | `fileMd5Hash` | string \| null | Huella reportada por Storage para auditoría. |
@@ -29,13 +29,17 @@ Estado: primer slice de T-009/T-011 con OCR local opcional para imagenes.
 | `createdAt` | timestamp | Fecha server-side de alta. |
 | `updatedAt` | timestamp | Último cambio server-side. |
 
-Las escrituras directas del cliente quedan bloqueadas. `submitInvoice` valida proyecto, payload y
-metadata del archivo antes de crear el documento; `reviewInvoice` aplica la transición terminal
+Las escrituras directas del cliente quedan bloqueadas. El builder solo crea
+`invoice-quarantine/{uid}/{invoiceId}/upload`; no puede leer esa cuarentena ni escribir en
+`invoices/`. `submitInvoice` valida proyecto, tamaño, generación, MIME/extensión, parsea PDFs,
+rechaza características activas comunes y decodifica/re-emite JPEG, PNG o WebP con límite de
+40 millones de píxeles antes de promover un nombre canónico. `reviewInvoice` aplica la transición terminal
 manager-only. Ambos callables son idempotentes para el mismo identificador y payload.
 
-El builder solo puede leer sus propias facturas. El manager puede leer todas. El archivo puede
-subirse mientras el documento aún no existe; después queda bloqueado contra sobrescritura y
-borrado. Si el alta falla, el cliente intenta eliminar el upload huérfano.
+El builder solo puede leer sus propias facturas. Admin/manager pueden leer todas. Solo Admin SDK
+promueve bytes saneados a la ruta final, que queda bloqueada contra creación, sobrescritura y
+borrado desde clientes. Un archivo rechazado permanece en cuarentena para lifecycle/escaneo y no
+crea documento financiero.
 
 ## Consultas e índices
 
@@ -61,8 +65,8 @@ credenciales, reintentos automaticos ni gasto nuevo asociado a esta integracion.
 
 El cambio es aditivo y no transforma datos existentes. Para revertir:
 
-1. Retirar los accesos de facturas de ambos dashboards y restaurar la versión anterior de
-   Functions y reglas.
+1. Revertir conjuntamente Functions, cliente y reglas al SHA anterior; no mezclar el cliente de
+   cuarentena con una Function que espere rutas finales.
 2. Conservar `invoices` y los objetos `invoices/`; no borrar evidencia financiera durante un
    rollback de aplicación.
 3. Si más adelante se decide eliminar estos datos, crear una migración independiente con backup

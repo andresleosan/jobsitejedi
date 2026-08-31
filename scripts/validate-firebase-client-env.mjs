@@ -15,6 +15,7 @@ const createValidators = (expectedProjectId) => ({
     || value === `${expectedProjectId}.firebasestorage.app`,
   VITE_FIREBASE_MESSAGING_SENDER_ID: (value) => /^\d{6,}$/.test(value),
   VITE_FIREBASE_APP_ID: (value) => /^\d+:\d+:web:[0-9a-f]+$/i.test(value),
+  VITE_FIREBASE_APPCHECK_SITE_KEY: (value) => /^[0-9A-Za-z_-]{20,}$/.test(value),
 });
 
 export const validateFirebaseClientEnv = (env, expectedProjectId = DEPLOYMENT_PROJECT_IDS.production) => {

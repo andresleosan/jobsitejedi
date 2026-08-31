@@ -22,6 +22,9 @@ describe("CI workflow contract", () => {
     expect(workflow).toContain(
       "actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961",
     );
+    expect(workflow).toContain(
+      "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    );
   });
 
   test("runs static, emulator and E2E gates without deploying", () => {
@@ -30,6 +33,9 @@ describe("CI workflow contract", () => {
       "npm run lint",
       "npm run test:provider-guard",
       "npm run build:functions",
+      "npm --prefix functions test",
+      "npm run test:storage",
+      "npm run test:ocr",
       "npm run test:firebase:emulator",
       "npm run test:e2e:firebase:emulator",
     ]) {
@@ -40,12 +46,16 @@ describe("CI workflow contract", () => {
     expect(workflow).not.toContain("secrets.");
     expect(workflow).toContain("permissions:\n  contents: read");
     expect(workflow).toContain("persist-credentials: false");
+    expect(workflow).toContain('test "$ACTUAL_SHA" = "$GITHUB_SHA"');
+    expect(workflow).toContain("qa/release-sha.txt");
   });
 
   test("keeps the Playwright runner cross-platform and bounded", () => {
     expect(playwrightConfig).toContain('command: "npm run dev -- --host localhost --port 5173"');
     expect(playwrightConfig).not.toContain("npm.cmd run dev");
-    expect(playwrightConfig).toContain("workers: 2");
+    expect(playwrightConfig).toContain("forbidOnly: Boolean(process.env.CI)");
+    expect(playwrightConfig).toContain("retries: 0");
+    expect(playwrightConfig).toContain("workers: 1");
     expect(playwrightConfig).toContain("timeout: 15_000");
   });
 });
