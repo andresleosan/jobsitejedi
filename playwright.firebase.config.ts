@@ -1,5 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
+const firebaseE2eOrigin = "http://127.0.0.1:41731";
+
 export default defineConfig({
   testDir: "./tests",
   testMatch: "**/*.firebase.spec.ts",
@@ -15,14 +17,14 @@ export default defineConfig({
   use: {
     headless: true,
     channel: process.env.PLAYWRIGHT_CHANNEL || undefined,
-    baseURL: "http://localhost:5173",
+    baseURL: firebaseE2eOrigin,
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
     video: "retain-on-failure",
   },
   webServer: {
-    command: "npm run dev -- --host localhost --port 5173",
-    url: "http://localhost:5173",
+    command: "npm run dev -- --host 127.0.0.1 --port 41731 --strictPort",
+    url: firebaseE2eOrigin,
     reuseExistingServer: false,
     timeout: 120_000,
     env: {

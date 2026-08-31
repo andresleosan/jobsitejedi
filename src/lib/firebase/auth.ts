@@ -1,7 +1,8 @@
 import {
-  createUserWithEmailAndPassword,
   GoogleAuthProvider,
   onIdTokenChanged,
+  sendEmailVerification,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut as firebaseSignOut,
@@ -14,6 +15,10 @@ import { isAppRole, type AppRole, type SessionUser } from "./types";
 
 export const MISSING_ROLE_MESSAGE =
   "This account has no assigned BuildTrack role. Contact an administrator";
+export const EMAIL_VERIFICATION_MESSAGE =
+  "Verify your email before accepting the invitation";
+export const INVITATION_ACTIVATION_MESSAGE =
+  "Use the secure activation email before choosing your invitation password";
 
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: "select_account" });
@@ -36,7 +41,24 @@ const getErrorCode = (error: unknown) => {
   return "";
 };
 
+const getErrorReason = (error: unknown) => {
+  if (
+    typeof error === "object"
+    && error !== null
+    && "details" in error
+    && typeof error.details === "object"
+    && error.details !== null
+    && "reason" in error.details
+  ) {
+    return String(error.details.reason);
+  }
+  return "";
+};
+
 export const normalizeAuthError = (error: unknown): Error => {
+  if (getErrorReason(error) === "email-not-verified") {
+    return new Error(EMAIL_VERIFICATION_MESSAGE);
+  }
   switch (getErrorCode(error)) {
     case "auth/invalid-credential":
     case "auth/invalid-login-credentials":
@@ -64,16 +86,29 @@ export const normalizeAuthError = (error: unknown): Error => {
       return new Error("Google sign-in is not enabled for this application");
     case "auth/unauthorized-domain":
       return new Error("This domain is not authorized for Google sign-in");
+    case "auth/invalid-continue-uri":
+    case "auth/missing-continue-uri":
+    case "auth/unauthorized-continue-uri":
+      return new Error("Secure invitation activation is not configured for this domain");
     case "auth/user-disabled":
       return new Error("This account has been disabled");
     case "app/missing-role":
       return new Error(MISSING_ROLE_MESSAGE);
+    case "app/invalid-invitation":
+      return new Error("Invitation is invalid, expired, or does not match this email");
+    case "app/email-not-verified":
+      return new Error(EMAIL_VERIFICATION_MESSAGE);
+    case "app/invitation-session-required":
+      return new Error("Sign in again from the invitation link to finish registration");
     case "functions/permission-denied":
       return new Error("You do not have permission to perform this action");
     case "functions/unauthenticated":
       return new Error("Your authentication session has expired");
     case "functions/invalid-argument":
-      return new Error("Invalid role request");
+      return new Error("Invalid request");
+    case "functions/failed-precondition":
+    case "functions/not-found":
+      return new Error("Invitation is invalid, expired, or already used");
     default:
       return new Error("Authentication failed. Please try again");
   }
@@ -81,7 +116,12 @@ export const normalizeAuthError = (error: unknown): Error => {
 
 const getRoleFromClaims = async (user: User): Promise<AppRole | null> => {
   const token = await user.getIdTokenResult();
-  return isAppRole(token.claims.role) ? token.claims.role : null;
+  const grantId = token.claims.authorizationGrantId;
+  return isAppRole(token.claims.role)
+    && typeof grantId === "string"
+    && /^[a-f0-9]{32}$/.test(grantId)
+    ? token.claims.role
+    : null;
 };
 
 const toSessionUser = async (user: User): Promise<SessionUser> => ({
@@ -98,7 +138,7 @@ const toAuthorizedSessionUser = async (user: User): Promise<SessionUser> => {
   await firebaseSignOut(firebaseAuth).catch(() => undefined);
   throw new AuthAdapterError(
     "app/missing-role",
-    "Authenticated identity has no application role",
+    "Authenticated identity has no current application authorization",
   );
 };
 
@@ -157,21 +197,131 @@ export const registerWithInvitation = async (input: {
   email: string;
   password: string;
   fullName: string;
-  invitationId: string;
-}): Promise<SessionUser> => {
+  invitationCode: string;
+}): Promise<
+  | { status: "verification-required"; email: string }
+  | { status: "complete"; user: SessionUser }
+> => {
   validateRegistrationInput(input);
-  if (!input.invitationId.trim()) throw new Error("Invitation is required");
+  if (!input.invitationCode.trim()) throw new Error("Invitation is required");
 
   try {
-    const credential = await createUserWithEmailAndPassword(
-      firebaseAuth,
-      input.email.trim().toLowerCase(),
-      input.password,
+    const { normalizedEmail, normalizedCode } = validateInvitationIdentity(input);
+    const invitation = await invitationOperations.validateInvitationCode(
+      normalizedCode,
+      normalizedEmail,
     );
-    await updateProfile(credential.user, { displayName: input.fullName.trim() });
-    await invitationOperations.consumeInvitation({ invitationId: input.invitationId.trim(), userId: credential.user.uid });
-    await credential.user.getIdToken(true);
-    return await toAuthorizedSessionUser(credential.user);
+    if (!invitation.valid) {
+      throw new AuthAdapterError(
+        "app/invalid-invitation",
+        "Invitation validation failed for the requested account",
+      );
+    }
+
+    if (firebaseAuth.currentUser) {
+      await firebaseSignOut(firebaseAuth);
+    }
+    const registrationUser = (
+      await signInWithEmailAndPassword(firebaseAuth, normalizedEmail, input.password)
+    ).user;
+
+    const enrollmentToken = await registrationUser.getIdTokenResult(true);
+    if (
+      typeof enrollmentToken.claims.invitationEnrollmentId !== "string"
+      || !/^[a-f0-9]{32}$/.test(enrollmentToken.claims.invitationEnrollmentId)
+    ) {
+      await firebaseSignOut(firebaseAuth).catch(() => undefined);
+      throw new AuthAdapterError(
+        "app/invalid-invitation",
+        "The account was not created by the secure invitation enrollment flow",
+      );
+    }
+
+    await updateProfile(registrationUser, { displayName: input.fullName.trim() });
+    await registrationUser.reload();
+    if (!registrationUser.emailVerified) {
+      await sendEmailVerification(registrationUser);
+      return { status: "verification-required", email: normalizedEmail };
+    }
+
+    const user = await completeInvitationRegistration({ invitationCode: normalizedCode });
+    return { status: "complete", user };
+  } catch (error) {
+    throw normalizeAuthError(error);
+  }
+};
+
+const validateInvitationIdentity = (input: {
+  email: string;
+  invitationCode: string;
+}) => {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  const normalizedCode = input.invitationCode.trim().toUpperCase();
+  if (
+    !normalizedEmail
+    || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
+    || !/^[A-Z0-9]{12}$/.test(normalizedCode)
+  ) {
+    throw new AuthAdapterError(
+      "app/invalid-invitation",
+      "Invitation identity is invalid",
+    );
+  }
+  return { normalizedEmail, normalizedCode };
+};
+
+export const requestInvitationActivation = async (input: {
+  email: string;
+  invitationCode: string;
+}): Promise<{ email: string }> => {
+  try {
+    const { normalizedEmail, normalizedCode } = validateInvitationIdentity(input);
+    const invitation = await invitationOperations.validateInvitationCode(
+      normalizedCode,
+      normalizedEmail,
+    );
+    if (!invitation.valid) {
+      throw new AuthAdapterError(
+        "app/invalid-invitation",
+        "Invitation validation failed for the requested account",
+      );
+    }
+
+    const continueUrl = new URL("/auth", window.location.origin);
+    await sendPasswordResetEmail(firebaseAuth, normalizedEmail, {
+      url: continueUrl.toString(),
+      handleCodeInApp: false,
+    });
+    return { email: normalizedEmail };
+  } catch (error) {
+    throw normalizeAuthError(error);
+  }
+};
+
+export const completeInvitationRegistration = async (input: {
+  invitationCode: string;
+}): Promise<SessionUser> => {
+  const normalizedCode = input.invitationCode.trim().toUpperCase();
+  if (!normalizedCode) throw new Error("Invitation is required");
+  const user = firebaseAuth.currentUser;
+  if (!user) {
+    throw normalizeAuthError(new AuthAdapterError(
+      "app/invitation-session-required",
+      "Invitation registration session is missing",
+    ));
+  }
+
+  try {
+    await user.reload();
+    if (!user.emailVerified) {
+      throw new AuthAdapterError(
+        "app/email-not-verified",
+        "Invitation email has not been verified",
+      );
+    }
+    await invitationOperations.consumeInvitation({ code: normalizedCode });
+    await user.getIdToken(true);
+    return await toAuthorizedSessionUser(user);
   } catch (error) {
     throw normalizeAuthError(error);
   }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,8 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { QRScannerDialog } from "@/components/auth/QRScannerDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { invitationOperations } from "@/lib/firebase/functions";
-import type { AppRole } from "@/lib/firebase/types";
-import { MISSING_ROLE_MESSAGE } from "@/lib/firebase/auth";
+import type { InvitationValidation } from "@/lib/firebase/types";
+import { EMAIL_VERIFICATION_MESSAGE, MISSING_ROLE_MESSAGE } from "@/lib/firebase/auth";
 
 // Validation schemas
 const signInSchema = z.object({
@@ -33,12 +33,41 @@ const signUpSchema = z.object({
   phone: z.string().trim().regex(/^(\+?[0-9\s\-()]+)?$/, "Please enter a valid phone number").max(20, "Phone number is too long").optional().or(z.literal("")),
 });
 
-interface InvitationData {
-  valid: boolean;
-  role: AppRole;
-  invitationId: string;
-  errorMessage: string | null;
-}
+const PENDING_INVITATION_STORAGE_KEY = "buildtrack.pendingInvitation";
+
+const readPendingInvitationCode = (): string | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = JSON.parse(
+      window.sessionStorage.getItem(PENDING_INVITATION_STORAGE_KEY) ?? "null",
+    ) as { code?: unknown; expiresAt?: unknown } | null;
+    if (
+      !stored
+      || typeof stored.code !== "string"
+      || !/^[A-Z0-9]{12}$/.test(stored.code)
+      || typeof stored.expiresAt !== "number"
+      || stored.expiresAt <= Date.now()
+    ) {
+      window.sessionStorage.removeItem(PENDING_INVITATION_STORAGE_KEY);
+      return null;
+    }
+    return stored.code;
+  } catch {
+    window.sessionStorage.removeItem(PENDING_INVITATION_STORAGE_KEY);
+    return null;
+  }
+};
+
+const rememberPendingInvitation = (code: string, expiresAt: Date) => {
+  window.sessionStorage.setItem(PENDING_INVITATION_STORAGE_KEY, JSON.stringify({
+    code,
+    expiresAt: expiresAt.getTime(),
+  }));
+};
+
+const forgetPendingInvitation = () => {
+  window.sessionStorage.removeItem(PENDING_INVITATION_STORAGE_KEY);
+};
 
 const GoogleMark = () => (
   <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4">
@@ -51,7 +80,15 @@ const GoogleMark = () => (
 
 const Auth = () => {
   const [searchParams] = useSearchParams();
-  const invitationCodeFromUrl = searchParams.get("code");
+  const location = useLocation();
+  const invitationCodeFromLocation = (
+    searchParams.get("code")
+    ?? new URLSearchParams(location.hash.replace(/^#/, "")).get("code")
+  );
+  const invitationCodeFromUrl = useRef(
+    invitationCodeFromLocation
+    ?? readPendingInvitationCode(),
+  ).current;
   
   const [isLoading, setIsLoading] = useState(false);
   const [isValidatingCode, setIsValidatingCode] = useState(!!invitationCodeFromUrl);
@@ -60,13 +97,21 @@ const Auth = () => {
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
   const [invitationCode, setInvitationCode] = useState(invitationCodeFromUrl || "");
-  const [invitationData, setInvitationData] = useState<InvitationData | null>(null);
+  const [invitationData, setInvitationData] = useState<InvitationValidation | null>(null);
+  const [validatedInvitationCode, setValidatedInvitationCode] = useState<string | null>(null);
   const [codeError, setCodeError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(invitationCodeFromUrl ? "signup" : "signin");
   const [showQRScanner, setShowQRScanner] = useState(false);
+  const [verificationPending, setVerificationPending] = useState(false);
+  const [activationContext, setActivationContext] = useState<{
+    code: string;
+    email: string;
+  } | null>(null);
   const [accessError, setAccessError] = useState<string | null>(null);
-  const [pendingAction, setPendingAction] = useState<"password" | "google" | "signup" | "signout" | null>(null);
+  const [pendingAction, setPendingAction] = useState<"password" | "google" | "activate" | "signup" | "verify" | "signout" | null>(null);
   const emailInputRef = useRef<HTMLInputElement>(null);
+  const invitationUrlHandledRef = useRef<string | null>(null);
+  const validationSequenceRef = useRef(0);
   const { toast } = useToast();
   const navigate = useNavigate();
   const {
@@ -75,12 +120,14 @@ const Auth = () => {
     signIn,
     signInWithGoogle,
     signOut,
+    completeInvitationRegistration,
     registerWithInvitation,
+    requestInvitationActivation,
   } = useAuth();
 
   const hasMissingRole =
     searchParams.get("reason") === "missing-role" ||
-    Boolean(user && !user.role) ||
+    Boolean(user && !user.role && !verificationPending) ||
     accessError === MISSING_ROLE_MESSAGE;
 
   useEffect(() => {
@@ -89,36 +136,84 @@ const Auth = () => {
 
   // Validate invitation code from URL
   useEffect(() => {
-    if (invitationCodeFromUrl) {
-      validateInvitationCode(invitationCodeFromUrl);
+    const invitationCodeToHandle = invitationCodeFromLocation ?? invitationCodeFromUrl;
+    const normalizedCode = invitationCodeToHandle?.trim().toUpperCase() ?? "";
+    if (normalizedCode && invitationUrlHandledRef.current !== normalizedCode) {
+      invitationUrlHandledRef.current = normalizedCode;
+      setInvitationCode(normalizedCode);
+      setActivationContext(null);
+      setActiveTab("signup");
+      if (
+        invitationCodeFromLocation
+        && /^[A-Z0-9]{12}$/.test(normalizedCode)
+      ) {
+        // Preserve the code only long enough to hand it across the URL cleanup.
+        // Successful validation replaces this short lease with the real expiry.
+        rememberPendingInvitation(normalizedCode, new Date(Date.now() + 60_000));
+      }
+      validateInvitationCode(normalizedCode);
+      if (invitationCodeFromLocation) {
+        const sanitizedSearch = new URLSearchParams(searchParams);
+        sanitizedSearch.delete("code");
+        navigate({
+          pathname: location.pathname,
+          search: sanitizedSearch.size > 0 ? `?${sanitizedSearch.toString()}` : "",
+          hash: "",
+        }, { replace: true });
+      }
     }
-  }, [invitationCodeFromUrl]);
+  }, [
+    invitationCodeFromLocation,
+    invitationCodeFromUrl,
+    location.pathname,
+    navigate,
+    searchParams,
+  ]);
+
+  useEffect(() => {
+    if (user && !user.role && invitationCode) {
+      setEmail(user.email);
+      setVerificationPending(true);
+      setActiveTab("signup");
+    }
+  }, [invitationCode, user]);
 
   const validateInvitationCode = async (code: string) => {
-    if (!code.trim()) {
-      setInvitationData(null);
-      setCodeError(null);
+    const normalizedCode = code.trim().toUpperCase();
+    const sequence = ++validationSequenceRef.current;
+    setInvitationData(null);
+    setValidatedInvitationCode(null);
+    setCodeError(null);
+    if (!normalizedCode) {
+      setIsValidatingCode(false);
       return;
     }
 
     setIsValidatingCode(true);
-    setCodeError(null);
 
     try {
-      const result = await invitationOperations.validateInvitationCode(code.trim().toUpperCase());
+      const result = await invitationOperations.validateInvitationCode(normalizedCode);
+      if (sequence !== validationSequenceRef.current) return;
 
       if (result?.valid) {
         setInvitationData(result);
+        setValidatedInvitationCode(normalizedCode);
         setCodeError(null);
+        rememberPendingInvitation(normalizedCode, result.expiresAt);
       } else {
         setInvitationData(null);
+        setValidatedInvitationCode(null);
         setCodeError(result?.errorMessage || "Invalid invitation code");
+        if (readPendingInvitationCode() === normalizedCode) forgetPendingInvitation();
       }
     } catch {
+      if (sequence !== validationSequenceRef.current) return;
       setInvitationData(null);
+      setValidatedInvitationCode(null);
       setCodeError("Failed to validate invitation code");
+      if (readPendingInvitationCode() === normalizedCode) forgetPendingInvitation();
     } finally {
-      setIsValidatingCode(false);
+      if (sequence === validationSequenceRef.current) setIsValidatingCode(false);
     }
   };
 
@@ -126,10 +221,18 @@ const Auth = () => {
     e.preventDefault();
     
     // Must have valid invitation
-    if (!invitationData?.valid) {
+    const normalizedInvitationCode = invitationCode.trim().toUpperCase();
+    const normalizedEmail = email.trim().toLowerCase();
+    if (
+      isValidatingCode
+      || !invitationData?.valid
+      || validatedInvitationCode !== normalizedInvitationCode
+      || activationContext?.code !== normalizedInvitationCode
+      || activationContext.email !== normalizedEmail
+    ) {
       toast({
-        title: "Invalid Invitation",
-        description: "You need a valid QR code invitation to sign up. Please contact an administrator.",
+        title: "Secure activation required",
+        description: "Use the activation email for this invitation before setting the account password.",
         variant: "destructive",
       });
       return;
@@ -152,22 +255,113 @@ const Auth = () => {
     setIsLoading(true);
     setPendingAction("signup");
     try {
-      await registerWithInvitation({
+      const result = await registerWithInvitation({
         email: validatedData.email,
         password: validatedData.password,
         fullName: validatedData.fullName,
-        invitationId: invitationData.invitationId,
+        invitationCode: normalizedInvitationCode,
       });
+
+      if (result.status === "verification-required") {
+        rememberPendingInvitation(normalizedInvitationCode, invitationData.expiresAt);
+        setVerificationPending(true);
+        toast({
+          title: "Verify your email",
+          description: `We sent a verification link to ${result.email}. Return here after opening it.`,
+        });
+        return;
+      }
 
       toast({
         title: "Account created!",
-        description: `Welcome to BuildTrack Pro as a ${invitationData.role}`,
+        description: `Welcome to BuildTrack Pro as a ${result.user.role}`,
       });
+      forgetPendingInvitation();
       navigate("/dashboard");
     } catch (error) {
       toast({
         title: "Sign up failed",
         description: error instanceof Error ? error.message : "Unable to create account",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+      setPendingAction(null);
+    }
+  };
+
+  const prepareInvitationActivation = async (sendActivationEmail: boolean) => {
+    const normalizedInvitationCode = invitationCode.trim().toUpperCase();
+    const normalizedEmail = email.trim().toLowerCase();
+    const emailValidation = z.string().email().max(255).safeParse(normalizedEmail);
+    if (
+      !emailValidation.success
+      || isValidatingCode
+      || !invitationData?.valid
+      || validatedInvitationCode !== normalizedInvitationCode
+    ) {
+      toast({
+        title: "Invalid invitation details",
+        description: "Enter the exact invited email and a valid invitation code.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    setPendingAction("activate");
+    try {
+      if (sendActivationEmail) {
+        await requestInvitationActivation({
+          email: normalizedEmail,
+          invitationCode: normalizedInvitationCode,
+        });
+      } else {
+        const validation = await invitationOperations.validateInvitationCode(
+          normalizedInvitationCode,
+          normalizedEmail,
+        );
+        if (!validation.valid) throw new Error("Invitation is invalid or does not match this email");
+      }
+      rememberPendingInvitation(normalizedInvitationCode, invitationData.expiresAt);
+      setActivationContext({ code: normalizedInvitationCode, email: normalizedEmail });
+      toast({
+        title: sendActivationEmail ? "Secure activation email sent" : "Continue secure activation",
+        description: sendActivationEmail
+          ? `Open the password link sent to ${normalizedEmail}, set your password, then return here.`
+          : "Enter the password you set from the secure email.",
+      });
+    } catch (error) {
+      toast({
+        title: "Activation failed",
+        description: error instanceof Error ? error.message : "Unable to prepare secure activation",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+      setPendingAction(null);
+    }
+  };
+
+  const handleCompleteInvitation = async () => {
+    setIsLoading(true);
+    setPendingAction("verify");
+    try {
+      const completedUser = await completeInvitationRegistration({
+        invitationCode: invitationCode.trim().toUpperCase(),
+      });
+      setVerificationPending(false);
+      forgetPendingInvitation();
+      toast({
+        title: "Email verified",
+        description: `Your invitation was accepted and the ${completedUser.role} role is now active.`,
+      });
+      navigate("/dashboard");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to finish registration";
+      toast({
+        title: message === EMAIL_VERIFICATION_MESSAGE ? "Verification still pending" : "Sign up failed",
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -198,6 +392,7 @@ const Auth = () => {
     setPendingAction("password");
     try {
       await signIn(validatedData.email, validatedData.password);
+      forgetPendingInvitation();
 
       toast({
         title: "Welcome back!",
@@ -225,6 +420,7 @@ const Auth = () => {
     setPendingAction("google");
     try {
       await signInWithGoogle();
+      forgetPendingInvitation();
       toast({
         title: "Welcome back!",
         description: "Successfully signed in with Google",
@@ -249,6 +445,7 @@ const Auth = () => {
     setPendingAction("signout");
     try {
       await signOut();
+      forgetPendingInvitation();
       setEmail("");
       setPassword("");
       setAccessError(null);
@@ -265,6 +462,9 @@ const Auth = () => {
       setPendingAction(null);
     }
   };
+
+  const activationReady = activationContext?.code === invitationCode.trim().toUpperCase()
+    && activationContext.email === email.trim().toLowerCase();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-secondary/5 flex items-center justify-center p-4">
@@ -386,16 +586,21 @@ const Auth = () => {
                       placeholder="Enter code from QR scan"
                       value={invitationCode}
                       onChange={(e) => {
-                        setInvitationCode(e.target.value.toUpperCase());
-                        if (e.target.value.length >= 12) {
-                          validateInvitationCode(e.target.value);
+                        const nextCode = e.target.value.toUpperCase();
+                        setInvitationCode(nextCode);
+                        setActivationContext(null);
+                        if (nextCode.length >= 12) {
+                          validateInvitationCode(nextCode);
                         } else {
+                          validationSequenceRef.current += 1;
+                          setIsValidatingCode(false);
                           setInvitationData(null);
+                          setValidatedInvitationCode(null);
                           setCodeError(null);
                         }
                       }}
                       onBlur={() => validateInvitationCode(invitationCode)}
-                      disabled={isLoading}
+                      disabled={isLoading || verificationPending}
                       required
                       maxLength={12}
                       className="font-mono tracking-wider uppercase"
@@ -406,7 +611,7 @@ const Auth = () => {
                   </div>
                   
                   {/* Validation Status */}
-                  {invitationData?.valid && (
+                  {invitationData?.valid && validatedInvitationCode === invitationCode.trim().toUpperCase() && (
                     <div className="flex items-center gap-2 text-sm text-green-600">
                       <Badge variant="outline" className="border-green-500 text-green-600">
                         ✓ Valid invitation for {invitationData.role}
@@ -426,22 +631,27 @@ const Auth = () => {
                   )}
                 </div>
 
-                {/* Only show rest of form if invitation is valid */}
-                {invitationData?.valid && (
+                {verificationPending && (
+                  <div role="status" className="space-y-3 rounded-md border border-primary/30 bg-primary/5 p-4 text-sm">
+                    <p className="font-medium text-foreground">Check your inbox before we assign the role</p>
+                    <p className="text-muted-foreground">
+                      Open the Firebase verification link for {email}, then return to this tab. The invitation is not consumed until the address is verified.
+                    </p>
+                    <Button
+                      type="button"
+                      className="w-full"
+                      disabled={isLoading}
+                      onClick={() => void handleCompleteInvitation()}
+                    >
+                      {pendingAction === "verify" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      I verified my email
+                    </Button>
+                  </div>
+                )}
+
+                {/* Secure enrollment is split from password ownership proof. */}
+                {invitationData?.valid && !verificationPending && (
                   <>
-                    <div className="space-y-2">
-                      <Label htmlFor="signup-name">Full Name *</Label>
-                      <Input
-                        id="signup-name"
-                        type="text"
-                        placeholder="John Doe"
-                        value={fullName}
-                        onChange={(e) => setFullName(e.target.value)}
-                        disabled={isLoading}
-                        required
-                        maxLength={100}
-                      />
-                    </div>
                     <div className="space-y-2">
                       <Label htmlFor="signup-email">Email *</Label>
                       <Input
@@ -455,42 +665,97 @@ const Auth = () => {
                         maxLength={255}
                       />
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="signup-phone">Phone</Label>
-                      <Input
-                        id="signup-phone"
-                        type="tel"
-                        placeholder="+1 (555) 000-0000"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        disabled={isLoading}
-                        maxLength={20}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="signup-password">Password *</Label>
-                      <Input
-                        id="signup-password"
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        disabled={isLoading}
-                        required
-                        maxLength={72}
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Min 8 characters with uppercase, lowercase, and number
-                      </p>
-                    </div>
-                    <Button type="submit" className="w-full" disabled={isLoading}>
-                      {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Create Account as {invitationData.role.charAt(0).toUpperCase() + invitationData.role.slice(1)}
-                    </Button>
+
+                    {!activationReady ? (
+                      <div role="status" className="space-y-3 rounded-md border border-primary/30 bg-primary/5 p-4 text-sm">
+                        <p className="font-medium text-foreground">Prove ownership of the invited inbox</p>
+                        <p className="text-muted-foreground">
+                          Firebase will send a secure password link. The invitation code and email are never placed in that link.
+                        </p>
+                        <Button
+                          type="button"
+                          className="w-full"
+                          disabled={isLoading || isValidatingCode}
+                          onClick={() => void prepareInvitationActivation(true)}
+                        >
+                          {pendingAction === "activate" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                          Send secure activation email
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full"
+                          disabled={isLoading || isValidatingCode}
+                          onClick={() => void prepareInvitationActivation(false)}
+                        >
+                          I already set my password
+                        </Button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm text-muted-foreground">
+                          Use the password you set from the Firebase email. If you have not opened it yet, do that before continuing.
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="signup-name">Full Name *</Label>
+                          <Input
+                            id="signup-name"
+                            type="text"
+                            placeholder="John Doe"
+                            value={fullName}
+                            onChange={(e) => setFullName(e.target.value)}
+                            disabled={isLoading}
+                            required
+                            maxLength={100}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="signup-phone">Phone</Label>
+                          <Input
+                            id="signup-phone"
+                            type="tel"
+                            placeholder="+1 (555) 000-0000"
+                            value={phone}
+                            onChange={(e) => setPhone(e.target.value)}
+                            disabled={isLoading}
+                            maxLength={20}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="signup-password">Password *</Label>
+                          <Input
+                            id="signup-password"
+                            type="password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            disabled={isLoading}
+                            required
+                            maxLength={72}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Min 8 characters with uppercase, lowercase, and number
+                          </p>
+                        </div>
+                        <Button type="submit" className="w-full" disabled={isLoading || isValidatingCode}>
+                          {pendingAction === "signup" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                          Activate Account as {invitationData.role.charAt(0).toUpperCase() + invitationData.role.slice(1)}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="w-full"
+                          disabled={isLoading}
+                          onClick={() => void prepareInvitationActivation(true)}
+                        >
+                          Resend activation email
+                        </Button>
+                      </>
+                    )}
                   </>
                 )}
 
                 {/* QR Scanner Button */}
-                {!invitationData?.valid && !isValidatingCode && (
+                {!invitationData?.valid && !isValidatingCode && !verificationPending && (
                   <Button
                     type="button"
                     variant="outline"
@@ -517,6 +782,7 @@ const Auth = () => {
                   onClose={() => setShowQRScanner(false)}
                   onScan={(code) => {
                     setInvitationCode(code.toUpperCase());
+                    setActivationContext(null);
                     validateInvitationCode(code);
                   }}
                 />

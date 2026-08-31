@@ -10,21 +10,112 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { deleteDoc, doc, getDoc, serverTimestamp, setDoc, updateDoc, writeBatch } from "firebase/firestore";
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  serverTimestamp,
+  setDoc,
+  Timestamp,
+  updateDoc,
+  writeBatch,
+} from "firebase/firestore";
 import { readFileSync } from "node:fs";
 
 const projectId = "demo-jobsite-jedi";
 let testEnv: RulesTestEnvironment;
 
+type AuthorizationRole = "admin" | "manager" | "builder";
+
+const authorizationGrantIds = {
+  builder: "1".repeat(32),
+  otherBuilder: "2".repeat(32),
+  manager: "3".repeat(32),
+  admin: "4".repeat(32),
+} as const;
+
+const authorizedDb = (
+  uid: string,
+  role: AuthorizationRole,
+  grantId: string,
+  name: string,
+) => testEnv.authenticatedContext(uid, {
+  role,
+  authorizationGrantId: grantId,
+  name,
+}).firestore();
+
 const builderDb = () =>
-  testEnv.authenticatedContext("builder-1", { role: "builder", name: "Builder One" }).firestore();
+  authorizedDb("builder-1", "builder", authorizationGrantIds.builder, "Builder One");
 const otherBuilderDb = () =>
-  testEnv.authenticatedContext("builder-2", { role: "builder", name: "Builder Two" }).firestore();
+  authorizedDb("builder-2", "builder", authorizationGrantIds.otherBuilder, "Builder Two");
 const managerDb = () =>
-  testEnv.authenticatedContext("manager-1", { role: "manager", name: "Manager One" }).firestore();
+  authorizedDb("manager-1", "manager", authorizationGrantIds.manager, "Manager One");
 const adminDb = () =>
-  testEnv.authenticatedContext("admin-1", { role: "admin", name: "Admin One" }).firestore();
+  authorizedDb("admin-1", "admin", authorizationGrantIds.admin, "Admin One");
+const invitationPlaceholderDb = () => testEnv.authenticatedContext("placeholder-1", {
+  invitationEnrollmentId: "e".repeat(32),
+  name: "Invitation Placeholder",
+}).firestore();
 const anonymousDb = () => testEnv.unauthenticatedContext().firestore();
+
+const seedAuthorizationGrant = async (
+  uid: string,
+  role: AuthorizationRole,
+  grantId: string,
+  active = true,
+) => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), `authorizationGrants/${uid}`), {
+      active,
+      role,
+      grantId,
+      updatedAt: Timestamp.now(),
+    });
+  });
+};
+
+const seedValidAuthorizationGrants = async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await Promise.all([
+      setDoc(doc(db, "authorizationGrants/builder-1"), {
+        active: true,
+        role: "builder",
+        grantId: authorizationGrantIds.builder,
+        updatedAt: Timestamp.now(),
+      }),
+      setDoc(doc(db, "authorizationGrants/builder-2"), {
+        active: true,
+        role: "builder",
+        grantId: authorizationGrantIds.otherBuilder,
+        updatedAt: Timestamp.now(),
+      }),
+      setDoc(doc(db, "authorizationGrants/manager-1"), {
+        active: true,
+        role: "manager",
+        grantId: authorizationGrantIds.manager,
+        updatedAt: Timestamp.now(),
+      }),
+      setDoc(doc(db, "authorizationGrants/admin-1"), {
+        active: true,
+        role: "admin",
+        grantId: authorizationGrantIds.admin,
+        updatedAt: Timestamp.now(),
+      }),
+    ]);
+  });
+};
+
+const validSupplierData = (uid: string, normalizedName: string) => ({
+  name: `Authorization probe ${normalizedName}`,
+  normalizedName,
+  createdBy: uid,
+  createdAt: serverTimestamp(),
+  updatedAt: serverTimestamp(),
+});
 
 const seedProject = async (
   id: string,
@@ -43,6 +134,45 @@ const seedProject = async (
       status: "active",
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
+    });
+  });
+};
+
+const seedInvitation = async (id: string, role: "admin" | "manager" | "builder" = "admin") => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const expiresAt = Timestamp.fromMillis(Date.now() + 30 * 60 * 1000);
+    await setDoc(doc(context.firestore(), `invitations/${id}`), {
+      schemaVersion: 4,
+      codeHash: "a".repeat(64),
+      targetEmailHash: "b".repeat(64),
+      targetEmailSalt: "c".repeat(32),
+      targetLockId: "d".repeat(64),
+      targetUid: "placeholder-1",
+      targetEnrollmentHash: "e".repeat(64),
+      requestKeyHash: "f".repeat(64),
+      generation: 1,
+      encryptedCode: "A".repeat(16),
+      codeEncryptionIv: "B".repeat(16),
+      codeEncryptionTag: "C".repeat(22),
+      role,
+      status: "pending",
+      claimAssignmentState: "not_started",
+      createdBy: "admin-1",
+      createdByRole: "admin",
+      createdAt: Timestamp.now(),
+      expiresAt,
+      usedBy: null,
+      usedAt: null,
+      claimAssignedAt: null,
+    });
+    await setDoc(doc(context.firestore(), `invitationTargets/${"d".repeat(64)}`), {
+      invitationId: id,
+      requestKeyHash: "f".repeat(64),
+      generation: 1,
+      status: "pending",
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      expiresAt,
     });
   });
 };
@@ -68,10 +198,101 @@ describe("Firestore authorization rules", () => {
         rules: readFileSync("firestore.rules", "utf8"),
       },
     });
+    await seedValidAuthorizationGrants();
   });
 
   afterAll(async () => {
     await testEnv.cleanup();
+  });
+
+  test("does not treat an invitation enrollment marker as authorization", async () => {
+    await seedProject("project-placeholder-denied");
+    await seedInvitation("invitation-placeholder-denied", "builder");
+    const placeholder = invitationPlaceholderDb();
+
+    await assertFails(getDoc(doc(placeholder, "projects/project-placeholder-denied")));
+    await assertFails(getDoc(doc(placeholder, "invitations/invitation-placeholder-denied")));
+    await assertFails(getDoc(doc(placeholder, `invitationTargets/${"d".repeat(64)}`)));
+    await assertFails(setDoc(doc(placeholder, "projects/placeholder-forged"), {
+      builderId: "placeholder-1",
+      ownerId: "placeholder-1",
+      createdBy: "placeholder-1",
+      name: "Forged project",
+    }));
+  });
+
+  test("rejects role claims without a grant document or with an inactive grant", async () => {
+    const missingUid = "manager-missing-grant";
+    const missingGrantId = "5".repeat(32);
+    const inactiveUid = "manager-inactive-grant";
+    const inactiveGrantId = "6".repeat(32);
+    await seedAuthorizationGrant(inactiveUid, "manager", inactiveGrantId, false);
+
+    await assertFails(setDoc(
+      doc(
+        authorizedDb(missingUid, "manager", missingGrantId, "Missing Grant Manager"),
+        "suppliers/authz-missing-grant",
+      ),
+      validSupplierData(missingUid, "authz-missing-grant"),
+    ));
+    await assertFails(setDoc(
+      doc(
+        authorizedDb(inactiveUid, "manager", inactiveGrantId, "Inactive Grant Manager"),
+        "suppliers/authz-inactive-grant",
+      ),
+      validSupplierData(inactiveUid, "authz-inactive-grant"),
+    ));
+  });
+
+  test("rejects role and grant identifiers that do not match the server registry", async () => {
+    const roleMismatchUid = "manager-role-mismatch";
+    const roleMismatchGrantId = "7".repeat(32);
+    const grantMismatchUid = "manager-id-mismatch";
+    const tokenGrantId = "8".repeat(32);
+    await seedAuthorizationGrant(roleMismatchUid, "builder", roleMismatchGrantId);
+    await seedAuthorizationGrant(grantMismatchUid, "manager", "9".repeat(32));
+
+    await assertFails(setDoc(
+      doc(
+        authorizedDb(roleMismatchUid, "manager", roleMismatchGrantId, "Role Mismatch Manager"),
+        "suppliers/authz-role-mismatch",
+      ),
+      validSupplierData(roleMismatchUid, "authz-role-mismatch"),
+    ));
+    await assertFails(setDoc(
+      doc(
+        authorizedDb(grantMismatchUid, "manager", tokenGrantId, "Grant Mismatch Manager"),
+        "suppliers/authz-id-mismatch",
+      ),
+      validSupplierData(grantMismatchUid, "authz-id-mismatch"),
+    ));
+  });
+
+  test("revokes an old token as soon as its authorization grant rotates", async () => {
+    const uid = "manager-rotated-grant";
+    const oldGrantId = "a".repeat(32);
+    const newGrantId = "b".repeat(32);
+    const staleDb = authorizedDb(uid, "manager", oldGrantId, "Rotated Grant Manager");
+    await seedAuthorizationGrant(uid, "manager", oldGrantId);
+
+    await assertSucceeds(setDoc(
+      doc(staleDb, "suppliers/authz-before-rotation"),
+      validSupplierData(uid, "authz-before-rotation"),
+    ));
+
+    await seedAuthorizationGrant(uid, "manager", newGrantId);
+
+    await assertFails(setDoc(
+      doc(staleDb, "suppliers/authz-stale-token"),
+      validSupplierData(uid, "authz-stale-token"),
+    ));
+    await assertSucceeds(setDoc(
+      doc(
+        authorizedDb(uid, "manager", newGrantId, "Rotated Grant Manager"),
+        "suppliers/authz-fresh-token",
+      ),
+      validSupplierData(uid, "authz-fresh-token"),
+    ));
   });
 
   test("keeps assigned projects server-created and scoped to their builder", async () => {
@@ -334,13 +555,45 @@ describe("Firestore authorization rules", () => {
     await assertSucceeds(stopBatch.commit());
   }, 15_000);
 
-  test("does not expose invitations to builders or permit direct writes", async () => {
-    const invitation = doc(managerDb(), "invitations/invitation-1");
-    await assertFails(
-      setDoc(invitation, { role: "builder", status: "pending" }),
-    );
-    await assertFails(getDoc(doc(builderDb(), invitation.path)));
-    await assertFails(getDoc(doc(anonymousDb(), invitation.path)));
+  test("denies all client reads, lists and writes for invitations", async () => {
+    const path = "invitations/invitation-rules-v3";
+    const targetPath = `invitationTargets/${"d".repeat(64)}`;
+    await seedInvitation("invitation-rules-v3");
+
+    await assertFails(getDoc(doc(managerDb(), path)));
+    await assertFails(getDocs(collection(managerDb(), "invitations")));
+    await assertFails(getDoc(doc(adminDb(), path)));
+    await assertFails(getDocs(collection(adminDb(), "invitations")));
+    await assertFails(getDoc(doc(builderDb(), path)));
+    await assertFails(getDoc(doc(anonymousDb(), path)));
+    await assertFails(getDoc(doc(managerDb(), targetPath)));
+    await assertFails(getDocs(collection(adminDb(), "invitationTargets")));
+    await assertFails(getDoc(doc(builderDb(), targetPath)));
+    await assertFails(getDoc(doc(anonymousDb(), targetPath)));
+
+    await assertFails(setDoc(doc(managerDb(), "invitations/manager-forged"), {
+      schemaVersion: 4,
+      role: "admin",
+      status: "pending",
+    }));
+    await assertFails(setDoc(doc(adminDb(), "invitations/admin-forged"), {
+      schemaVersion: 4,
+      role: "admin",
+      status: "pending",
+    }));
+    await assertFails(updateDoc(doc(managerDb(), path), { role: "admin" }));
+    await assertFails(updateDoc(doc(adminDb(), path), { status: "used", usedBy: "admin-1" }));
+    await assertFails(deleteDoc(doc(managerDb(), path)));
+    await assertFails(deleteDoc(doc(adminDb(), path)));
+    await assertFails(setDoc(doc(managerDb(), "invitationTargets/manager-forged"), {
+      invitationId: "manager-forged",
+      status: "pending",
+    }));
+    await assertFails(setDoc(doc(adminDb(), "invitationTargets/admin-forged"), {
+      invitationId: "admin-forged",
+      status: "pending",
+    }));
+    await assertFails(deleteDoc(doc(adminDb(), targetPath)));
   });
 
   test("keeps invoice records server-written and isolates financial data", async () => {

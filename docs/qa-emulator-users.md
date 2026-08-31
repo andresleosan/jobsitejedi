@@ -1,16 +1,18 @@
 # Usuarios QA locales de Firebase Auth
 
 BuildTrack Pro tiene tres roles de aplicación: `admin`, `manager` y `builder`. `admin` hereda las
-operaciones de manager y gobierna invitaciones privilegiadas; manager solo puede invitar builders.
+operaciones de manager y puede invitar managers/builders; manager solo puede invitar builders. Un
+nuevo admin se provisiona por el runbook auditado, nunca por invitación autoservicio.
 
-| Correo | Claim esperado | Uso QA |
+| Correo | Rol y grant esperados | Uso QA |
 |---|---|---|
-| `admin@admin.com` | `admin` | Gobierno de roles y recorridos operativos heredados |
-| `manager@manager.com` | `manager` | Recorridos del dashboard y operaciones de manager |
-| `builder@builder.com` | `builder` | Recorridos del dashboard y operaciones de builder |
+| `admin@admin.com` | `admin` + grant local activo | Gobierno de roles y recorridos operativos heredados |
+| `manager@manager.com` | `manager` + grant local activo | Recorridos del dashboard y operaciones de manager |
+| `builder@builder.com` | `builder` + grant local activo | Recorridos del dashboard y operaciones de builder |
 
-Estos usuarios son exclusivamente efimeros y locales. El script se niega a operar si Auth no
-apunta a loopback o si el proyecto no es `demo-jobsite-jedi`. La contrasena se recibe mediante
+Estos usuarios son exclusivamente efimeros y locales. El script se niega a operar si Auth o
+Firestore no apuntan a loopback o si el proyecto no es `demo-jobsite-jedi`. Cada ejecución rota el
+`authorizationGrantId` y escribe el documento server-only exacto. La contrasena se recibe mediante
 `QA_TEST_PASSWORD`; no se versiona ni se imprime.
 
 ## Preparacion en PowerShell
@@ -27,6 +29,7 @@ apunta a loopback o si el proyecto no es `demo-jobsite-jedi`. La contrasena se r
 
    ```powershell
    $env:FIREBASE_AUTH_EMULATOR_HOST = "127.0.0.1:9099"
+   $env:FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080"
    $env:GCLOUD_PROJECT = "demo-jobsite-jedi"
    $qaSecurePassword = Read-Host "QA password" -AsSecureString
    $qaPasswordPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($qaSecurePassword)

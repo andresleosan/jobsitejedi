@@ -11,18 +11,30 @@ const https_1 = require("firebase-functions/v2/https");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
 const spreadsheet_js_1 = require("./spreadsheet.js");
 const invoice_file_js_1 = require("./invoice-file.js");
+const auth_session_js_1 = require("./auth-session.js");
 (0, v2_1.setGlobalOptions)({ region: "europe-west1" });
 // Evaluated only while Firebase discovers the deployment manifest. The release
 // command must opt in explicitly after the observation gate; absence is safe.
 const ENFORCE_APP_CHECK = process.env.ENFORCE_APP_CHECK === "true";
 const appCheckOptions = { enforceAppCheck: ENFORCE_APP_CHECK };
 (0, app_1.initializeApp)();
-const INVITATION_TTL_MS = 5 * 60 * 1000;
+const INVITATION_TTL_MS = 30 * 60 * 1000;
+const INVITATION_ASSIGNMENT_RECOVERY_MS = 2 * 60 * 1000;
 const INVITATION_CODE_LENGTH = 12;
+const INVITATION_SCHEMA_VERSION = 4;
+const INVITATION_EMAIL_SALT_BYTES = 16;
+const INVITATION_ENROLLMENT_ID_BYTES = 16;
+const INVITATION_REQUEST_KEY_BYTES = 32;
+const AUTHORIZATION_GRANT_ID_BYTES = 16;
 const isAppRole = (value) => value === "admin" || value === "manager" || value === "builder";
 const isManagementRole = (value) => value === "admin" || value === "manager";
-const canInviteRole = (actorRole, targetRole) => actorRole === "admin" || targetRole === "builder";
+const canInviteRole = (actorRole, targetRole) => targetRole === "builder" || (actorRole === "admin" && targetRole === "manager");
 const isInvitationStatus = (value) => value === "pending" || value === "used";
+const isInvitationClaimAssignmentState = (value) => value === "not_started"
+    || value === "pending"
+    || value === "completed"
+    || value === "failed";
+const isInvitationTargetStatus = (value) => value === "pending" || value === "assigning" || value === "completed" || value === "failed";
 const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const requireText = (value, label, maximumLength) => {
     if (typeof value !== "string") {
@@ -129,13 +141,164 @@ const normalizeInvitationCode = (value) => {
     return /^[A-Z0-9]{12}$/.test(code) ? code : "";
 };
 const hashInvitationCode = (code) => (0, node_crypto_1.createHash)("sha256").update(code).digest("hex");
+const normalizeInvitationEmail = (value) => {
+    if (typeof value !== "string")
+        return "";
+    const email = value.trim().toLowerCase();
+    if (!email
+        || email.length > 254
+        || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return "";
+    }
+    return email;
+};
+const hashInvitationEmail = (email, salt) => (0, node_crypto_1.createHash)("sha256").update(`${salt}:${email}`).digest("hex");
+const hashInvitationTargetKey = (email) => (0, node_crypto_1.createHash)("sha256").update(`invitation-target-v1:${email}`).digest("hex");
+const hashInvitationEnrollmentId = (enrollmentId) => (0, node_crypto_1.createHash)("sha256").update(`invitation-enrollment-v1:${enrollmentId}`).digest("hex");
+const normalizeInvitationRequestKey = (value) => {
+    if (typeof value !== "string")
+        return "";
+    const requestKey = value.trim().toLowerCase();
+    return /^[a-f0-9]{64}$/.test(requestKey) ? requestKey : "";
+};
+const hashInvitationRequestKey = (actorId, targetLockId, requestKey) => (0, node_crypto_1.createHash)("sha256")
+    .update(`invitation-request-v1:${actorId}:${targetLockId}:${requestKey}`)
+    .digest("hex");
+const invitationEncryptionKey = (requestKey) => (0, node_crypto_1.createHash)("sha256")
+    .update(`invitation-code-encryption-v1:${requestKey}`)
+    .digest();
+const encryptInvitationCode = (code, requestKey) => {
+    const iv = (0, node_crypto_1.randomBytes)(12);
+    const cipher = (0, node_crypto_1.createCipheriv)("aes-256-gcm", invitationEncryptionKey(requestKey), iv);
+    const encrypted = Buffer.concat([cipher.update(code, "utf8"), cipher.final()]);
+    return {
+        encryptedCode: encrypted.toString("base64url"),
+        codeEncryptionIv: iv.toString("base64url"),
+        codeEncryptionTag: cipher.getAuthTag().toString("base64url"),
+    };
+};
+const decryptInvitationCode = (encrypted, requestKey) => {
+    try {
+        const decipher = (0, node_crypto_1.createDecipheriv)("aes-256-gcm", invitationEncryptionKey(requestKey), Buffer.from(encrypted.codeEncryptionIv, "base64url"));
+        decipher.setAuthTag(Buffer.from(encrypted.codeEncryptionTag, "base64url"));
+        return Buffer.concat([
+            decipher.update(Buffer.from(encrypted.encryptedCode, "base64url")),
+            decipher.final(),
+        ]).toString("utf8");
+    }
+    catch {
+        return "";
+    }
+};
+const isEncryptedInvitationCode = (value) => typeof value.encryptedCode === "string"
+    && /^[A-Za-z0-9_-]{16}$/.test(value.encryptedCode)
+    && typeof value.codeEncryptionIv === "string"
+    && /^[A-Za-z0-9_-]{16}$/.test(value.codeEncryptionIv)
+    && typeof value.codeEncryptionTag === "string"
+    && /^[A-Za-z0-9_-]{22}$/.test(value.codeEncryptionTag);
 const createInvitationCode = () => (0, node_crypto_1.randomBytes)(INVITATION_CODE_LENGTH / 2).toString("hex").toUpperCase();
+const createInvitationPlaceholderPassword = () => `${(0, node_crypto_1.randomBytes)(48).toString("base64url")}Aa1!`;
+const getAuthErrorCode = (error) => (typeof error === "object"
+    && error !== null
+    && "code" in error
+    && typeof error.code === "string"
+    ? error.code
+    : "");
+const getInvitationEnrollmentId = (user) => {
+    const enrollmentId = user.customClaims?.invitationEnrollmentId;
+    return typeof enrollmentId === "string" && /^[a-f0-9]{32}$/.test(enrollmentId)
+        ? enrollmentId
+        : "";
+};
+const getAuthorizationGrantId = (user) => {
+    const grantId = user.customClaims?.authorizationGrantId;
+    return typeof grantId === "string" && /^[a-f0-9]{32}$/.test(grantId)
+        ? grantId
+        : "";
+};
+const authorizationGrantMatches = (data, role, grantId) => Object.keys(data).sort().join(",") === "active,grantId,role,updatedAt"
+    && data.active === true
+    && data.role === role
+    && data.grantId === grantId
+    && data.updatedAt instanceof firestore_1.Timestamp;
+const requireCurrentAuthorizationGrant = async (userId, role, grantId) => {
+    if (!grantId) {
+        throw new https_1.HttpsError("permission-denied", "A current authorized session is required");
+    }
+    const snapshot = await (0, firestore_1.getFirestore)().collection("authorizationGrants").doc(userId).get();
+    if (!snapshot.exists || !authorizationGrantMatches(snapshot.data() ?? {}, role, grantId)) {
+        throw new https_1.HttpsError("permission-denied", "A current authorized session is required");
+    }
+};
+const requireEligibleInvitationTarget = (user) => {
+    const enrollmentId = getInvitationEnrollmentId(user);
+    if (user.disabled
+        || user.customClaims?.role !== undefined
+        || !enrollmentId) {
+        throw new https_1.HttpsError("failed-precondition", "The target account is not eligible for self-service invitation enrollment");
+    }
+    return enrollmentId;
+};
+const getOrCreateInvitationTarget = async (targetEmail) => {
+    try {
+        const existing = await (0, auth_1.getAuth)().getUserByEmail(targetEmail);
+        return {
+            user: existing,
+            enrollmentId: requireEligibleInvitationTarget(existing),
+        };
+    }
+    catch (error) {
+        if (error instanceof https_1.HttpsError)
+            throw error;
+        if (getAuthErrorCode(error) !== "auth/user-not-found") {
+            throw new https_1.HttpsError("internal", "Unable to validate the target account");
+        }
+    }
+    const enrollmentId = (0, node_crypto_1.randomBytes)(INVITATION_ENROLLMENT_ID_BYTES).toString("hex");
+    let createdUser;
+    try {
+        createdUser = await (0, auth_1.getAuth)().createUser({
+            email: targetEmail,
+            emailVerified: false,
+            disabled: false,
+            password: createInvitationPlaceholderPassword(),
+        });
+    }
+    catch (error) {
+        if (getAuthErrorCode(error) !== "auth/email-already-exists") {
+            throw new https_1.HttpsError("internal", "Unable to prepare the target account");
+        }
+        const racedUser = await (0, auth_1.getAuth)().getUserByEmail(targetEmail).catch(() => null);
+        if (!racedUser) {
+            throw new https_1.HttpsError("internal", "Unable to validate the target account");
+        }
+        return {
+            user: racedUser,
+            enrollmentId: requireEligibleInvitationTarget(racedUser),
+        };
+    }
+    try {
+        await (0, auth_1.getAuth)().setCustomUserClaims(createdUser.uid, {
+            invitationEnrollmentId: enrollmentId,
+        });
+        const preparedUser = await (0, auth_1.getAuth)().getUser(createdUser.uid);
+        if (getInvitationEnrollmentId(preparedUser) !== enrollmentId) {
+            throw new Error("Invitation enrollment marker did not persist");
+        }
+        return { user: preparedUser, enrollmentId };
+    }
+    catch {
+        await (0, auth_1.getAuth)().deleteUser(createdUser.uid).catch(() => undefined);
+        throw new https_1.HttpsError("internal", "Unable to prepare the target account");
+    }
+};
 const invalidInvitation = () => ({
     valid: false,
-    role: "builder",
-    invitationId: "",
+    role: null,
+    expiresAt: null,
     errorMessage: "Invitation code is invalid or expired",
 });
+const invalidInvitationError = () => new https_1.HttpsError("failed-precondition", "Invitation code is invalid or expired");
 const getJobImportPayload = (value, managerId) => {
     if (!isRecord(value)) {
         throw new https_1.HttpsError("invalid-argument", "Spreadsheet import details are required");
@@ -236,34 +399,6 @@ const enforceRateLimit = async (subjectId, operation) => {
         });
     });
 };
-const assignClaimsOrCompensate = async (userId, claims, invitationReference) => {
-    try {
-        await (0, auth_1.getAuth)().setCustomUserClaims(userId, claims);
-    }
-    catch {
-        if (invitationReference) {
-            try {
-                await (0, firestore_1.getFirestore)().runTransaction(async (transaction) => {
-                    const snapshot = await transaction.get(invitationReference);
-                    const data = snapshot.data() ?? {};
-                    if (snapshot.exists && data.status === "used" && data.usedBy === userId) {
-                        transaction.update(invitationReference, {
-                            status: "pending",
-                            usedBy: null,
-                            usedAt: null,
-                        });
-                    }
-                });
-            }
-            catch {
-                console.error("Role assignment compensation failed", {
-                    operation: "consumeInvitation",
-                });
-            }
-        }
-        throw new https_1.HttpsError("internal", "Unable to assign the account role; please retry");
-    }
-};
 const getUserWithRetry = async (userId) => {
     for (let attempt = 0; attempt < 5; attempt += 1) {
         try {
@@ -282,32 +417,316 @@ const getUserWithRetry = async (userId) => {
     }
     throw new https_1.HttpsError("internal", "Unable to load the authenticated user");
 };
+const requireCurrentRole = async (userId, tokenRole, tokenAuthorizationGrantId, tokenAuthTime, allowedRoles) => {
+    const user = await getUserWithRetry(userId);
+    const currentRole = user.customClaims?.role;
+    const currentAuthorizationGrantId = getAuthorizationGrantId(user);
+    if (user.disabled
+        || !isAppRole(currentRole)
+        || !allowedRoles.includes(currentRole)
+        || currentRole !== tokenRole
+        || !currentAuthorizationGrantId
+        || currentAuthorizationGrantId !== tokenAuthorizationGrantId
+        || !(0, auth_session_js_1.hasCurrentAuthSession)(user.tokensValidAfterTime, tokenAuthTime)) {
+        throw new https_1.HttpsError("permission-denied", "A current authorized session is required");
+    }
+    await requireCurrentAuthorizationGrant(userId, currentRole, currentAuthorizationGrantId);
+    return { user, role: currentRole };
+};
+const compensateInvitationAssignment = async (userId, invitationReference, targetReference) => {
+    await (0, firestore_1.getFirestore)().runTransaction(async (transaction) => {
+        const [invitationSnapshot, targetSnapshot] = await Promise.all([
+            transaction.get(invitationReference),
+            transaction.get(targetReference),
+        ]);
+        const invitation = invitationSnapshot.data() ?? {};
+        const target = targetSnapshot.data() ?? {};
+        if (invitationSnapshot.exists
+            && targetSnapshot.exists
+            && invitation.status === "used"
+            && invitation.usedBy === userId
+            && invitation.claimAssignmentState === "pending"
+            && target.invitationId === invitationReference.id
+            && target.status === "assigning") {
+            transaction.update(invitationReference, {
+                status: "pending",
+                claimAssignmentState: "not_started",
+                usedBy: null,
+                usedAt: null,
+            });
+            transaction.update(targetReference, {
+                status: "pending",
+                updatedAt: firestore_1.Timestamp.now(),
+            });
+        }
+    });
+};
+const failInvitationAssignment = async (userId, invitationReference, targetReference) => {
+    await (0, firestore_1.getFirestore)().runTransaction(async (transaction) => {
+        const [invitationSnapshot, targetSnapshot] = await Promise.all([
+            transaction.get(invitationReference),
+            transaction.get(targetReference),
+        ]);
+        const invitation = invitationSnapshot.data() ?? {};
+        const target = targetSnapshot.data() ?? {};
+        if (invitationSnapshot.exists
+            && targetSnapshot.exists
+            && invitation.status === "used"
+            && invitation.usedBy === userId
+            && invitation.claimAssignmentState === "pending"
+            && target.invitationId === invitationReference.id) {
+            transaction.update(invitationReference, {
+                claimAssignmentState: "failed",
+            });
+            transaction.update(targetReference, {
+                status: "failed",
+                updatedAt: firestore_1.Timestamp.now(),
+            });
+        }
+    });
+};
+const assignInvitationRole = async (userId, userEmail, role, invitationReference, targetReference) => {
+    const latestUser = await getUserWithRetry(userId);
+    const latestEmail = normalizeInvitationEmail(latestUser.email);
+    const latestRole = latestUser.customClaims?.role;
+    if (latestUser.disabled
+        || !latestUser.emailVerified
+        || latestEmail !== userEmail
+        || (latestRole !== undefined && latestRole !== role)) {
+        await failInvitationAssignment(userId, invitationReference, targetReference)
+            .catch(() => console.error("Invitation assignment could not be failed closed", {
+            operation: "consumeInvitation",
+        }));
+        throw new https_1.HttpsError("permission-denied", "The account is no longer eligible for this invitation");
+    }
+    const enrollmentId = getInvitationEnrollmentId(latestUser);
+    let authorizationGrantId = getAuthorizationGrantId(latestUser);
+    if (latestRole !== role || enrollmentId || !authorizationGrantId) {
+        authorizationGrantId = (0, node_crypto_1.randomBytes)(AUTHORIZATION_GRANT_ID_BYTES).toString("hex");
+        try {
+            const preservedClaims = { ...(latestUser.customClaims ?? {}) };
+            delete preservedClaims.invitationEnrollmentId;
+            await (0, auth_1.getAuth)().setCustomUserClaims(userId, {
+                ...preservedClaims,
+                role,
+                authorizationGrantId,
+            });
+        }
+        catch {
+            await compensateInvitationAssignment(userId, invitationReference, targetReference)
+                .catch(() => console.error("Role assignment compensation failed", {
+                operation: "consumeInvitation",
+            }));
+            throw new https_1.HttpsError("internal", "Unable to assign the account role; please retry");
+        }
+    }
+    const assignedUser = await getUserWithRetry(userId);
+    if (assignedUser.disabled
+        || !assignedUser.emailVerified
+        || normalizeInvitationEmail(assignedUser.email) !== userEmail
+        || assignedUser.customClaims?.role !== role
+        || getInvitationEnrollmentId(assignedUser)
+        || getAuthorizationGrantId(assignedUser) !== authorizationGrantId) {
+        await failInvitationAssignment(userId, invitationReference, targetReference)
+            .catch(() => console.error("Invitation assignment verification could not fail closed", {
+            operation: "consumeInvitation",
+        }));
+        throw new https_1.HttpsError("permission-denied", "The account role could not be verified after assignment");
+    }
+    const authorizationGrantReference = (0, firestore_1.getFirestore)()
+        .collection("authorizationGrants")
+        .doc(userId);
+    try {
+        await (0, firestore_1.getFirestore)().runTransaction(async (transaction) => {
+            const [invitationSnapshot, targetSnapshot, authorizationGrantSnapshot] = await Promise.all([
+                transaction.get(invitationReference),
+                transaction.get(targetReference),
+                transaction.get(authorizationGrantReference),
+            ]);
+            const invitation = invitationSnapshot.data() ?? {};
+            const target = targetSnapshot.data() ?? {};
+            if (!invitationSnapshot.exists
+                || !targetSnapshot.exists
+                || invitation.status !== "used"
+                || invitation.usedBy !== userId
+                || target.invitationId !== invitationReference.id) {
+                throw new https_1.HttpsError("failed-precondition", "Invitation assignment state is inconsistent");
+            }
+            if (invitation.claimAssignmentState === "completed") {
+                if (target.status !== "completed"
+                    || !authorizationGrantSnapshot.exists
+                    || !authorizationGrantMatches(authorizationGrantSnapshot.data() ?? {}, role, authorizationGrantId)) {
+                    throw new https_1.HttpsError("failed-precondition", "A completed invitation cannot restore a changed or revoked role");
+                }
+                return;
+            }
+            if (invitation.claimAssignmentState !== "pending" || target.status !== "assigning") {
+                throw new https_1.HttpsError("failed-precondition", "Invitation assignment is not recoverable");
+            }
+            const completedAt = firestore_1.Timestamp.now();
+            transaction.create(authorizationGrantReference, {
+                active: true,
+                role,
+                grantId: authorizationGrantId,
+                updatedAt: completedAt,
+            });
+            transaction.update(invitationReference, {
+                claimAssignmentState: "completed",
+                claimAssignedAt: completedAt,
+            });
+            transaction.update(targetReference, {
+                status: "completed",
+                updatedAt: completedAt,
+            });
+        });
+    }
+    catch {
+        throw new https_1.HttpsError("internal", "The role was assigned but confirmation is pending; retry the invitation");
+    }
+    const confirmedGrant = await authorizationGrantReference.get().catch(() => null);
+    if (!confirmedGrant?.exists
+        || !authorizationGrantMatches(confirmedGrant.data() ?? {}, role, authorizationGrantId)) {
+        throw new https_1.HttpsError("permission-denied", "The account authorization grant could not be verified after assignment");
+    }
+};
 exports.createManagerInvitation = (0, https_1.onCall)(appCheckOptions, async (request) => {
-    const actorRole = request.auth?.token.role;
-    if (!request.auth || !isManagementRole(actorRole)) {
+    const tokenRole = request.auth?.token.role;
+    if (!request.auth || !isManagementRole(tokenRole)) {
         throw new https_1.HttpsError("permission-denied", "Admin or manager role is required");
     }
+    const actorId = request.auth.uid;
     if (!isRecord(request.data) || !isAppRole(request.data.role)) {
         throw new https_1.HttpsError("invalid-argument", "A valid invitation role is required");
     }
-    if (!canInviteRole(actorRole, request.data.role)) {
-        throw new https_1.HttpsError("permission-denied", "Only admins can invite admins or managers");
+    const targetEmail = normalizeInvitationEmail(request.data.targetEmail);
+    if (!targetEmail) {
+        throw new https_1.HttpsError("invalid-argument", "A valid target email is required");
     }
-    await enforceRateLimit(request.auth.uid, "createManagerInvitation");
+    const requestKey = normalizeInvitationRequestKey(request.data.requestKey);
+    if (!requestKey) {
+        throw new https_1.HttpsError("invalid-argument", "A valid invitation request key is required");
+    }
+    const { role: actorRole } = await requireCurrentRole(actorId, tokenRole, request.auth.token.authorizationGrantId, request.auth.token.auth_time, ["admin", "manager"]);
+    if (!isManagementRole(actorRole)) {
+        throw new https_1.HttpsError("permission-denied", "Admin or manager role is required");
+    }
+    if (!canInviteRole(actorRole, request.data.role)) {
+        throw new https_1.HttpsError("permission-denied", "Admin enrollment is restricted to the controlled administrative runbook");
+    }
+    if (request.data.role === "manager"
+        && !(0, auth_session_js_1.hasRecentAuthentication)(request.auth.token.auth_time)) {
+        throw new https_1.HttpsError("failed-precondition", "Sign in again before creating a manager invitation");
+    }
+    await enforceRateLimit(actorId, "createManagerInvitation");
+    const targetLockId = hashInvitationTargetKey(targetEmail);
+    const requestKeyHash = hashInvitationRequestKey(actorId, targetLockId, requestKey);
+    const targetAccount = await getOrCreateInvitationTarget(targetEmail);
+    const targetUid = targetAccount.user.uid;
+    const targetEnrollmentHash = hashInvitationEnrollmentId(targetAccount.enrollmentId);
     const code = createInvitationCode();
+    const encryptedCode = encryptInvitationCode(code, requestKey);
+    const targetEmailSalt = (0, node_crypto_1.randomBytes)(INVITATION_EMAIL_SALT_BYTES).toString("hex");
     const expiresAt = firestore_1.Timestamp.fromMillis(Date.now() + INVITATION_TTL_MS);
-    await (0, firestore_1.getFirestore)().collection("invitations").add({
-        codeHash: hashInvitationCode(code),
-        role: request.data.role,
-        status: "pending",
-        createdBy: request.auth.uid,
-        createdByRole: actorRole,
-        createdAt: firestore_1.Timestamp.now(),
-        expiresAt,
-        usedBy: null,
-        usedAt: null,
+    const createdAt = firestore_1.Timestamp.now();
+    const firestore = (0, firestore_1.getFirestore)();
+    const invitationReference = firestore.collection("invitations").doc();
+    const targetReference = firestore.collection("invitationTargets").doc(targetLockId);
+    const result = await firestore.runTransaction(async (transaction) => {
+        const targetSnapshot = await transaction.get(targetReference);
+        const activeTarget = targetSnapshot.data() ?? {};
+        const activeUntil = activeTarget.expiresAt instanceof firestore_1.Timestamp
+            ? activeTarget.expiresAt.toMillis()
+            : 0;
+        if (targetSnapshot.exists
+            && (activeTarget.status === "pending" || activeTarget.status === "assigning")
+            && activeUntil > Date.now()) {
+            if (activeTarget.requestKeyHash !== requestKeyHash
+                || typeof activeTarget.invitationId !== "string") {
+                throw new https_1.HttpsError("already-exists", "An active invitation already exists for this email");
+            }
+            const existingReference = firestore.collection("invitations").doc(activeTarget.invitationId);
+            const existingSnapshot = await transaction.get(existingReference);
+            const existing = existingSnapshot.data() ?? {};
+            const existingExpiresAt = existing.expiresAt instanceof firestore_1.Timestamp
+                ? existing.expiresAt
+                : null;
+            if (!existingSnapshot.exists
+                || existing.schemaVersion !== INVITATION_SCHEMA_VERSION
+                || existing.requestKeyHash !== requestKeyHash
+                || existing.targetLockId !== targetLockId
+                || existing.targetUid !== targetUid
+                || existing.targetEnrollmentHash !== targetEnrollmentHash
+                || existing.createdBy !== actorId
+                || existing.createdByRole !== actorRole
+                || existing.role !== request.data.role
+                || existing.status !== "pending"
+                || existing.claimAssignmentState !== "not_started"
+                || typeof existing.codeHash !== "string"
+                || !/^[a-f0-9]{64}$/.test(existing.codeHash)
+                || !existingExpiresAt
+                || existingExpiresAt.toMillis() !== activeUntil
+                || !Number.isSafeInteger(existing.generation)
+                || existing.generation !== activeTarget.generation
+                || !isEncryptedInvitationCode(existing)) {
+                throw new https_1.HttpsError("failed-precondition", "The active invitation cannot be recovered safely");
+            }
+            return {
+                encryptedCode: existing.encryptedCode,
+                codeEncryptionIv: existing.codeEncryptionIv,
+                codeEncryptionTag: existing.codeEncryptionTag,
+                codeHash: existing.codeHash,
+                expiresAt: existingExpiresAt,
+            };
+        }
+        const previousGeneration = Number.isSafeInteger(activeTarget.generation)
+            && Number(activeTarget.generation) >= 0
+            ? Number(activeTarget.generation)
+            : 0;
+        const generation = previousGeneration + 1;
+        transaction.create(invitationReference, {
+            schemaVersion: INVITATION_SCHEMA_VERSION,
+            codeHash: hashInvitationCode(code),
+            ...encryptedCode,
+            requestKeyHash,
+            generation,
+            targetEmailHash: hashInvitationEmail(targetEmail, targetEmailSalt),
+            targetEmailSalt,
+            targetLockId,
+            targetUid,
+            targetEnrollmentHash,
+            role: request.data.role,
+            status: "pending",
+            claimAssignmentState: "not_started",
+            createdBy: actorId,
+            createdByRole: actorRole,
+            createdAt,
+            expiresAt,
+            usedBy: null,
+            usedAt: null,
+            claimAssignedAt: null,
+        });
+        transaction.set(targetReference, {
+            invitationId: invitationReference.id,
+            requestKeyHash,
+            generation,
+            status: "pending",
+            expiresAt,
+            createdAt,
+            updatedAt: createdAt,
+        });
+        return { ...encryptedCode, codeHash: hashInvitationCode(code), expiresAt };
     });
-    return { code, expiresAt: expiresAt.toDate().toISOString() };
+    const recoveredCode = decryptInvitationCode(result, requestKey);
+    if (!normalizeInvitationCode(recoveredCode)
+        || !/^[a-f0-9]{64}$/.test(result.codeHash)
+        || hashInvitationCode(recoveredCode) !== result.codeHash) {
+        throw new https_1.HttpsError("internal", "The invitation code could not be recovered safely");
+    }
+    return {
+        code: recoveredCode,
+        role: request.data.role,
+        expiresAt: result.expiresAt.toDate().toISOString(),
+    };
 });
 exports.validateInvitationCode = (0, https_1.onCall)({ ...appCheckOptions, timeoutSeconds: 10, memory: "256MiB", maxInstances: 2 }, async (request) => {
     // This endpoint must remain public so a new user can validate an invitation
@@ -318,26 +737,73 @@ exports.validateInvitationCode = (0, https_1.onCall)({ ...appCheckOptions, timeo
         enforceRateLimit(anonymizedRequesterId(request.rawRequest.ip), "validateInvitationCodeRequester"),
         enforceRateLimit("public-emergency-ceiling", "validateInvitationCodeGlobal"),
     ]);
-    const code = normalizeInvitationCode(isRecord(request.data) ? request.data.code : request.data);
+    const payload = isRecord(request.data)
+        ? request.data
+        : { code: request.data };
+    const code = normalizeInvitationCode(payload.code);
     if (!code)
+        return invalidInvitation();
+    const requestedTargetEmail = payload.targetEmail === undefined
+        ? null
+        : normalizeInvitationEmail(payload.targetEmail);
+    if (payload.targetEmail !== undefined && !requestedTargetEmail)
         return invalidInvitation();
     const snapshot = await (0, firestore_1.getFirestore)()
         .collection("invitations")
         .where("codeHash", "==", hashInvitationCode(code))
-        .limit(1)
+        .limit(2)
         .get();
-    if (snapshot.empty)
+    if (snapshot.size !== 1)
         return invalidInvitation();
     const invitation = snapshot.docs[0];
     const data = invitation.data();
     const expiresAt = data.expiresAt instanceof firestore_1.Timestamp ? data.expiresAt.toMillis() : 0;
-    if (!isAppRole(data.role) || !isInvitationStatus(data.status) || data.status !== "pending" || expiresAt <= Date.now()) {
+    const targetEmailSalt = typeof data.targetEmailSalt === "string" ? data.targetEmailSalt : "";
+    const targetLockId = typeof data.targetLockId === "string" ? data.targetLockId : "";
+    const requestedTargetHash = requestedTargetEmail && targetEmailSalt
+        ? hashInvitationEmail(requestedTargetEmail, targetEmailSalt)
+        : null;
+    const targetSnapshot = /^[a-f0-9]{64}$/.test(targetLockId)
+        ? await (0, firestore_1.getFirestore)().collection("invitationTargets").doc(targetLockId).get()
+        : null;
+    const target = targetSnapshot?.data() ?? {};
+    const targetExpiresAt = target.expiresAt instanceof firestore_1.Timestamp
+        ? target.expiresAt.toMillis()
+        : 0;
+    if (data.schemaVersion !== INVITATION_SCHEMA_VERSION
+        || !/^[a-f0-9]{32}$/.test(targetEmailSalt)
+        || typeof data.targetEmailHash !== "string"
+        || !/^[a-f0-9]{64}$/.test(data.targetEmailHash)
+        || !/^[a-f0-9]{64}$/.test(targetLockId)
+        || typeof data.targetUid !== "string"
+        || !data.targetUid
+        || typeof data.targetEnrollmentHash !== "string"
+        || !/^[a-f0-9]{64}$/.test(data.targetEnrollmentHash)
+        || typeof data.requestKeyHash !== "string"
+        || !/^[a-f0-9]{64}$/.test(data.requestKeyHash)
+        || !Number.isSafeInteger(data.generation)
+        || Number(data.generation) <= 0
+        || !isEncryptedInvitationCode(data)
+        || (requestedTargetHash !== null && requestedTargetHash !== data.targetEmailHash)
+        || !isAppRole(data.role)
+        || !isInvitationStatus(data.status)
+        || !isInvitationClaimAssignmentState(data.claimAssignmentState)
+        || data.status !== "pending"
+        || data.claimAssignmentState !== "not_started"
+        || expiresAt <= Date.now()
+        || !targetSnapshot?.exists
+        || target.invitationId !== invitation.id
+        || target.requestKeyHash !== data.requestKeyHash
+        || target.generation !== data.generation
+        || !isInvitationTargetStatus(target.status)
+        || target.status !== "pending"
+        || targetExpiresAt !== expiresAt) {
         return invalidInvitation();
     }
     return {
         valid: true,
         role: data.role,
-        invitationId: invitation.id,
+        expiresAt: new Date(expiresAt).toISOString(),
         errorMessage: null,
     };
 });
@@ -345,55 +811,162 @@ exports.consumeInvitation = (0, https_1.onCall)(appCheckOptions, async (request)
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Authentication is required");
     }
-    if (!isRecord(request.data) || typeof request.data.invitationId !== "string" || !request.data.invitationId.trim()) {
-        throw new https_1.HttpsError("invalid-argument", "A valid invitationId is required");
-    }
-    const auth = (0, auth_1.getAuth)();
+    const code = normalizeInvitationCode(isRecord(request.data) ? request.data.code : null);
+    if (!code)
+        throw new https_1.HttpsError("invalid-argument", "A valid invitation code is required");
     const firestore = (0, firestore_1.getFirestore)();
     const userId = request.auth.uid;
-    const invitationRef = firestore.collection("invitations").doc(request.data.invitationId.trim());
     await enforceRateLimit(userId, "consumeInvitation");
     const user = await getUserWithRetry(userId);
+    const userEmail = normalizeInvitationEmail(user.email);
+    if (user.disabled
+        || !userEmail
+        || !(0, auth_session_js_1.hasCurrentAuthSession)(user.tokensValidAfterTime, request.auth.token.auth_time)) {
+        throw new https_1.HttpsError("permission-denied", "An active account with a valid email is required");
+    }
+    if (!user.emailVerified) {
+        throw new https_1.HttpsError("failed-precondition", "Verify the account email before accepting the invitation", { reason: "email-not-verified" });
+    }
     const currentRole = user.customClaims?.role;
-    let alreadyConsumed = false;
-    const role = await firestore.runTransaction(async (transaction) => {
-        const snapshot = await transaction.get(invitationRef);
-        if (!snapshot.exists)
-            throw new https_1.HttpsError("not-found", "Invitation was not found");
+    const enrollmentId = getInvitationEnrollmentId(user);
+    const currentEnrollmentHash = enrollmentId
+        ? hashInvitationEnrollmentId(enrollmentId)
+        : "";
+    const codeHash = hashInvitationCode(code);
+    const invitations = await firestore
+        .collection("invitations")
+        .where("codeHash", "==", codeHash)
+        .limit(2)
+        .get();
+    if (invitations.size !== 1)
+        throw invalidInvitationError();
+    const invitationRef = invitations.docs[0].ref;
+    const targetLockId = hashInvitationTargetKey(userEmail);
+    const targetRef = firestore.collection("invitationTargets").doc(targetLockId);
+    const result = await firestore.runTransaction(async (transaction) => {
+        const [snapshot, targetSnapshot] = await Promise.all([
+            transaction.get(invitationRef),
+            transaction.get(targetRef),
+        ]);
+        if (!snapshot.exists || !targetSnapshot.exists)
+            throw invalidInvitationError();
         const data = snapshot.data() ?? {};
+        const target = targetSnapshot.data() ?? {};
         const expiresAt = data.expiresAt instanceof firestore_1.Timestamp ? data.expiresAt.toMillis() : 0;
-        if (!isAppRole(data.role) || !isInvitationStatus(data.status) || expiresAt <= Date.now()) {
-            throw new https_1.HttpsError("failed-precondition", "Invitation is invalid or expired");
+        const targetExpiresAt = target.expiresAt instanceof firestore_1.Timestamp
+            ? target.expiresAt.toMillis()
+            : 0;
+        const targetEmailSalt = typeof data.targetEmailSalt === "string" ? data.targetEmailSalt : "";
+        const targetEmailHash = targetEmailSalt
+            ? hashInvitationEmail(userEmail, targetEmailSalt)
+            : "";
+        if (data.schemaVersion !== INVITATION_SCHEMA_VERSION
+            || data.codeHash !== codeHash
+            || !/^[a-f0-9]{32}$/.test(targetEmailSalt)
+            || data.targetEmailHash !== targetEmailHash
+            || data.targetLockId !== targetLockId
+            || data.targetUid !== userId
+            || typeof data.targetEnrollmentHash !== "string"
+            || !/^[a-f0-9]{64}$/.test(data.targetEnrollmentHash)
+            || typeof data.requestKeyHash !== "string"
+            || !/^[a-f0-9]{64}$/.test(data.requestKeyHash)
+            || !Number.isSafeInteger(data.generation)
+            || Number(data.generation) <= 0
+            || !isEncryptedInvitationCode(data)
+            || !isAppRole(data.role)
+            || !isInvitationStatus(data.status)
+            || !isInvitationClaimAssignmentState(data.claimAssignmentState)
+            || target.invitationId !== invitationRef.id
+            || target.requestKeyHash !== data.requestKeyHash
+            || target.generation !== data.generation
+            || !isInvitationTargetStatus(target.status)
+            || expiresAt <= 0
+            || targetExpiresAt !== expiresAt) {
+            throw invalidInvitationError();
         }
-        if (data.status === "used" && data.usedBy === userId && currentRole === data.role) {
-            alreadyConsumed = true;
-            return data.role;
+        if (data.status === "used") {
+            if (data.usedBy !== userId)
+                throw invalidInvitationError();
+            if (data.claimAssignmentState === "completed") {
+                if (target.status !== "completed") {
+                    throw new https_1.HttpsError("failed-precondition", "Invitation assignment state is inconsistent");
+                }
+                return { role: data.role, shouldAssign: false, verifyCompleted: true };
+            }
+            if (data.claimAssignmentState === "failed") {
+                throw new https_1.HttpsError("failed-precondition", "Invitation assignment requires administrator recovery");
+            }
+            if (data.claimAssignmentState !== "pending" || target.status !== "assigning") {
+                throw invalidInvitationError();
+            }
+            if (currentRole !== undefined && currentRole !== data.role) {
+                throw new https_1.HttpsError("permission-denied", "The invitation role conflicts with the current account");
+            }
+            const originalEnrollmentMatches = Boolean(enrollmentId)
+                && data.targetEnrollmentHash === currentEnrollmentHash;
+            const partialAssignmentMatches = currentRole === data.role && !enrollmentId;
+            if (!originalEnrollmentMatches && !partialAssignmentMatches) {
+                throw invalidInvitationError();
+            }
+            const usedAt = data.usedAt instanceof firestore_1.Timestamp ? data.usedAt.toMillis() : 0;
+            if (usedAt <= 0 || Date.now() - usedAt > INVITATION_ASSIGNMENT_RECOVERY_MS) {
+                throw new https_1.HttpsError("failed-precondition", "Invitation assignment recovery window has closed");
+            }
+            return { role: data.role, shouldAssign: true, verifyCompleted: false };
         }
-        if (data.status !== "pending") {
-            throw new https_1.HttpsError("failed-precondition", "Invitation is invalid or expired");
+        if (data.claimAssignmentState !== "not_started"
+            || target.status !== "pending"
+            || expiresAt <= Date.now()) {
+            throw invalidInvitationError();
         }
-        if (currentRole && currentRole !== data.role) {
+        if (currentRole !== undefined && currentRole !== data.role) {
             throw new https_1.HttpsError("permission-denied", "The invitation role conflicts with the current account");
         }
+        const originalEnrollmentMatches = Boolean(enrollmentId)
+            && data.targetEnrollmentHash === currentEnrollmentHash;
+        const compensatedAssignmentMatches = currentRole === data.role && !enrollmentId;
+        if (!originalEnrollmentMatches && !compensatedAssignmentMatches) {
+            throw invalidInvitationError();
+        }
+        const now = firestore_1.Timestamp.now();
         transaction.update(invitationRef, {
             status: "used",
+            claimAssignmentState: "pending",
             usedBy: userId,
-            usedAt: firestore_1.Timestamp.now(),
+            usedAt: now,
+            claimAssignedAt: null,
         });
-        return data.role;
+        transaction.update(targetRef, {
+            status: "assigning",
+            updatedAt: now,
+        });
+        return {
+            role: data.role,
+            shouldAssign: true,
+            verifyCompleted: false,
+        };
     });
-    if (!alreadyConsumed) {
-        await assignClaimsOrCompensate(userId, { ...user.customClaims, role }, invitationRef);
+    if (result.verifyCompleted) {
+        const completedUser = await getUserWithRetry(userId);
+        const completedGrantId = getAuthorizationGrantId(completedUser);
+        if (completedUser.disabled
+            || !completedUser.emailVerified
+            || completedUser.customClaims?.role !== result.role
+            || !completedGrantId) {
+            throw new https_1.HttpsError("permission-denied", "A completed invitation cannot restore a changed or revoked role");
+        }
+        await requireCurrentAuthorizationGrant(userId, result.role, completedGrantId);
     }
-    return { role };
+    if (result.shouldAssign) {
+        await assignInvitationRole(userId, userEmail, result.role, invitationRef, targetRef);
+    }
+    return { role: result.role };
 });
 exports.listAssignableBuilders = (0, https_1.onCall)({ ...appCheckOptions, timeoutSeconds: 15, memory: "256MiB", maxInstances: 10 }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Authentication is required");
     }
-    if (!isManagementRole(request.auth.token.role)) {
-        throw new https_1.HttpsError("permission-denied", "Admin or manager role is required");
-    }
+    await requireCurrentRole(request.auth.uid, request.auth.token.role, request.auth.token.authorizationGrantId, request.auth.token.auth_time, ["admin", "manager"]);
     await enforceRateLimit(request.auth.uid, "listAssignableBuilders");
     const page = await (0, auth_1.getAuth)().listUsers(1_000);
     const builders = page.users
@@ -410,9 +983,7 @@ exports.createAssignedProject = (0, https_1.onCall)({ ...appCheckOptions, timeou
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Authentication is required");
     }
-    if (!isManagementRole(request.auth.token.role)) {
-        throw new https_1.HttpsError("permission-denied", "Admin or manager role is required");
-    }
+    await requireCurrentRole(request.auth.uid, request.auth.token.role, request.auth.token.authorizationGrantId, request.auth.token.auth_time, ["admin", "manager"]);
     const payload = getAssignedProjectPayload(request.data);
     const managerId = request.auth.uid;
     await enforceRateLimit(managerId, "createAssignedProject");
@@ -463,14 +1034,10 @@ exports.submitInvoice = (0, https_1.onCall)({ ...appCheckOptions, timeoutSeconds
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Authentication is required");
     }
-    if (request.auth.token.role !== "builder") {
-        throw new https_1.HttpsError("permission-denied", "Builder role is required");
-    }
+    const { user: builder } = await requireCurrentRole(request.auth.uid, request.auth.token.role, request.auth.token.authorizationGrantId, request.auth.token.auth_time, ["builder"]);
     const userId = request.auth.uid;
     await enforceRateLimit(userId, "submitInvoice");
-    const uploadedByName = typeof request.auth.token.name === "string"
-        ? request.auth.token.name
-        : null;
+    const uploadedByName = builder.displayName?.trim() || null;
     const payload = getInvoicePayload(request.data, userId);
     const firestore = (0, firestore_1.getFirestore)();
     const invoiceRef = firestore.collection("invoices").doc(payload.invoiceId);
@@ -630,9 +1197,10 @@ const SPREADSHEET_CONTENT_TYPES = new Set([
 ]);
 const IMPORT_LOCK_TTL_MS = 10 * 60 * 1000;
 exports.extractJobsFromExcel = (0, https_1.onCall)({ ...appCheckOptions, timeoutSeconds: 60, memory: "256MiB", maxInstances: 5 }, async (request) => {
-    if (!request.auth || !isManagementRole(request.auth.token.role)) {
-        throw new https_1.HttpsError("permission-denied", "Admin or manager role is required");
+    if (!request.auth) {
+        throw new https_1.HttpsError("unauthenticated", "Authentication is required");
     }
+    await requireCurrentRole(request.auth.uid, request.auth.token.role, request.auth.token.authorizationGrantId, request.auth.token.auth_time, ["admin", "manager"]);
     const managerId = request.auth.uid;
     await enforceRateLimit(managerId, "extractJobsFromExcel");
     const payload = getJobImportPayload(request.data, managerId);
@@ -790,9 +1358,10 @@ exports.extractJobsFromExcel = (0, https_1.onCall)({ ...appCheckOptions, timeout
     }
 });
 exports.reviewInvoice = (0, https_1.onCall)({ ...appCheckOptions, timeoutSeconds: 15, memory: "256MiB", maxInstances: 10 }, async (request) => {
-    if (!request.auth || !isManagementRole(request.auth.token.role)) {
-        throw new https_1.HttpsError("permission-denied", "Admin or manager role is required");
+    if (!request.auth) {
+        throw new https_1.HttpsError("unauthenticated", "Authentication is required");
     }
+    await requireCurrentRole(request.auth.uid, request.auth.token.role, request.auth.token.authorizationGrantId, request.auth.token.auth_time, ["admin", "manager"]);
     const managerId = request.auth.uid;
     await enforceRateLimit(managerId, "reviewInvoice");
     const payload = getReviewPayload(request.data);
@@ -860,20 +1429,95 @@ exports.cleanupOldProjects = (0, scheduler_1.onSchedule)({
 }, async () => {
     const firestore = (0, firestore_1.getFirestore)();
     const now = Date.now();
+    const controlRecordCutoff = now - RATE_LIMIT_RETENTION_MS;
     const staleInvitationSnapshot = await firestore
         .collection("invitations")
-        .where("expiresAt", "<=", firestore_1.Timestamp.fromMillis(now - RATE_LIMIT_RETENTION_MS))
+        .where("expiresAt", "<=", firestore_1.Timestamp.fromMillis(controlRecordCutoff))
         .limit(CLEANUP_BATCH_LIMIT)
         .get();
     const staleRateLimitSnapshot = await firestore
         .collection("functionRateLimits")
-        .where("updatedAt", "<=", firestore_1.Timestamp.fromMillis(now - RATE_LIMIT_RETENTION_MS))
+        .where("updatedAt", "<=", firestore_1.Timestamp.fromMillis(controlRecordCutoff))
         .limit(CLEANUP_BATCH_LIMIT)
         .get();
+    let expiredInvitations = 0;
+    let expiredInvitationTargets = 0;
+    for (let offset = 0; offset < staleInvitationSnapshot.docs.length; offset += 10) {
+        const outcomes = await Promise.all(staleInvitationSnapshot.docs.slice(offset, offset + 10).map((snapshot) => firestore.runTransaction(async (transaction) => {
+            const current = await transaction.get(snapshot.ref);
+            const data = current.data() ?? {};
+            const expiresAt = data.expiresAt instanceof firestore_1.Timestamp ? data.expiresAt.toMillis() : 0;
+            if (!current.exists || expiresAt <= 0 || expiresAt > controlRecordCutoff) {
+                return { invitation: 0, target: 0 };
+            }
+            const targetLockId = typeof data.targetLockId === "string" ? data.targetLockId : "";
+            const targetRef = /^[a-f0-9]{64}$/.test(targetLockId)
+                ? firestore.collection("invitationTargets").doc(targetLockId)
+                : null;
+            const target = targetRef ? await transaction.get(targetRef) : null;
+            const targetData = target?.data() ?? {};
+            const targetExpiresAt = targetData.expiresAt instanceof firestore_1.Timestamp
+                ? targetData.expiresAt.toMillis()
+                : 0;
+            transaction.delete(snapshot.ref);
+            if (targetRef
+                && target?.exists
+                && targetData.invitationId === snapshot.id
+                && targetExpiresAt > 0
+                && targetExpiresAt <= controlRecordCutoff) {
+                transaction.delete(targetRef);
+                return { invitation: 1, target: 1 };
+            }
+            return { invitation: 1, target: 0 };
+        })));
+        expiredInvitations += outcomes.reduce((total, outcome) => total + outcome.invitation, 0);
+        expiredInvitationTargets += outcomes.reduce((total, outcome) => total + outcome.target, 0);
+    }
+    const staleTargetSnapshot = await firestore
+        .collection("invitationTargets")
+        .where("expiresAt", "<=", firestore_1.Timestamp.fromMillis(controlRecordCutoff))
+        .limit(CLEANUP_BATCH_LIMIT)
+        .get();
+    for (let offset = 0; offset < staleTargetSnapshot.docs.length; offset += 10) {
+        const outcomes = await Promise.all(staleTargetSnapshot.docs.slice(offset, offset + 10).map((snapshot) => firestore.runTransaction(async (transaction) => {
+            const target = await transaction.get(snapshot.ref);
+            const data = target.data() ?? {};
+            const expiresAt = data.expiresAt instanceof firestore_1.Timestamp ? data.expiresAt.toMillis() : 0;
+            if (!target.exists || expiresAt <= 0 || expiresAt > controlRecordCutoff) {
+                return { invitation: 0, target: 0 };
+            }
+            const invitationId = typeof data.invitationId === "string" ? data.invitationId : "";
+            const invitationRef = invitationId
+                ? firestore.collection("invitations").doc(invitationId)
+                : null;
+            const invitation = invitationRef ? await transaction.get(invitationRef) : null;
+            const invitationData = invitation?.data() ?? {};
+            const invitationExpiresAt = invitationData.expiresAt instanceof firestore_1.Timestamp
+                ? invitationData.expiresAt.toMillis()
+                : 0;
+            if (invitation?.exists
+                && invitationData.targetLockId === snapshot.id
+                && invitationExpiresAt > controlRecordCutoff) {
+                return { invitation: 0, target: 0 };
+            }
+            let deletedInvitation = 0;
+            if (invitationRef
+                && invitation?.exists
+                && invitationData.targetLockId === snapshot.id
+                && invitationExpiresAt > 0
+                && invitationExpiresAt <= controlRecordCutoff) {
+                transaction.delete(invitationRef);
+                deletedInvitation = 1;
+            }
+            transaction.delete(snapshot.ref);
+            return { invitation: deletedInvitation, target: 1 };
+        })));
+        expiredInvitations += outcomes.reduce((total, outcome) => total + outcome.invitation, 0);
+        expiredInvitationTargets += outcomes.reduce((total, outcome) => total + outcome.target, 0);
+    }
     const cleanupBatch = firestore.batch();
-    staleInvitationSnapshot.docs.forEach((snapshot) => cleanupBatch.delete(snapshot.ref));
     staleRateLimitSnapshot.docs.forEach((snapshot) => cleanupBatch.delete(snapshot.ref));
-    if (!staleInvitationSnapshot.empty || !staleRateLimitSnapshot.empty) {
+    if (!staleRateLimitSnapshot.empty) {
         await cleanupBatch.commit();
     }
     let deletedProjects = 0;
@@ -912,7 +1556,8 @@ exports.cleanupOldProjects = (0, scheduler_1.onSchedule)({
         }
     }
     console.log("Scheduled cleanup completed", {
-        expiredInvitations: staleInvitationSnapshot.size,
+        expiredInvitations,
+        expiredInvitationTargets,
         staleRateLimits: staleRateLimitSnapshot.size,
         deletedProjects,
     });

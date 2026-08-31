@@ -5,26 +5,102 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { doc, serverTimestamp, setDoc } from "firebase/firestore";
+import { doc, serverTimestamp, setDoc, Timestamp } from "firebase/firestore";
 import { deleteObject, getBytes, ref, uploadBytes } from "firebase/storage";
 import { readFileSync } from "node:fs";
 
 const projectId = "demo-jobsite-jedi";
 let testEnv: RulesTestEnvironment;
 
+type AuthorizationRole = "admin" | "manager" | "builder";
+
+const authorizationGrantIds = {
+  builder: "1".repeat(32),
+  otherBuilder: "2".repeat(32),
+  manager: "3".repeat(32),
+  admin: "4".repeat(32),
+} as const;
+
+const authorizedStorage = (
+  uid: string,
+  role: AuthorizationRole,
+  grantId: string,
+  name: string,
+) => testEnv.authenticatedContext(uid, {
+  role,
+  authorizationGrantId: grantId,
+  name,
+}).storage();
+
 const builderStorage = () =>
-  testEnv.authenticatedContext("builder-1", { role: "builder", name: "Builder One" }).storage();
+  authorizedStorage("builder-1", "builder", authorizationGrantIds.builder, "Builder One");
 const otherBuilderStorage = () =>
-  testEnv.authenticatedContext("builder-2", { role: "builder", name: "Builder Two" }).storage();
+  authorizedStorage("builder-2", "builder", authorizationGrantIds.otherBuilder, "Builder Two");
 const managerStorage = () =>
-  testEnv.authenticatedContext("manager-1", { role: "manager", name: "Manager One" }).storage();
+  authorizedStorage("manager-1", "manager", authorizationGrantIds.manager, "Manager One");
 const adminStorage = () =>
-  testEnv.authenticatedContext("admin-1", { role: "admin", name: "Admin One" }).storage();
+  authorizedStorage("admin-1", "admin", authorizationGrantIds.admin, "Admin One");
+const invitationPlaceholderStorage = () => testEnv.authenticatedContext("placeholder-1", {
+  invitationEnrollmentId: "e".repeat(32),
+  name: "Invitation Placeholder",
+}).storage();
 const builderDb = () =>
-  testEnv.authenticatedContext("builder-1", { role: "builder", name: "Builder One" }).firestore();
+  testEnv.authenticatedContext("builder-1", {
+    role: "builder",
+    authorizationGrantId: authorizationGrantIds.builder,
+    name: "Builder One",
+  }).firestore();
 const anonymousStorage = () => testEnv.unauthenticatedContext().storage();
 
 const image = () => new Blob(["image-content"], { type: "image/jpeg" });
+
+const seedAuthorizationGrant = async (
+  uid: string,
+  role: AuthorizationRole,
+  grantId: string,
+  active = true,
+) => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), `authorizationGrants/${uid}`), {
+      active,
+      role,
+      grantId,
+      updatedAt: Timestamp.now(),
+    });
+  });
+};
+
+const seedValidAuthorizationGrants = async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await Promise.all([
+      setDoc(doc(db, "authorizationGrants/builder-1"), {
+        active: true,
+        role: "builder",
+        grantId: authorizationGrantIds.builder,
+        updatedAt: Timestamp.now(),
+      }),
+      setDoc(doc(db, "authorizationGrants/builder-2"), {
+        active: true,
+        role: "builder",
+        grantId: authorizationGrantIds.otherBuilder,
+        updatedAt: Timestamp.now(),
+      }),
+      setDoc(doc(db, "authorizationGrants/manager-1"), {
+        active: true,
+        role: "manager",
+        grantId: authorizationGrantIds.manager,
+        updatedAt: Timestamp.now(),
+      }),
+      setDoc(doc(db, "authorizationGrants/admin-1"), {
+        active: true,
+        role: "admin",
+        grantId: authorizationGrantIds.admin,
+        updatedAt: Timestamp.now(),
+      }),
+    ]);
+  });
+};
 
 const seedProject = async (seedProjectId: string, builderId = "builder-1") => {
   await testEnv.withSecurityRulesDisabled(async (context) => {
@@ -97,10 +173,93 @@ describe("Firebase Storage authorization rules", () => {
         rules: readFileSync("firestore.rules", "utf8"),
       },
     });
+    await seedValidAuthorizationGrants();
   });
 
   afterAll(async () => {
     await testEnv.cleanup();
+  });
+
+  test("does not treat an invitation enrollment marker as a Storage role", async () => {
+    await seedAssignedJob("job-placeholder", "approved", "placeholder-1");
+    const path = "jobs/job-placeholder/placeholder-1/reference/photo.jpg";
+
+    await assertFails(uploadBytes(ref(invitationPlaceholderStorage(), path), await image()));
+    await assertFails(getBytes(ref(invitationPlaceholderStorage(), path)));
+  });
+
+  test("rejects Storage roles without a grant document or with an inactive grant", async () => {
+    const missingUid = "manager-storage-missing-grant";
+    const missingGrantId = "5".repeat(32);
+    const inactiveUid = "manager-storage-inactive-grant";
+    const inactiveGrantId = "6".repeat(32);
+    const csv = new Blob(["Title\nAuthorization probe"], { type: "text/csv" });
+    await seedAuthorizationGrant(inactiveUid, "manager", inactiveGrantId, false);
+
+    await assertFails(uploadBytes(
+      ref(
+        authorizedStorage(missingUid, "manager", missingGrantId, "Missing Grant Manager"),
+        `job-imports/${missingUid}/jobs.csv`,
+      ),
+      csv,
+    ));
+    await assertFails(uploadBytes(
+      ref(
+        authorizedStorage(inactiveUid, "manager", inactiveGrantId, "Inactive Grant Manager"),
+        `job-imports/${inactiveUid}/jobs.csv`,
+      ),
+      csv,
+    ));
+  });
+
+  test("rejects Storage role and grant identifiers that do not match the server registry", async () => {
+    const roleMismatchUid = "manager-storage-role-mismatch";
+    const roleMismatchGrantId = "7".repeat(32);
+    const grantMismatchUid = "manager-storage-id-mismatch";
+    const tokenGrantId = "8".repeat(32);
+    const csv = new Blob(["Title\nAuthorization probe"], { type: "text/csv" });
+    await seedAuthorizationGrant(roleMismatchUid, "builder", roleMismatchGrantId);
+    await seedAuthorizationGrant(grantMismatchUid, "manager", "9".repeat(32));
+
+    await assertFails(uploadBytes(
+      ref(
+        authorizedStorage(
+          roleMismatchUid,
+          "manager",
+          roleMismatchGrantId,
+          "Role Mismatch Manager",
+        ),
+        `job-imports/${roleMismatchUid}/jobs.csv`,
+      ),
+      csv,
+    ));
+    await assertFails(uploadBytes(
+      ref(
+        authorizedStorage(grantMismatchUid, "manager", tokenGrantId, "Grant Mismatch Manager"),
+        `job-imports/${grantMismatchUid}/jobs.csv`,
+      ),
+      csv,
+    ));
+  });
+
+  test("revokes Storage access from an old token after its authorization grant rotates", async () => {
+    const uid = "manager-storage-rotated-grant";
+    const oldGrantId = "a".repeat(32);
+    const newGrantId = "b".repeat(32);
+    const path = `job-imports/${uid}/jobs.csv`;
+    const staleStorage = authorizedStorage(uid, "manager", oldGrantId, "Rotated Grant Manager");
+    const csv = new Blob(["Title\nAuthorization probe"], { type: "text/csv" });
+    await seedAuthorizationGrant(uid, "manager", oldGrantId);
+
+    await assertSucceeds(uploadBytes(ref(staleStorage, path), csv));
+
+    await seedAuthorizationGrant(uid, "manager", newGrantId);
+
+    await assertFails(getBytes(ref(staleStorage, path)));
+    await assertSucceeds(getBytes(ref(
+      authorizedStorage(uid, "manager", newGrantId, "Rotated Grant Manager"),
+      path,
+    )));
   });
 
   test("allows only the assigned builder to create a job image and forbids overwrite", async () => {

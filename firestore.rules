@@ -3,7 +3,29 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function isSignedIn() {
-      return request.auth != null;
+      return request.auth != null
+        && request.auth.token.keys().hasAll(["role", "authorizationGrantId"])
+        && request.auth.token.role in ["admin", "manager", "builder"]
+        && request.auth.token.authorizationGrantId is string
+        && request.auth.token.authorizationGrantId.matches("^[a-f0-9]{32}$")
+        && exists(
+          /databases/$(database)/documents/authorizationGrants/$(request.auth.uid)
+        )
+        && get(
+          /databases/$(database)/documents/authorizationGrants/$(request.auth.uid)
+        ).data.keys().hasOnly(["active", "role", "grantId", "updatedAt"])
+        && get(
+          /databases/$(database)/documents/authorizationGrants/$(request.auth.uid)
+        ).data.active == true
+        && get(
+          /databases/$(database)/documents/authorizationGrants/$(request.auth.uid)
+        ).data.role == request.auth.token.role
+        && get(
+          /databases/$(database)/documents/authorizationGrants/$(request.auth.uid)
+        ).data.grantId == request.auth.token.authorizationGrantId
+        && get(
+          /databases/$(database)/documents/authorizationGrants/$(request.auth.uid)
+        ).data.updatedAt is timestamp;
     }
 
     function isManager() {
@@ -525,8 +547,15 @@ service cloud.firestore {
     }
 
     match /invitations/{invitationId} {
-      allow read: if isManager();
-      allow write: if false;
+      allow read, write: if false;
+    }
+
+    match /authorizationGrants/{userId} {
+      allow read, write: if false;
+    }
+
+    match /invitationTargets/{targetId} {
+      allow read, write: if false;
     }
 
     match /invoices/{invoiceId} {

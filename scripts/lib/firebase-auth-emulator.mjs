@@ -1,6 +1,8 @@
+import { randomBytes } from "node:crypto";
 import { getApps, initializeApp } from "../../functions/node_modules/firebase-admin/lib/app/index.js";
 import { getAuth } from "../../functions/node_modules/firebase-admin/lib/auth/index.js";
 import { getFirestore, Timestamp } from "../../functions/node_modules/firebase-admin/lib/firestore/index.js";
+import { authorizationGrantMatches } from "./firebase-role-safety.mjs";
 
 export const FIREBASE_EMULATOR_PROJECT_ID = "demo-jobsite-jedi";
 
@@ -103,6 +105,7 @@ export const provisionEmulatorUser = async ({
   fullName,
   role,
   disabled = false,
+  emailVerified = true,
 }) => {
   const normalizedEmail = requireText(email, "Email").toLowerCase();
   const normalizedDisplayName = requireText(displayName ?? fullName, "Display name");
@@ -114,7 +117,9 @@ export const provisionEmulatorUser = async ({
     fail("Role must be admin, manager, builder, or null");
   }
   if (typeof disabled !== "boolean") fail("Disabled must be a boolean");
+  if (typeof emailVerified !== "boolean") fail("Email verification state must be a boolean");
 
+  const { projectId } = assertFirestoreEmulatorOnly();
   const auth = getEmulatorAuth();
   let user;
   try {
@@ -124,6 +129,7 @@ export const provisionEmulatorUser = async ({
       password,
       displayName: normalizedDisplayName,
       disabled,
+      emailVerified,
     });
   } catch (error) {
     if (!isUserNotFound(error)) throw error;
@@ -132,22 +138,58 @@ export const provisionEmulatorUser = async ({
       password,
       displayName: normalizedDisplayName,
       disabled,
+      emailVerified,
     });
   }
 
-  const claims = role === null ? {} : { role };
+  const authorizationGrantId = role === null ? null : randomBytes(16).toString("hex");
+  const claims = role === null ? {} : { role, authorizationGrantId };
   await auth.setCustomUserClaims(user.uid, claims);
+
+  const app = getApps().find((candidate) => candidate.name === EMULATOR_APP_NAME)
+    ?? initializeApp({ projectId }, EMULATOR_APP_NAME);
+  const grantReference = getFirestore(app).collection("authorizationGrants").doc(user.uid);
+  if (role === null) {
+    await grantReference.delete();
+  } else {
+    await grantReference.set({
+      active: true,
+      role,
+      grantId: authorizationGrantId,
+      updatedAt: Timestamp.now(),
+    });
+  }
 
   const verified = await auth.getUser(user.uid);
   const verifiedRole = verified.customClaims?.role ?? null;
   if (verifiedRole !== role) fail("Role verification failed");
+  if ((verified.customClaims?.authorizationGrantId ?? null) !== authorizationGrantId) {
+    fail("Authorization grant claim verification failed");
+  }
+  if (verified.emailVerified !== emailVerified) fail("Email verification state failed");
+  const verifiedGrant = await grantReference.get();
+  if (
+    (role === null && verifiedGrant.exists)
+    || (role !== null && (
+      !verifiedGrant.exists
+      || !authorizationGrantMatches({
+        grant: verifiedGrant.data(),
+        role,
+        grantId: authorizationGrantId,
+      })
+    ))
+  ) {
+    fail("Authorization grant document verification failed");
+  }
 
   return {
     uid: verified.uid,
     email: verified.email ?? normalizedEmail,
     displayName: verified.displayName ?? normalizedDisplayName,
     role,
+    authorizationGrantId,
     disabled: verified.disabled,
+    emailVerified: verified.emailVerified,
   };
 };
 

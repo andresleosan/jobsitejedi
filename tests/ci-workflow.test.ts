@@ -3,7 +3,10 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 
 const root = resolve(import.meta.dirname, "..");
-const workflow = readFileSync(resolve(root, ".github/workflows/ci.yml"), "utf8");
+const workflow = readFileSync(
+  resolve(root, ".github/workflows/ci.yml"),
+  "utf8",
+).replace(/\r\n/g, "\n");
 const playwrightConfig = readFileSync(
   resolve(root, "playwright.firebase.config.ts"),
   "utf8",
@@ -32,6 +35,7 @@ describe("CI workflow contract", () => {
       "npm run typecheck",
       "npm run lint",
       "npm run test:provider-guard",
+      "npm run test:role-operations",
       "npm run build:functions",
       "npm --prefix functions test",
       "npm run test:storage",
@@ -51,7 +55,9 @@ describe("CI workflow contract", () => {
   });
 
   test("keeps the Playwright runner cross-platform and bounded", () => {
-    expect(playwrightConfig).toContain('command: "npm run dev -- --host localhost --port 5173"');
+    expect(playwrightConfig).toContain(
+      'command: "npm run dev -- --host 127.0.0.1 --port 41731 --strictPort"',
+    );
     expect(playwrightConfig).not.toContain("npm.cmd run dev");
     expect(playwrightConfig).toContain("forbidOnly: Boolean(process.env.CI)");
     expect(playwrightConfig).toContain("retries: 0");

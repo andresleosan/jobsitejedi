@@ -17,6 +17,7 @@ dist-ssr
 .superpowers/sdd/
 qa/reports/
 qa/test-results/
+test-results/
 .tools/
 graphify-out/
 

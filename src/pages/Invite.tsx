@@ -6,6 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, QrCode, Users, HardHat, Clock, Loader2, Copy, Check, RefreshCw } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import { invitationOperations } from "@/lib/firebase/functions";
@@ -16,7 +17,9 @@ const Invite = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [role, setRole] = useState<AppRole>("builder");
+  const [targetEmail, setTargetEmail] = useState("");
   const [invitationCode, setInvitationCode] = useState<string | null>(null);
+  const [issuedRole, setIssuedRole] = useState<AppRole | null>(null);
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<Date | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<number>(0);
@@ -50,6 +53,7 @@ const Invite = () => {
 
       if (remaining === 0) {
         setInvitationCode(null);
+        setIssuedRole(null);
         setQrCodeDataUrl(null);
         setExpiresAt(null);
       }
@@ -59,10 +63,23 @@ const Invite = () => {
   }, [expiresAt]);
 
   const generateInvitation = async () => {
+    const normalizedTargetEmail = targetEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedTargetEmail)) {
+      toast({
+        title: "Invalid email",
+        description: "Enter the exact email address of the invited team member",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsGenerating(true);
     try {
-      const invitation = await invitationOperations.createInvitation({ role });
-      const signupUrl = `${window.location.origin}/auth?code=${encodeURIComponent(invitation.code)}`;
+      const invitation = await invitationOperations.createInvitation({
+        role,
+        targetEmail: normalizedTargetEmail,
+      });
+      const signupUrl = `${window.location.origin}/auth#code=${encodeURIComponent(invitation.code)}`;
       const qrDataUrl = await QRCode.toDataURL(signupUrl, {
         errorCorrectionLevel: "M",
         margin: 1,
@@ -70,13 +87,14 @@ const Invite = () => {
       });
 
       setInvitationCode(invitation.code);
+      setIssuedRole(invitation.role);
       setQrCodeDataUrl(qrDataUrl);
       setExpiresAt(invitation.expiresAt);
-      setTimeRemaining(300); // 5 minutes in seconds
+      setTimeRemaining(Math.max(0, Math.ceil((invitation.expiresAt.getTime() - Date.now()) / 1000)));
 
       toast({
         title: "Invitation created!",
-        description: `Valid for 5 minutes for ${role} role`,
+        description: `Valid for 30 minutes for ${invitation.role} role`,
       });
     } catch (error) {
       toast({
@@ -92,7 +110,7 @@ const Invite = () => {
   const copyToClipboard = async () => {
     if (!invitationCode) return;
     
-    const signupUrl = `${window.location.origin}/auth?code=${invitationCode}`;
+    const signupUrl = `${window.location.origin}/auth#code=${encodeURIComponent(invitationCode)}`;
     await navigator.clipboard.writeText(signupUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -145,17 +163,35 @@ const Invite = () => {
               Generate Invitation QR Code
             </CardTitle>
             <CardDescription>
-              Create a secure, single-use invitation that expires in 5 minutes
+              Create a secure, single-use invitation that expires in 30 minutes
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
+            <div className="space-y-2">
+              <Label htmlFor="invite-target-email">Invitee email</Label>
+              <Input
+                id="invite-target-email"
+                type="email"
+                value={targetEmail}
+                onChange={(event) => setTargetEmail(event.target.value)}
+                placeholder="teammate@company.com"
+                autoComplete="off"
+                maxLength={254}
+                disabled={!!invitationCode || isGenerating}
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                Only a new server-created enrollment for this exact email can redeem the invitation.
+              </p>
+            </div>
+
             {/* Role Selection */}
             <div className="space-y-2">
               <Label>Invite as</Label>
               <Select 
                 value={role} 
                 onValueChange={(value: AppRole) => setRole(value)}
-                disabled={!!invitationCode}
+                disabled={!!invitationCode || isGenerating}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue />
@@ -173,12 +209,6 @@ const Invite = () => {
                         <div className="flex items-center gap-2">
                           <Users className="h-4 w-4" />
                           Manager
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="admin">
-                        <div className="flex items-center gap-2">
-                          <Users className="h-4 w-4" />
-                          Admin
                         </div>
                       </SelectItem>
                     </>
@@ -234,17 +264,19 @@ const Invite = () => {
                 {/* Role Badge */}
                 <div className="flex justify-center">
                   <Badge variant="outline" className="text-base px-4 py-2">
-                    {role === "builder" ? <HardHat className="mr-2 h-4 w-4" /> : <Users className="mr-2 h-4 w-4" />}
-                    {role[0].toUpperCase() + role.slice(1)} Invitation
+                    {issuedRole === "builder" ? <HardHat className="mr-2 h-4 w-4" /> : <Users className="mr-2 h-4 w-4" />}
+                    {issuedRole ? issuedRole[0].toUpperCase() + issuedRole.slice(1) : "Unknown"} Invitation
                   </Badge>
                 </div>
 
                 {/* Generate New Button */}
                 <Button 
                    onClick={() => {
-                     setInvitationCode(null);
-                     setQrCodeDataUrl(null);
-                     setExpiresAt(null);
+                      setInvitationCode(null);
+                      setIssuedRole(null);
+                      setQrCodeDataUrl(null);
+                      setExpiresAt(null);
+                      setTargetEmail("");
                   }}
                   variant="outline"
                   className="w-full"
@@ -262,7 +294,8 @@ const Invite = () => {
                     <li>Select the role for the new team member</li>
                     <li>Generate a QR code invitation</li>
                     <li>Share the QR code with the new member</li>
-                    <li>They scan it to sign up within 5 minutes</li>
+                    <li>They scan it and request the secure Firebase activation email</li>
+                    <li>They set a password, verify the email if requested, and finish within 30 minutes</li>
                     <li>Each code can only be used once</li>
                   </ol>
                 </div>
@@ -271,7 +304,7 @@ const Invite = () => {
                 <Button 
                   onClick={generateInvitation} 
                   className="w-full h-12 text-lg"
-                  disabled={isGenerating}
+                  disabled={isGenerating || !targetEmail.trim()}
                 >
                   {isGenerating ? (
                     <Loader2 className="h-5 w-5 mr-2 animate-spin" />
