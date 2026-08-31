@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, CheckCircle2, Clock, ImageIcon, Loader2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,8 +11,13 @@ import {
   type JobRecord,
 } from "@/lib/firebase/repositories/jobs";
 import JobPhotoDialog from "@/components/jobs/JobPhotoDialog";
+import { runActiveSessionTask } from "./active-session-task";
 
-const ManagerJobReviewPanel = () => {
+interface ManagerJobReviewPanelProps {
+  isSessionActive: () => boolean;
+}
+
+const ManagerJobReviewPanel = ({ isSessionActive }: ManagerJobReviewPanelProps) => {
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedJob, setSelectedJob] = useState<JobRecord | null>(null);
@@ -20,33 +25,59 @@ const ManagerJobReviewPanel = () => {
   const [reviewNotes, setReviewNotes] = useState("");
   const [isReviewing, setIsReviewing] = useState(false);
   const { toast } = useToast();
+  const isMountedRef = useRef(true);
+  const jobsRequestIdRef = useRef(0);
+  const reviewRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      jobsRequestIdRef.current += 1;
+      reviewRequestIdRef.current += 1;
+    };
+  }, []);
 
   const fetchJobs = useCallback(async () => {
+    if (!isSessionActive()) return;
+    const requestId = jobsRequestIdRef.current + 1;
+    jobsRequestIdRef.current = requestId;
     setIsLoading(true);
-    try {
-      setJobs(await listJobsForManager(["waiting_review"]));
-    } catch (error) {
-      console.error("Error loading manager job review queue:", error);
-      setJobs([]);
-      toast({
-        title: "Review queue unavailable",
-        description: error instanceof Error ? error.message : "Jobs could not be loaded.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  }, [toast]);
+    await runActiveSessionTask({
+      task: () => listJobsForManager(["waiting_review"]),
+      isTaskCurrent: () => (
+        isMountedRef.current && jobsRequestIdRef.current === requestId
+      ),
+      isSessionActive,
+      onSuccess: setJobs,
+      onError: (error) => {
+        console.error("Error loading manager job review queue:", error);
+        setJobs([]);
+        toast({
+          title: "Review queue unavailable",
+          description: error instanceof Error ? error.message : "Jobs could not be loaded.",
+          variant: "destructive",
+        });
+      },
+      onSettled: () => setIsLoading(false),
+    });
+  }, [isSessionActive, toast]);
 
   useEffect(() => {
     void fetchJobs();
   }, [fetchJobs]);
 
   const handleReview = async (status: "completed" | "needs_correction") => {
-    if (!selectedJob) return;
+    if (!selectedJob || !isSessionActive()) return;
+    const requestId = reviewRequestIdRef.current + 1;
+    reviewRequestIdRef.current = requestId;
+    const isReviewCurrent = () => (
+      isMountedRef.current && reviewRequestIdRef.current === requestId
+    );
     setIsReviewing(true);
     try {
       await reviewJob(selectedJob.id, status, reviewNotes);
+      if (!isReviewCurrent() || !isSessionActive()) return;
       toast({
         title: status === "completed" ? "Job approved" : "Correction requested",
         description: status === "completed" ? "The job is now marked completed." : "The builder can update the evidence and resubmit.",
@@ -56,13 +87,14 @@ const ManagerJobReviewPanel = () => {
       setReviewNotes("");
       await fetchJobs();
     } catch (error) {
+      if (!isReviewCurrent() || !isSessionActive()) return;
       toast({
         title: "Review failed",
         description: error instanceof Error ? error.message : "The job status could not be changed.",
         variant: "destructive",
       });
     } finally {
-      setIsReviewing(false);
+      if (isReviewCurrent()) setIsReviewing(false);
     }
   };
 

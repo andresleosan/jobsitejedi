@@ -16,6 +16,7 @@ import ManagerInvoicesDialog from "./ManagerInvoicesDialog";
 import JobImportDialog from "./JobImportDialog";
 import SupplierCatalogDialog from "./SupplierCatalogDialog";
 import ReportsRiskPanel from "./ReportsRiskPanel";
+import { runActiveSessionTask } from "./active-session-task";
 
 interface ManagerDashboardProps {
   userId: string;
@@ -31,36 +32,49 @@ const ManagerDashboard = ({ userId, role }: ManagerDashboardProps) => {
   const [isInvoicesDialogOpen, setIsInvoicesDialogOpen] = useState(false);
   const [isJobImportOpen, setIsJobImportOpen] = useState(false);
   const [isSupplierCatalogOpen, setIsSupplierCatalogOpen] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
   const isMountedRef = useRef(true);
   const isSigningOutRef = useRef(false);
+  const projectsRequestIdRef = useRef(0);
 
-  useEffect(() => () => {
-    isMountedRef.current = false;
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      projectsRequestIdRef.current += 1;
+    };
   }, []);
 
   const ownsActiveSession = useCallback(() =>
     isMountedRef.current
     && !isSigningOutRef.current
-    && firebaseAuth.currentUser?.uid === userId, [userId]);
+    && !isSigningOut
+    && firebaseAuth.currentUser?.uid === userId, [isSigningOut, userId]);
 
   const fetchProjects = useCallback(async () => {
+    if (!ownsActiveSession()) return;
+    const requestId = projectsRequestIdRef.current + 1;
+    projectsRequestIdRef.current = requestId;
     setIsLoadingProjects(true);
-    try {
-      const nextProjects = await listProjects();
-      if (ownsActiveSession()) setProjects(nextProjects);
-    } catch (error) {
-      if (!ownsActiveSession()) return;
-      console.error("Error fetching manager projects:", error);
-      toast({
-        title: "Projects could not be loaded",
-        description: error instanceof Error ? error.message : "Try again in a moment.",
-        variant: "destructive",
-      });
-    } finally {
-      if (ownsActiveSession()) setIsLoadingProjects(false);
-    }
+    await runActiveSessionTask({
+      task: listProjects,
+      isTaskCurrent: () => (
+        isMountedRef.current && projectsRequestIdRef.current === requestId
+      ),
+      isSessionActive: ownsActiveSession,
+      onSuccess: setProjects,
+      onError: (error) => {
+        console.error("Error fetching manager projects:", error);
+        toast({
+          title: "Projects could not be loaded",
+          description: error instanceof Error ? error.message : "Try again in a moment.",
+          variant: "destructive",
+        });
+      },
+      onSettled: () => setIsLoadingProjects(false),
+    });
   }, [ownsActiveSession, toast]);
 
   useEffect(() => {
@@ -68,12 +82,15 @@ const ManagerDashboard = ({ userId, role }: ManagerDashboardProps) => {
   }, [fetchProjects]);
 
   const handleSignOut = async () => {
+    if (isSigningOutRef.current) return;
     isSigningOutRef.current = true;
+    setIsSigningOut(true);
     try {
       await signOut();
       navigate("/auth");
     } catch (error) {
       isSigningOutRef.current = false;
+      setIsSigningOut(false);
       toast({
         title: "Sign out failed",
         description: error instanceof Error ? error.message : "The session could not be closed.",
@@ -97,7 +114,7 @@ const ManagerDashboard = ({ userId, role }: ManagerDashboardProps) => {
               <p className="text-sm text-muted-foreground">BuildTrack Pro · {role} workspace</p>
             </div>
           </div>
-          <Button variant="outline" size="sm" onClick={handleSignOut}>
+          <Button variant="outline" size="sm" onClick={handleSignOut} disabled={isSigningOut}>
             <LogOut className="h-4 w-4" />
             Sign out
           </Button>
@@ -184,7 +201,7 @@ const ManagerDashboard = ({ userId, role }: ManagerDashboardProps) => {
           </CardContent>
         </Card>
 
-        <ManagerJobReviewPanel />
+        <ManagerJobReviewPanel isSessionActive={ownsActiveSession} />
 
         <ReportsRiskPanel role="manager" projects={projects} />
       </main>
