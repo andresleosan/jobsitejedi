@@ -25,10 +25,11 @@ Vercel con el mismo runtime del release anterior.
 
 ## Validación posterior
 
-1. Confirmar en GitHub Actions que pasen `Quality and contracts` y
-   `Firebase emulators and E2E`.
-2. Confirmar que Vercel complete el deployment de `main`.
-3. Cargar directamente `/auth` en producción y verificar que la SPA se muestre sin errores Firebase.
+1. GitHub Actions [`CI #2`](https://github.com/andresleosan/jobsitejedi/actions/runs/33232359171):
+   `Quality and contracts` y `Firebase emulators and E2E` en `success`.
+2. Estado del commit en Vercel: `success`.
+3. Smoke productivo de `/auth`: HTTP 200, SPA renderizada con email/contraseña y Google, sin errores
+   de consola.
 
 ## Rollback
 

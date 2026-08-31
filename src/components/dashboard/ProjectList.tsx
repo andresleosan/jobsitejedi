@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,17 +16,17 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { listProjects, updateProject, type ProjectRecord } from "@/lib/firebase/repositories/projects";
+import { updateProject, type ProjectRecord } from "@/lib/firebase/repositories/projects";
 import { toast } from "sonner";
 
 interface ProjectListProps {
-  onProjectCreated: () => void;
+  projects: ProjectRecord[];
+  isLoading: boolean;
+  onProjectsChanged: () => void | Promise<void>;
 }
 
-const ProjectList = ({ onProjectCreated }: ProjectListProps) => {
+const ProjectList = ({ projects, isLoading, onProjectsChanged }: ProjectListProps) => {
   const navigate = useNavigate();
-  const [projects, setProjects] = useState<ProjectRecord[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [selectedProject, setSelectedProject] = useState<ProjectRecord | null>(null);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [navigatingToProject, setNavigatingToProject] = useState<string | null>(null);
@@ -34,22 +34,6 @@ const ProjectList = ({ onProjectCreated }: ProjectListProps) => {
   const [loadingStage, setLoadingStage] = useState("");
   const [projectToFinish, setProjectToFinish] = useState<ProjectRecord | null>(null);
   const [isFinishDialogOpen, setIsFinishDialogOpen] = useState(false);
-
-  const fetchProjects = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      setProjects(await listProjects("active"));
-    } catch (error) {
-      console.error("Error fetching projects:", error);
-      toast.error("Failed to load projects");
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void fetchProjects();
-  }, [fetchProjects, onProjectCreated]);
 
   const handleConfirmFinish = async () => {
     if (!projectToFinish) return;
@@ -63,7 +47,7 @@ const ProjectList = ({ onProjectCreated }: ProjectListProps) => {
         status: "finished",
       });
       toast.success("Project moved to finished projects");
-      await fetchProjects();
+      await onProjectsChanged();
     } catch (error) {
       console.error("Error finishing project:", error);
       toast.error("Failed to update project status");
@@ -180,7 +164,7 @@ const ProjectList = ({ onProjectCreated }: ProjectListProps) => {
       <EditProjectDialog
         open={isEditDialogOpen}
         onOpenChange={setIsEditDialogOpen}
-        onProjectUpdated={fetchProjects}
+        onProjectUpdated={() => void onProjectsChanged()}
         project={selectedProject}
       />
 

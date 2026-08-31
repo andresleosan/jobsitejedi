@@ -1,51 +1,18 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/qa-test";
+import {
+  provisionAndSignInToAuthEmulator,
+  provisionEmulatorUser,
+  seedEmulatorProject,
+} from "./helpers/firebase-auth-emulator";
 
 const firebaseProjectId = "demo-jobsite-jedi";
-const authBaseUrl = "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1";
 const firestoreBaseUrl = `http://127.0.0.1:8080/v1/projects/${firebaseProjectId}/databases/(default)/documents`;
-const functionsBaseUrl = `http://127.0.0.1:5001/${firebaseProjectId}/us-central1`;
-
-interface AuthResponse {
-  idToken: string;
-  localId: string;
-}
 
 const requestJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(url, init);
   const body = await response.text();
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}: ${body}`);
   return body ? (JSON.parse(body) as T) : ({} as T);
-};
-
-const signIn = (email: string, password: string) => requestJson<AuthResponse>(
-  `${authBaseUrl}/accounts:signInWithPassword?key=demo-api-key`,
-  {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, password, returnSecureToken: true }),
-  },
-);
-
-const createManager = async (email: string, password: string, displayName: string) => {
-  const created = await requestJson<AuthResponse>(`${authBaseUrl}/accounts:signUp?key=demo-api-key`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, password, displayName, returnSecureToken: true }),
-  });
-  await requestJson(`${functionsBaseUrl}/ensureBuilderRole`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${created.idToken}`, "content-type": "application/json" },
-    body: JSON.stringify({ data: { role: "builder" } }),
-  });
-
-  const [{ getApps, initializeApp }, { getAuth }] = await Promise.all([
-    import("../functions/node_modules/firebase-admin/lib/app/index.js"),
-    import("../functions/node_modules/firebase-admin/lib/auth/index.js"),
-  ]);
-  const adminApp = getApps().find((app) => app.name === "movement-browser-tests")
-    ?? initializeApp({ projectId: firebaseProjectId }, "movement-browser-tests");
-  await getAuth(adminApp).setCustomUserClaims(created.localId, { role: "manager" });
-  return signIn(email, password);
 };
 
 const firestoreString = (value: string) => ({ stringValue: value });
@@ -77,17 +44,27 @@ test("manager records transfers and direct usage with atomic stock deductions", 
   const email = `movement-manager-${suffix}@example.test`;
   const projectDocumentId = `movement-project-${suffix}`;
   const materialDocumentId = `movement-material-${suffix}`;
-  const manager = await createManager(email, password, "Movement E2E Manager");
+  const manager = await provisionAndSignInToAuthEmulator({
+    email,
+    password,
+    displayName: "Movement E2E Manager",
+    role: "manager",
+  });
+  const builder = await provisionEmulatorUser({
+    email: `movement-builder-${suffix}@example.test`,
+    password,
+    displayName: "Movement E2E Builder",
+    role: "builder",
+  });
 
-  await createFirestoreDocument("projects", projectDocumentId, {
-    ownerId: firestoreString(manager.localId),
-    name: firestoreString("Movement E2E Project"),
-    description: firestoreString("Material movement browser fixture"),
-    clientName: firestoreString("Movement Client"),
-    status: firestoreString("active"),
-    createdAt: firestoreTimestamp(),
-    updatedAt: firestoreTimestamp(),
-  }, manager.idToken);
+  await seedEmulatorProject({
+    projectId: projectDocumentId,
+    builderId: builder.uid,
+    createdBy: manager.localId,
+    name: "Movement E2E Project",
+    description: "Material movement browser fixture",
+    clientName: "Movement Client",
+  });
 
   await createFirestoreDocument("storageMaterials", materialDocumentId, {
     name: firestoreString("E2E Movement Cement"),

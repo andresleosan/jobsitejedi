@@ -38,6 +38,14 @@ jobs:
           npm ci
           npm --prefix functions ci
 
+      - name: Record and verify tested revision
+        shell: bash
+        run: |
+          mkdir -p qa
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          test "$ACTUAL_SHA" = "$GITHUB_SHA"
+          printf '%s\n' "$ACTUAL_SHA" > qa/release-sha.txt
+
       - name: Verify contracts and static quality
         run: |
           npm run test:ci-contract
@@ -45,6 +53,9 @@ jobs:
           npm run lint
           npm run test:provider-guard
           npm run build:functions
+          npm --prefix functions test
+          npm run test:storage
+          npm run test:ocr
 
       - name: Build client without deployment credentials
         run: npm run build:dev
@@ -82,6 +93,14 @@ jobs:
           npm ci
           npm --prefix functions ci
 
+      - name: Record and verify tested revision
+        shell: bash
+        run: |
+          mkdir -p qa
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          test "$ACTUAL_SHA" = "$GITHUB_SHA"
+          printf '%s\n' "$ACTUAL_SHA" > qa/release-sha.txt
+
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
@@ -90,3 +109,15 @@ jobs:
 
       - name: Run Firebase E2E suite
         run: npm run test:e2e:firebase:emulator
+
+      - name: Upload immutable QA evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: firebase-qa-${{ github.sha }}
+          path: |
+            qa/release-sha.txt
+            qa/reports
+            qa/test-results
+          if-no-files-found: error
+          retention-days: 14

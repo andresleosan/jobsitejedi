@@ -10,6 +10,7 @@ const Auth = lazy(() => import("./pages/Auth"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Builders = lazy(() => import("./pages/Builders"));
 const Managers = lazy(() => import("./pages/Managers"));
+const Admins = lazy(() => import("./pages/Admins"));
 const ProjectDetails = lazy(() => import("./pages/ProjectDetails"));
 const Statements = lazy(() => import("./pages/Statements"));
 const Storage = lazy(() => import("./pages/Storage"));
@@ -37,6 +38,7 @@ const App = () => (
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/builders" element={<Builders />} />
             <Route path="/managers" element={<Managers />} />
+            <Route path="/admins" element={<Admins />} />
             <Route path="/project/:projectId" element={<ProjectDetails />} />
             <Route path="/statements" element={<Statements />} />
             <Route path="/storage" element={<Storage />} />

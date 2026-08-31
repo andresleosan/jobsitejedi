@@ -22,7 +22,41 @@ const otherBuilderDb = () =>
   testEnv.authenticatedContext("builder-2", { role: "builder", name: "Builder Two" }).firestore();
 const managerDb = () =>
   testEnv.authenticatedContext("manager-1", { role: "manager", name: "Manager One" }).firestore();
+const adminDb = () =>
+  testEnv.authenticatedContext("admin-1", { role: "admin", name: "Admin One" }).firestore();
 const anonymousDb = () => testEnv.unauthenticatedContext().firestore();
+
+const seedProject = async (
+  id: string,
+  builderId = "builder-1",
+  name = "Rules project",
+) => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), `projects/${id}`), {
+      builderId,
+      ownerId: builderId,
+      createdBy: "manager-1",
+      name,
+      description: null,
+      clientName: "Rules client",
+      address: null,
+      status: "active",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  });
+};
+
+const validJobData = (projectId: string, builderId = "builder-1") => ({
+  projectId,
+  builderId,
+  title: "Rules job",
+  description: null,
+  section: null,
+  status: "approved",
+  createdAt: serverTimestamp(),
+  updatedAt: serverTimestamp(),
+});
 
 describe("Firestore authorization rules", () => {
   beforeAll(async () => {
@@ -40,24 +74,58 @@ describe("Firestore authorization rules", () => {
     await testEnv.cleanup();
   });
 
-  test("blocks anonymous access and allows a builder to create their project", async () => {
+  test("keeps assigned projects server-created and scoped to their builder", async () => {
     const project = doc(builderDb(), "projects/project-owned");
-    const data = { ownerId: "builder-1", name: "Owned project" };
+    const data = {
+      builderId: "builder-1",
+      ownerId: "builder-1",
+      createdBy: "manager-1",
+      name: "Owned project",
+    };
 
     await assertFails(setDoc(doc(anonymousDb(), project.path), data));
-    await assertSucceeds(setDoc(project, data));
+    await assertFails(setDoc(project, data));
+    await assertFails(setDoc(doc(managerDb(), project.path), data));
+    await seedProject("project-owned", "builder-1", "Owned project");
     await assertSucceeds(getDoc(project));
+    await assertFails(getDoc(doc(otherBuilderDb(), project.path)));
+    await assertFails(updateDoc(project, { name: "Builder rewrite", updatedAt: serverTimestamp() }));
+    await assertSucceeds(updateDoc(doc(managerDb(), project.path), {
+      name: "Manager update",
+      updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(managerDb(), project.path), {
+      builderId: "builder-2",
+      ownerId: "builder-2",
+      updatedAt: serverTimestamp(),
+    }));
   });
 
   test("blocks a builder from reading or changing another builder's project", async () => {
+    await seedProject("project-cross-user", "builder-1", "Protected project");
     const project = doc(managerDb(), "projects/project-cross-user");
-    await assertSucceeds(
-      setDoc(project, { ownerId: "builder-1", name: "Protected project" }),
-    );
 
     const otherProjectRef = doc(otherBuilderDb(), project.path);
     await assertFails(getDoc(otherProjectRef));
     await assertFails(updateDoc(otherProjectRef, { ownerId: "builder-2" }));
+  });
+
+  test("allows admin to inherit manager data operations", async () => {
+    await seedProject("admin-managed-project", "builder-1", "Admin managed project");
+    const project = doc(adminDb(), "projects/admin-managed-project");
+
+    await assertSucceeds(getDoc(project));
+    await assertSucceeds(updateDoc(project, {
+      name: "Admin updated project",
+      updatedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(setDoc(doc(adminDb(), "suppliers/admin-supplier"), {
+      name: "Admin Supplier",
+      normalizedName: "admin-supplier",
+      createdBy: "admin-1",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }));
   });
 
   test("keeps suppliers readable but manager-owned and undeletable", async () => {
@@ -93,32 +161,178 @@ describe("Firestore authorization rules", () => {
     await assertFails(getDoc(doc(builderDb(), managerUser.path)));
   });
 
-  test("applies builder ownership to jobs, completions and time entries", async () => {
-    await assertSucceeds(
-      setDoc(doc(builderDb(), "jobs/job-1"), { builderId: "builder-1" }),
-    );
-    await assertSucceeds(
-      setDoc(doc(builderDb(), "jobCompletions/completion-1"), {
-        builderId: "builder-1",
-      }),
-    );
-    await assertSucceeds(
-      setDoc(doc(builderDb(), "timeTracking/time-1"), {
-        builderId: "builder-1",
-      }),
-    );
+  test("enforces canonical job assignment, schema and review transitions", async () => {
+    await seedProject("job-rules-project");
+    const managerJob = doc(managerDb(), "jobs/review-transition");
+    const builderJob = doc(builderDb(), managerJob.path);
 
-    await assertFails(getDoc(doc(otherBuilderDb(), "jobs/job-1")));
+    await assertFails(setDoc(builderJob, validJobData("job-rules-project")));
+    await assertFails(setDoc(doc(managerDb(), "jobs/forged-assignment"), {
+      ...validJobData("job-rules-project", "builder-2"),
+    }));
+    await assertFails(setDoc(doc(managerDb(), "jobs/extra-field"), {
+      ...validJobData("job-rules-project"),
+      privileged: true,
+    }));
+    await assertSucceeds(setDoc(managerJob, validJobData("job-rules-project")));
+    await assertSucceeds(getDoc(builderJob));
+    await assertFails(getDoc(doc(otherBuilderDb(), managerJob.path)));
+
+    await assertSucceeds(updateDoc(builderJob, {
+      status: "waiting_review",
+      updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(builderJob, {
+      status: "completed",
+      updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(managerDb(), managerJob.path), { title: "Rewritten" }));
+    await assertSucceeds(updateDoc(doc(managerDb(), managerJob.path), {
+      status: "completed",
+      reviewNotes: "Evidence accepted",
+      reviewedBy: "manager-1",
+      reviewedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(builderJob, {
+      status: "waiting_review",
+      updatedAt: serverTimestamp(),
+    }));
+    await assertFails(deleteDoc(doc(managerDb(), managerJob.path)));
   });
 
-  test("limits builder job updates to submitting for review", async () => {
-    const job = doc(builderDb(), "jobs/review-transition");
-    await assertSucceeds(
-      setDoc(job, { builderId: "builder-1", status: "approved", title: "Review me" }),
-    );
-    await assertSucceeds(updateDoc(job, { status: "waiting_review", updatedAt: "now" }));
-    await assertFails(updateDoc(job, { status: "completed", updatedAt: "later" }));
+  test("keeps legacy job completions read-only", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), "jobCompletions/completion-1"), {
+        jobId: "legacy-job",
+        builderId: "builder-1",
+        completedAt: serverTimestamp(),
+      });
+    });
+
+    await assertSucceeds(getDoc(doc(builderDb(), "jobCompletions/completion-1")));
+    await assertFails(setDoc(doc(builderDb(), "jobCompletions/direct-builder"), {
+      builderId: "builder-1",
+    }));
+    await assertFails(setDoc(doc(managerDb(), "jobCompletions/direct-manager"), {
+      builderId: "builder-1",
+    }));
+    await assertFails(deleteDoc(doc(managerDb(), "jobCompletions/completion-1")));
   });
+
+  test("binds job photo metadata to an assigned job and locks submitted evidence", async () => {
+    await seedProject("photo-rules-project");
+    const job = doc(managerDb(), "jobs/photo-rules-job");
+    await assertSucceeds(setDoc(job, validJobData("photo-rules-project")));
+
+    const photoData = (photoId: string, kind = "completion") => ({
+      jobId: "photo-rules-job",
+      builderId: "builder-1",
+      uploadedBy: "builder-1",
+      kind,
+      originalPath: `jobs/photo-rules-job/builder-1/${kind}/${photoId}-evidence.jpg`,
+      thumbnailPath: `jobs/photo-rules-job/builder-1/${kind}/thumbnails/${photoId}-evidence.jpg`,
+      fileName: "evidence.jpg",
+      contentType: "image/jpeg",
+      createdAt: serverTimestamp(),
+    });
+
+    const draft = doc(builderDb(), "jobPhotos/photo-draft");
+    await assertSucceeds(setDoc(draft, photoData("photo-draft")));
+    await assertFails(updateDoc(draft, { fileName: "changed.jpg" }));
+    await assertFails(setDoc(doc(builderDb(), "jobPhotos/photo-forged-owner"), {
+      ...photoData("photo-forged-owner"),
+      builderId: "builder-2",
+    }));
+    await assertFails(setDoc(doc(builderDb(), "jobPhotos/photo-forged-path"), {
+      ...photoData("photo-forged-path"),
+      originalPath: "jobs/another-job/builder-1/completion/photo-forged-path-evidence.jpg",
+    }));
+    await assertSucceeds(deleteDoc(draft));
+
+    const submittedPhoto = doc(builderDb(), "jobPhotos/photo-submitted");
+    await assertSucceeds(setDoc(submittedPhoto, photoData("photo-submitted")));
+    await assertSucceeds(updateDoc(doc(builderDb(), job.path), {
+      status: "waiting_review",
+      updatedAt: serverTimestamp(),
+    }));
+    await assertFails(deleteDoc(submittedPhoto));
+    await assertFails(setDoc(doc(builderDb(), "jobPhotos/photo-late"), photoData("photo-late")));
+  });
+
+  test("requires an atomic active marker and preserves immutable time history", async () => {
+    await seedProject("time-rules-project-1");
+    await seedProject("time-rules-project-2");
+    const db = builderDb();
+    const first = doc(db, "timeTracking/time-rules-1");
+    const marker = doc(db, "activeTimeEntries/builder-1");
+    const firstData = {
+      builderId: "builder-1",
+      projectId: "time-rules-project-1",
+      clockIn: serverTimestamp(),
+      clockOut: null,
+      location: null,
+      notes: null,
+    };
+
+    await assertFails(setDoc(first, firstData));
+    const startBatch = writeBatch(db);
+    startBatch.set(first, firstData);
+    startBatch.set(marker, {
+      builderId: "builder-1",
+      entryId: "time-rules-1",
+      projectId: "time-rules-project-1",
+      updatedAt: serverTimestamp(),
+    });
+    await assertSucceeds(startBatch.commit());
+
+    const forged = doc(db, "timeTracking/time-rules-forged");
+    const forgedBatch = writeBatch(db);
+    forgedBatch.set(forged, {
+      ...firstData,
+      projectId: "time-rules-project-2",
+    });
+    forgedBatch.set(marker, {
+      builderId: "builder-1",
+      entryId: "time-rules-forged",
+      projectId: "time-rules-project-2",
+      updatedAt: serverTimestamp(),
+    });
+    await assertFails(forgedBatch.commit());
+
+    const second = doc(db, "timeTracking/time-rules-2");
+    const switchBatch = writeBatch(db);
+    switchBatch.update(first, { clockOut: serverTimestamp() });
+    switchBatch.set(second, {
+      ...firstData,
+      projectId: "time-rules-project-2",
+    });
+    switchBatch.set(marker, {
+      builderId: "builder-1",
+      entryId: "time-rules-2",
+      projectId: "time-rules-project-2",
+      updatedAt: serverTimestamp(),
+    });
+    await assertSucceeds(switchBatch.commit());
+
+    await assertFails(updateDoc(first, { clockOut: serverTimestamp() }));
+    await assertFails(updateDoc(doc(managerDb(), second.path), { clockOut: serverTimestamp() }));
+    await assertFails(deleteDoc(doc(managerDb(), first.path)));
+    await assertFails(setDoc(doc(db, "projectSwitches/forged-switch"), {
+      builderId: "builder-1",
+      fromProjectId: "time-rules-project-1",
+      toProjectId: "time-rules-project-2",
+      travelEntryId: "forged-switch",
+      travelTimeMinutes: null,
+      switchedAt: serverTimestamp(),
+      arrivedAt: null,
+    }));
+
+    const stopBatch = writeBatch(db);
+    stopBatch.update(second, { clockOut: serverTimestamp() });
+    stopBatch.delete(marker);
+    await assertSucceeds(stopBatch.commit());
+  }, 15_000);
 
   test("does not expose invitations to builders or permit direct writes", async () => {
     const invitation = doc(managerDb(), "invitations/invitation-1");
@@ -154,10 +368,7 @@ describe("Firestore authorization rules", () => {
   });
 
   test("keeps daily reports and risk signatures scoped to the project owner", async () => {
-    await assertSucceeds(setDoc(doc(builderDb(), "projects/report-rules-project"), {
-      ownerId: "builder-1",
-      name: "Report rules project",
-    }));
+    await seedProject("report-rules-project", "builder-1", "Report rules project");
     await assertSucceeds(setDoc(doc(builderDb(), "dailyReports/report-rules-1"), {
       builderId: "builder-1",
       projectId: "report-rules-project",
@@ -202,20 +413,40 @@ describe("Firestore authorization rules", () => {
       uploadedBy: "builder-1",
       createdAt: serverTimestamp(),
     }));
+    await assertSucceeds(setDoc(doc(managerDb(), "riskAssessments/risk-rules-2"), {
+      projectId: "report-rules-project",
+      title: "Second site risk assessment",
+      filePath: "documents/report-rules-project/risk-rules-2/assessment.pdf",
+      fileName: "assessment.pdf",
+      contentType: "application/pdf",
+      fileSize: 100,
+      uploadedBy: "manager-1",
+      createdAt: serverTimestamp(),
+    }));
 
-    await assertSucceeds(setDoc(doc(builderDb(), "riskAssessmentSignatures/risk-signature-1"), {
+    await assertSucceeds(setDoc(doc(builderDb(), "riskAssessmentSignatures/risk-rules-1_builder-1"), {
       riskAssessmentId: "risk-rules-1",
       userId: "builder-1",
       signedAt: serverTimestamp(),
     }));
-    await assertSucceeds(getDoc(doc(builderDb(), "riskAssessmentSignatures/risk-signature-1")));
-    await assertFails(getDoc(doc(otherBuilderDb(), "riskAssessmentSignatures/risk-signature-1")));
+    await assertSucceeds(getDoc(doc(builderDb(), "riskAssessmentSignatures/risk-rules-1_builder-1")));
+    await assertFails(getDoc(doc(otherBuilderDb(), "riskAssessmentSignatures/risk-rules-1_builder-1")));
     await assertFails(setDoc(doc(builderDb(), "riskAssessmentSignatures/forged-signature"), {
+      riskAssessmentId: "risk-rules-1",
+      userId: "builder-1",
+      signedAt: serverTimestamp(),
+    }));
+    await assertFails(setDoc(doc(builderDb(), "riskAssessmentSignatures/risk-rules-1_builder-2"), {
       riskAssessmentId: "risk-rules-1",
       userId: "builder-2",
       signedAt: serverTimestamp(),
     }));
-    await assertFails(updateDoc(doc(managerDb(), "riskAssessmentSignatures/risk-signature-1"), {
+    await assertFails(setDoc(doc(builderDb(), "riskAssessmentSignatures/risk-rules-2_builder-1"), {
+      riskAssessmentId: "risk-rules-2",
+      userId: "builder-1",
+      signedAt: "2026-08-28",
+    }));
+    await assertFails(updateDoc(doc(managerDb(), "riskAssessmentSignatures/risk-rules-1_builder-1"), {
       userId: "manager-1",
     }));
   });
@@ -223,7 +454,6 @@ describe("Firestore authorization rules", () => {
   test("protects inventory catalogs and isolates builder operations", async () => {
     const material = doc(managerDb(), "storageMaterials/material-1");
     const tool = doc(managerDb(), "storageTools/tool-1");
-    const project = doc(managerDb(), "projects/inventory-project-1");
     await assertSucceeds(setDoc(material, {
       name: "Concrete",
       quantity: 10,
@@ -231,7 +461,7 @@ describe("Firestore authorization rules", () => {
       createdBy: "manager-1",
     }));
     await assertSucceeds(setDoc(tool, { name: "Drill", status: "available", createdBy: "manager-1" }));
-    await assertSucceeds(setDoc(project, { name: "Builder site", ownerId: "builder-1" }));
+    await seedProject("inventory-project-1", "builder-1", "Builder site");
 
     await assertSucceeds(getDoc(doc(builderDb(), material.path)));
     await assertSucceeds(getDoc(doc(builderDb(), tool.path)));
@@ -342,9 +572,8 @@ describe("Firestore authorization rules", () => {
   });
 
   test("protects material usage, deliveries and rubbish requests", async () => {
-    const usageProject = doc(managerDb(), "projects/usage-project-1");
     const usageMaterial = doc(managerDb(), "storageMaterials/usage-material-1");
-    await assertSucceeds(setDoc(usageProject, { ownerId: "builder-1", name: "Usage project" }));
+    await seedProject("usage-project-1", "builder-1", "Usage project");
     await assertSucceeds(setDoc(usageMaterial, {
       name: "Usage material",
       quantity: 10,
@@ -398,10 +627,7 @@ describe("Firestore authorization rules", () => {
     await assertSucceeds(getDoc(doc(builderDb(), "materialUsage/builder-owned-usage")));
     await assertFails(getDoc(doc(otherBuilderDb(), "materialUsage/builder-owned-usage")));
 
-    await assertSucceeds(setDoc(doc(managerDb(), "projects/delivery-project-1"), {
-      ownerId: "builder-1",
-      name: "Delivery project",
-    }));
+    await seedProject("delivery-project-1", "builder-1", "Delivery project");
     await assertSucceeds(setDoc(doc(managerDb(), "storageMaterials/delivery-material-1"), {
       name: "Cement",
       quantity: 10,

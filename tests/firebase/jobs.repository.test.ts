@@ -1,34 +1,57 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+import { provisionEmulatorUser } from "../../scripts/lib/firebase-auth-emulator.mjs";
 
-const credentials = {
-  email: `jobs-repository-${Date.now()}@example.test`,
-  password: "Valid-password-123!",
-  fullName: "Jobs Repository Builder",
+const suffix = Date.now();
+const password = "Valid-password-123!";
+const builderCredentials = {
+  email: `jobs-repository-builder-${suffix}@example.test`,
+  password,
+  displayName: "Jobs Repository Builder",
+};
+const otherBuilderCredentials = {
+  email: `jobs-repository-other-${suffix}@example.test`,
+  password,
+  displayName: "Jobs Repository Other Builder",
+};
+const managerCredentials = {
+  email: `jobs-repository-manager-${suffix}@example.test`,
+  password,
+  displayName: "Jobs Repository Manager",
 };
 
 let createJob: typeof import("@/lib/firebase/repositories/jobs").createJob;
 let listJobsForProject: typeof import("@/lib/firebase/repositories/jobs").listJobsForProject;
 let listJobSections: typeof import("@/lib/firebase/repositories/jobs").listJobSections;
 let createProject: typeof import("@/lib/firebase/repositories/projects").createProject;
-let registerBuilder: typeof import("@/lib/firebase/auth").registerBuilder;
 let signIn: typeof import("@/lib/firebase/auth").signIn;
 let signOut: typeof import("@/lib/firebase/auth").signOut;
-let adminAuth: ReturnType<typeof import("../../functions/node_modules/firebase-admin/lib/auth/index.js").getAuth>;
+let builderId = "";
+let otherBuilderId = "";
+let projectId = "";
 
 describe("Firebase jobs repository", () => {
   beforeAll(async () => {
     vi.stubEnv("VITE_FIREBASE_USE_EMULATORS", "true");
-    const [{ getApps, initializeApp }, { getAuth }] = await Promise.all([
-      import("../../functions/node_modules/firebase-admin/lib/app/index.js"),
-      import("../../functions/node_modules/firebase-admin/lib/auth/index.js"),
+    const [builder, otherBuilder] = await Promise.all([
+      provisionEmulatorUser({ ...builderCredentials, role: "builder" }),
+      provisionEmulatorUser({ ...otherBuilderCredentials, role: "builder" }),
+      provisionEmulatorUser({ ...managerCredentials, role: "manager" }),
     ]);
-    const adminApp = getApps().find((app) => app.name === "firebase-jobs-tests")
-      ?? initializeApp({ projectId: "demo-jobsite-jedi" }, "firebase-jobs-tests");
-    adminAuth = getAuth(adminApp);
-    ({ registerBuilder, signIn, signOut } = await import("@/lib/firebase/auth"));
-    ({ createJob, listJobsForProject, listJobSections } = await import("@/lib/firebase/repositories/jobs"));
+    builderId = builder.uid;
+    otherBuilderId = otherBuilder.uid;
+
+    ({ signIn, signOut } = await import("@/lib/firebase/auth"));
+    ({ createJob, listJobsForProject, listJobSections } =
+      await import("@/lib/firebase/repositories/jobs"));
     ({ createProject } = await import("@/lib/firebase/repositories/projects"));
-    await registerBuilder(credentials);
+
+    await signIn(managerCredentials.email, managerCredentials.password);
+    const project = await createProject({
+      builderId,
+      name: "Manager assignment project",
+      clientName: "Assignment client",
+    });
+    projectId = project.id;
   });
 
   afterAll(async () => {
@@ -36,49 +59,49 @@ describe("Firebase jobs repository", () => {
     vi.unstubAllEnvs();
   });
 
-  test("creates and lists jobs restricted to the authenticated builder", async () => {
+  test("manager-created jobs inherit the project's assigned builder", async () => {
+    await signOut();
+    await signIn(managerCredentials.email, managerCredentials.password);
     const first = await createJob({
-      projectId: "project-jobs-repository",
+      projectId,
       title: "Install framing",
       description: "Frame the north wall",
       section: "Structure",
     });
     await createJob({
-      projectId: "project-jobs-repository",
+      projectId,
       title: "Prepare flooring",
       section: "Finishes",
     });
 
-    const jobs = await listJobsForProject("project-jobs-repository");
+    expect(first.builderId).toBe(builderId);
+    await expect(createJob({
+      projectId,
+      title: "Invalid initial lifecycle",
+      status: "waiting_review",
+    })).rejects.toThrow("must start in approved status");
+    expect(await listJobSections(projectId)).toEqual(["Finishes", "Structure"]);
+
+    await signOut();
+    await signIn(builderCredentials.email, builderCredentials.password);
+    const jobs = await listJobsForProject(projectId);
     expect(jobs).toHaveLength(2);
-    expect(jobs.every((job) => job.builderId === first.builderId)).toBe(true);
-    expect(await listJobSections("project-jobs-repository")).toEqual(["Finishes", "Structure"]);
+    expect(jobs.every((job) => job.builderId === builderId)).toBe(true);
   });
 
-  test("assigns manager-created jobs to the project's builder owner", async () => {
-    const project = await createProject({
-      name: "Manager assignment project",
-      clientName: "Assignment client",
-    });
-    const builderId = project.ownerId;
-
-    await signOut();
-    const managerCredentials = {
-      email: `jobs-manager-${Date.now()}@example.test`,
-      password: "Valid-password-123!",
-      fullName: "Jobs Repository Manager",
-    };
-    const manager = await registerBuilder(managerCredentials);
-    await adminAuth.setCustomUserClaims(manager.id, { role: "manager" });
+  test("rejects cross-assignment and hides the jobs from another builder", async () => {
     await signOut();
     await signIn(managerCredentials.email, managerCredentials.password);
+    await expect(createJob({
+      projectId,
+      builderId: otherBuilderId,
+      title: "Cross-assigned work",
+    })).rejects.toThrow("must match the builder assigned to the project");
 
-    const created = await createJob({
-      projectId: project.id,
-      title: "Manager assigned work",
-      section: "Structure",
-    });
-
-    expect(created.builderId).toBe(builderId);
-  }, 15_000);
+    await signOut();
+    await signIn(otherBuilderCredentials.email, otherBuilderCredentials.password);
+    await expect(listJobsForProject(projectId, [])).rejects.toBeDefined();
+    await expect(createJob({ projectId, title: "Builder-created work" }))
+      .rejects.toThrow("Manager access is required");
+  });
 });

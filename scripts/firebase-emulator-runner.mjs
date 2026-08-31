@@ -11,10 +11,16 @@ const FIREBASE_PROJECT = "demo-jobsite-jedi";
 
 const targets = {
   unit: { script: "test:firebase", args: [] },
+  "auth-unit": { script: "test:firebase:auth", args: [] },
+  seed: { script: "qa:seed:emulator", args: [] },
   e2e: { script: "test:e2e:firebase", args: [] },
   "auth-e2e": {
     script: "test:e2e:firebase",
     args: ["--", "tests/auth.firebase.spec.ts", "--workers=1"],
+  },
+  "tool-e2e": {
+    script: "test:e2e:firebase",
+    args: ["--", "tests/tool-inventory.firebase.spec.ts", "--workers=1"],
   },
 };
 
@@ -73,6 +79,7 @@ const javaBin = javaHome ? join(javaHome, "bin") : null;
 const childEnv = {
   ...process.env,
   FUNCTIONS_DISCOVERY_TIMEOUT,
+  ENFORCE_APP_CHECK: "false",
   ...(javaBin
     ? { PATH: `${javaBin}${delimiter}${process.env.PATH ?? ""}` }
     : {}),

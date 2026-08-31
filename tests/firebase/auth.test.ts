@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, test, vi } from "vitest";
+import { provisionEmulatorUser } from "../../scripts/lib/firebase-auth-emulator.mjs";
 
 const makeCredentials = (label: string) => ({
   email: `builder-${label}-${Date.now()}@example.test`,
@@ -8,14 +9,13 @@ const makeCredentials = (label: string) => ({
 
 let getCurrentRole: typeof import("@/lib/firebase/auth").getCurrentRole;
 let normalizeAuthError: typeof import("@/lib/firebase/auth").normalizeAuthError;
-let registerBuilder: typeof import("@/lib/firebase/auth").registerBuilder;
 let signIn: typeof import("@/lib/firebase/auth").signIn;
 let signOut: typeof import("@/lib/firebase/auth").signOut;
 let subscribeToAuth: typeof import("@/lib/firebase/auth").subscribeToAuth;
-let assignUserRole: typeof import("@/lib/firebase/functions").assignUserRole;
 let invitationOperations: typeof import("@/lib/firebase/functions").invitationOperations;
 let firebaseAuth: typeof import("@/lib/firebase/client").firebaseAuth;
 let createUserWithEmailAndPassword: typeof import("firebase/auth").createUserWithEmailAndPassword;
+let disableEmulatorUser: (uid: string) => Promise<void>;
 
 describe("Firebase Auth adapter", () => {
   beforeAll(async () => {
@@ -23,14 +23,24 @@ describe("Firebase Auth adapter", () => {
     ({
       getCurrentRole,
       normalizeAuthError,
-      registerBuilder,
       signIn,
       signOut,
       subscribeToAuth,
     } = await import("@/lib/firebase/auth"));
-    ({ assignUserRole, invitationOperations } = await import("@/lib/firebase/functions"));
+    ({ invitationOperations } = await import("@/lib/firebase/functions"));
     ({ firebaseAuth } = await import("@/lib/firebase/client"));
     ({ createUserWithEmailAndPassword } = await import("firebase/auth"));
+    const [{ getApps, initializeApp }, { getAuth }] = await Promise.all([
+      import("../../functions/node_modules/firebase-admin/lib/app/index.js"),
+      import("../../functions/node_modules/firebase-admin/lib/auth/index.js"),
+    ]);
+    const adminApp = getApps().find((app) => app.name === "firebase-auth-session-tests")
+      ?? initializeApp({ projectId: "demo-jobsite-jedi" }, "firebase-auth-session-tests");
+    const adminAuth = getAuth(adminApp);
+    disableEmulatorUser = async (uid) => {
+      await adminAuth.revokeRefreshTokens(uid);
+      await adminAuth.updateUser(uid, { disabled: true });
+    };
   });
 
   beforeEach(async () => {
@@ -44,9 +54,10 @@ describe("Firebase Auth adapter", () => {
     vi.unstubAllEnvs();
   });
 
-  test("registers a builder with the builder role", async () => {
+  test("signs in a builder provisioned by the emulator fixture", async () => {
     const credentials = makeCredentials("registration");
-    const user = await registerBuilder(credentials);
+    await provisionEmulatorUser({ ...credentials, role: "builder" });
+    const user = await signIn(credentials.email, credentials.password);
 
     expect(user.role).toBe("builder");
     expect(user.email).toBe(credentials.email);
@@ -55,8 +66,7 @@ describe("Firebase Auth adapter", () => {
 
   test("signs in with valid credentials", async () => {
     const credentials = makeCredentials("sign-in");
-    await registerBuilder(credentials);
-    await signOut();
+    await provisionEmulatorUser({ ...credentials, role: "builder" });
 
     const user = await signIn(credentials.email, credentials.password);
 
@@ -64,13 +74,20 @@ describe("Firebase Auth adapter", () => {
     expect(user.role).toBe("builder");
   });
 
-  test("rejects a builder attempting to assign a manager role", async () => {
-    const credentials = makeCredentials("role-escalation");
-    const user = await registerBuilder(credentials);
+  test("signs in an admin with the explicit admin claim", async () => {
+    const credentials = makeCredentials("admin");
+    await provisionEmulatorUser({ ...credentials, role: "admin" });
 
-    await expect(
-      assignUserRole({ userId: user.id, role: "manager" }),
-    ).rejects.toMatchObject({ code: "functions/permission-denied" });
+    const user = await signIn(credentials.email, credentials.password);
+
+    expect(user.role).toBe("admin");
+  });
+
+  test("does not expose client helpers that can assign application roles", async () => {
+    const functionsModule = await import("@/lib/firebase/functions");
+
+    expect(functionsModule).not.toHaveProperty("ensureBuilderRole");
+    expect(functionsModule).not.toHaveProperty("assignUserRole");
   });
 
   test("normalizes invalid credentials into a safe error", async () => {
@@ -90,7 +107,7 @@ describe("Firebase Auth adapter", () => {
     await signOut();
 
     await expect(signIn(credentials.email, credentials.password)).rejects.toThrow(
-      "This account has no assigned BuildTrack role. Contact a manager",
+      "This account has no assigned BuildTrack role. Contact an administrator",
     );
     expect(await getCurrentRole()).toBeNull();
   });
@@ -116,7 +133,8 @@ describe("Firebase Auth adapter", () => {
 
   test("rejects a builder attempting to create an invitation", async () => {
     const credentials = makeCredentials("invitation-denial");
-    await registerBuilder(credentials);
+    await provisionEmulatorUser({ ...credentials, role: "builder" });
+    await signIn(credentials.email, credentials.password);
 
     await expect(
       invitationOperations.createInvitation({ role: "builder" }),
@@ -125,11 +143,27 @@ describe("Firebase Auth adapter", () => {
 
   test("signs out the current user", async () => {
     const credentials = makeCredentials("sign-out");
-    await registerBuilder(credentials);
+    await provisionEmulatorUser({ ...credentials, role: "builder" });
+    await signIn(credentials.email, credentials.password);
 
     await signOut();
 
     expect(await getCurrentRole()).toBeNull();
+  });
+
+  test("rejects a refreshed session after the account is revoked and disabled", async () => {
+    const credentials = makeCredentials("revoked-session");
+    const provisioned = await provisionEmulatorUser({ ...credentials, role: "builder" });
+    await signIn(credentials.email, credentials.password);
+
+    await disableEmulatorUser(provisioned.uid);
+
+    await expect(firebaseAuth.currentUser?.getIdToken(true)).rejects.toMatchObject({
+      code: "auth/user-disabled",
+    });
+    expect(normalizeAuthError({ code: "functions/unauthenticated" }).message).toBe(
+      "Your authentication session has expired",
+    );
   });
 
   test("notifies subscribers when the session changes", async () => {
@@ -137,7 +171,8 @@ describe("Firebase Auth adapter", () => {
     const users: Array<string | null> = [];
     const unsubscribe = subscribeToAuth((user) => users.push(user?.email ?? null));
 
-    await registerBuilder(credentials);
+    await provisionEmulatorUser({ ...credentials, role: "builder" });
+    await signIn(credentials.email, credentials.password);
     await signOut();
     unsubscribe();
 

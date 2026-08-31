@@ -32,6 +32,10 @@ Firebase que ya no apliquen.
 
 `pendiente` → `en-progreso` → `revisión` → `aprobada` → `desplegada`
 
+Estados auxiliares: `bloqueada` cuando existe un impedimento verificable que debe resolverse antes
+de continuar, y `supersedida` cuando otra tarea reemplazó explícitamente su estrategia. Ninguno de
+los dos estados cuenta como trabajo terminado o desplegado.
+
 Una tarea solo puede pasar a `revisión` después de ejecutar sus pruebas. Las tareas que
 toquen producción necesitan confirmación explícita del operador.
 
@@ -44,10 +48,19 @@ toquen producción necesitan confirmación explícita del operador.
   T-006, T-008 y T-012, con repositorios Firebase, E2E y cero imports runtime de Supabase.
 - T-021 pasa de `revision` a `aprobada`: Vercel, Firebase Auth, reglas, login email y dos cuentas
   Google provisionadas cumplieron la aceptación productiva.
-- T-009, T-010, T-011, T-012, T-013, T-014, T-015, T-016 y T-019 permanecen en `revisión` hasta
-  su cierre humano; no se infiere aprobación solo por tener pruebas.
-- T-017 y T-018 siguen pendientes: staging y el gate de producción no se consideran completados.
-- WIP=1: T-022 es la única tarea en `en-progreso`; no se abren nuevas features durante este gate.
+- El operador aprobó explícitamente T-005, T-009, T-010, T-011, T-012, T-013, T-014, T-015,
+  T-016, T-019 y T-022 el 2026-08-29, incluyendo el cierre de T-013 por aislamiento y la
+  aceptación temporal del riesgo de tooling documentado.
+- El operador reemplazó la estrategia de dos proyectos el 2026-08-29: consolidar el backend
+  validado en `jobsitejedi` y retirar `jobsitejedi-staging` solo después de una verificación segura.
+- T-017 queda `supersedida` por cambio de estrategia; T-018 concentra el despliegue productivo,
+  la observación y el gate destructivo final.
+- La auditoría del 2026-08-30 detectó un bypass crítico de autorización y defectos en asignación e
+  integridad. La remediación local T-023/T-024/T-025 está en `revisión`; T-018 continúa `bloqueada`
+  hasta aprobar T-023 a T-029 y T-032, y repetir el gate sobre el SHA exacto que eventualmente se proponga
+  desplegar.
+- WIP local verificado: T-023, T-024 y T-025. Ninguna autoriza despliegue, migración remota ni
+  modificación de usuarios productivos.
 
 ## Fase 0 — Decisión y línea base
 
@@ -222,7 +235,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-005 — Crear repositorios tipados de usuarios, proyectos y trabajos
 
-- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-004
+- **Prioridad:** P0 · **Estado:** aprobada · **Depende de:** T-004
 - Crear repositorios bajo `src/lib/firebase/repositories/`.
 - Sacar consultas y escrituras de `ProjectList`, `CreateProjectDialog`,
   `EditProjectDialog`, `ManagerJobsList` y `ProjectDetails`.
@@ -339,7 +352,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-009 — Implementar Cloud Functions privilegiadas
 
-- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-003, T-004
+- **Prioridad:** P1 · **Estado:** aprobada · **Depende de:** T-003, T-004
 - Implementar invitaciones, asignación de roles, procesamiento de facturas,
   extracción de Excel y limpieza programada.
 - Validar entradas, rol, rutas, timeouts, reintentos finitos y errores seguros.
@@ -370,7 +383,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-010 — Migrar inventario, herramientas y solicitudes
 
-- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-005, T-009
+- **Prioridad:** P1 · **Estado:** aprobada · **Depende de:** T-005, T-009
 - Crear repositorios para materiales, uso, entregas, herramientas, checkouts y residuos.
 - Cubrir transiciones de estado, cantidades y operaciones manager-only.
 - Reemplazar listeners `postgres_changes` por listeners Firestore con cleanup.
@@ -446,7 +459,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-011 — Migrar facturas, reportes y evaluaciones de riesgo
 
-- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-007, T-009, T-010
+- **Prioridad:** P1 · **Estado:** aprobada · **Depende de:** T-007, T-009, T-010
 - Migrar facturas, proveedores, extracción, reportes diarios, firmas y documentos.
 - Revisar especialmente que `documents` no exponga archivos de otros usuarios y que la
   ruta/bucket de evaluaciones de riesgo sea coherente.
@@ -474,7 +487,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-012 — Eliminar dependencias runtime de Supabase
 
-- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-005, T-006, T-007, T-008,
+- **Prioridad:** P0 · **Estado:** aprobada · **Depende de:** T-005, T-006, T-007, T-008,
   T-009, T-010, T-011
 - Eliminar imports runtime de Supabase en `src`.
 - Eliminar cliente, tipos y dependencia npm solo cuando no haya consumidores.
@@ -493,7 +506,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-013 — Retirar o aislar infraestructura Supabase antigua
 
-- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-012
+- **Prioridad:** P1 · **Estado:** aprobada · **Depende de:** T-012
 - Documentar qué migraciones se conservan como historial y qué carpetas quedan fuera del
   runtime.
 - Si se aplica la migración Storage anterior, hacerlo primero en staging con backup
@@ -517,7 +530,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-014 — Cerrar TypeScript y lint por lotes
 
-- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-012
+- **Prioridad:** P1 · **Estado:** aprobada · **Depende de:** T-012
 - Corregir primero errores de compilación y después dividir la deuda de `any` por dominio:
   auth, proyectos/trabajos, inventario, finanzas y UI.
 - Resolver dependencias reales de `useEffect`; no silenciar reglas globalmente.
@@ -540,7 +553,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-015 — Completar QA automatizado
 
-- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-012, T-014
+- **Prioridad:** P1 · **Estado:** aprobada · **Depende de:** T-012, T-014
 - Añadir pruebas de reglas Firestore/Storage, Functions y repositorios.
 - Añadir E2E de autenticación, proyectos, trabajos, fotos, inventario, facturas y reportes.
 - Incorporar casos de usuario ajeno, sesión expirada, payload inválido y doble envío.
@@ -561,7 +574,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-016 — Medir y corregir rendimiento
 
-- **Prioridad:** P2 · **Estado:** revisión · **Depende de:** T-015
+- **Prioridad:** P2 · **Estado:** aprobada · **Depende de:** T-015
 - Medir baseline del bundle, carga inicial y consultas principales.
 - Dividir rutas con `React.lazy()` y detectar N+1 en `ProjectDetails`, `Statements` y
   dashboards.
@@ -581,7 +594,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-019 — Cerrar vulnerabilidades de dependencias
 
-- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-011, T-014
+- **Prioridad:** P0 · **Estado:** aprobada · **Depende de:** T-011, T-014
 - Sustituir `xlsx`, usado por reportes y carga masiva, por una alternativa mantenida o aislar su
   procesamiento con límites y validaciones equivalentes; la versión actual no tiene fix publicado.
 - Evaluar la migración controlada a React Router 7 para cerrar los avisos moderados restantes.
@@ -602,7 +615,7 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-022 — Automatizar el gate de calidad en GitHub Actions
 
-- **Prioridad:** P0 · **Estado:** en-progreso · **Depende de:** T-002
+- **Prioridad:** P0 · **Estado:** aprobada · **Depende de:** T-002
 - Ejecutar CI en `push` a `main`, pull requests y disparo manual con Node 22 y JDK 21.
 - Instalar dependencias con lockfiles, compilar frontend/Functions y ejecutar typecheck, lint,
   provider guard, contratos del workflow, suite Firebase y E2E contra emuladores.
@@ -628,27 +641,276 @@ toquen producción necesitan confirmación explícita del operador.
   - La instalación limpia también reveló concurrencia accidental entre seis specs: el runner quedó
     limitado a dos workers, las aserciones Firebase usan un margen acotado de 15 segundos y reporting
     filtra su propio proyecto. Sin reintentos, la suite completa volvió a pasar 8/8.
-  - T-022 permanece en `en-progreso` hasta publicar el workflow y verificar ambos jobs en GitHub;
-    ninguna prueba de carga aplica porque este cambio no añade rutas ni lógica de runtime.
+  - Ejecución remota final [`CI #2`](https://github.com/andresleosan/jobsitejedi/actions/runs/33232359171):
+    `Quality and contracts` y `Firebase emulators and E2E` terminaron en `success`.
+  - GitHub reportó el estado Vercel en `success`; el smoke productivo de `/auth` respondió HTTP 200,
+    renderizó email/contraseña y Google, y no produjo errores de consola.
+  - T-022 pasa a `revisión`; ninguna prueba de carga aplica porque este cambio no añade rutas ni
+    lógica de runtime. Falta el cierre humano y configurar el check como requerido al proteger
+    `main` si el operador decide habilitar branch protection.
 
 ## Fase 7 — Release controlado
 
 ### T-017 — Documentar operación y preparar staging
 
-- **Prioridad:** P1 · **Estado:** pendiente · **Depende de:** T-013, T-015, T-016
+- **Prioridad:** P1 · **Estado:** supersedida · **Depende de:** T-013, T-015, T-016
 - Crear guía de variables, emuladores, despliegue, backup, rollback, alertas de costo y
   smoke tests.
 - Revisar `.env` histórico y rotar cualquier credencial que haya sido versionada.
 - Preparar staging, sin desplegar producción.
 - **Aceptación:** checklist operativo revisado y aprobado por el operador.
+- **Avance 2026-08-29:**
+  - El operador aprobo el inicio de T-017 y mantuvo produccion fuera de alcance.
+  - Se documento el target aislado `jobsitejedi-staging`, variables, gate, costo, backup, rollback,
+    App Check y smoke tests en `docs/staging-operations.md`.
+  - `build:staging` valida que Auth, Firestore y Storage pertenezcan al proyecto de staging y
+    rechaza el project ID productivo, placeholders y emuladores.
+  - El proyecto `jobsitejedi-staging` y su aplicacion Web fueron creados el 2026-08-29. Blaze quedo
+    vinculado con presupuesto mensual de USD 5 y alertas al 50 %, 90 % y 100 %; las alertas no son
+    un limite duro. Firestore Native se creo en `eur3`, Storage privado en `europe-west1` y
+    email/contrasena quedo habilitado. Produccion no fue modificada.
+  - `europe-west1` queda fijada para Functions y Storage por cercania a Firestore `eur3`; decision
+    registrada en `docs/adr/ADR-003-region-europea-firebase.md`.
+  - La autocritica detecto que mover Functions sin mover el cliente rompia las callables. Se
+    corrigio el contrato cliente/backend y la segunda vuelta aprobo: despliegue 10/10, Firebase
+    16 archivos/67 tests, E2E 8/8, provider guard 3/3, typecheck, build de Functions y auditoria
+    runtime con 0 vulnerabilidades; lint conserva 0 errores y 7 warnings conocidos.
+  - El ruleset activo `Protect main` exige PR, bloquea borrado y force-push, no tiene bypass y
+    requiere `Quality and contracts` y `Firebase emulators and E2E`.
+  - Firestore/Storage Rules e indices fueron desplegados solo a staging. Las 9/9 Functions Node 22
+    estan activas en `europe-west1`; el primer intento parcial 4/9 se completo idempotentemente y
+    se verifico por inventario remoto. Artifact Registry elimina imagenes antiguas a los 7 dias.
+  - Smoke remoto: `validateInvitationCode` responde de forma segura ante codigo invalido y
+    `ensureBuilderRole` sin sesion devuelve HTTP 401 `UNAUTHENTICATED`.
+  - El ruleset Storage se limpio de una funcion no usada, se revalido Firebase 67/67 y compilo
+    remotamente sin warnings antes de publicarse. Quedan Google Auth, frontend staging, App Check y
+    smoke funcional; el proyecto Vercel productivo no fue modificado.
+  - Por instruccion del operador, la habilitacion de Google OAuth y la transferencia de la
+    configuracion Web SDK a un proyecto Vercel aislado quedan pendientes de autorizacion explicita
+    el 2026-08-30. Hasta entonces tampoco se ejecutan App Check ni el smoke funcional final.
+  - El operador sustituyo este enfoque el 2026-08-29: no se completara un frontend separado ni se
+    incorporaran usuarios o datos en staging. La consolidacion y retirada segura pasan a T-018.
 
 ### T-018 — Gate de producción
 
-- **Prioridad:** P0 · **Estado:** pendiente · **Depende de:** T-017
+- **Prioridad:** P0 · **Estado:** bloqueada · **Depende de:** T-013, T-015, T-016, T-023, T-024,
+  T-025, T-026, T-027, T-028, T-029, T-032
 - Verificar seguridad sin hallazgos críticos, tests aprobados, E2E final, rollback y
   backup cuando aplique.
 - Requiere confirmación explícita del operador antes de cualquier despliegue o migración.
-- **Aceptación:** solo entonces puede pasar a `desplegada`.
+- Consolidar reglas, índices, Storage y nueve Functions en `jobsitejedi`; conservar sus usuarios
+  y configuración Auth, sin importar fixtures vacíos desde staging.
+- Observar producción durante al menos siete días y eliminar `jobsitejedi-staging` solo tras un
+  inventario final vacío, smoke limpio y confirmación destructiva en el momento de borrado.
+- **Aceptación:** producción queda verificada y recuperable; staging solo se elimina después del
+  periodo de observación y del gate destructivo final.
+- **Avance 2026-08-29:**
+  - Inventario oficial: staging tiene 0 usuarios, 0 colecciones Firestore y 0 archivos Storage;
+    producción conserva 3 usuarios, Firestore vacío y Storage sin habilitar.
+  - Ambos Firestore usan `eur3`, no hay índices compuestos y staging tiene 9/9 Functions Node 22
+    activas en `europe-west1`; producción aún no tiene Functions listables.
+  - Gates locales: audit runtime 0 vulnerabilidades; contratos 3/3; provider guard 3/3;
+    typecheck y builds aprobados; Firebase 16 archivos/67 pruebas y E2E 8/8 aprobados.
+  - Seguridad detectó que `validateInvitationCode` era pública sin límite de abuso. Se añadió
+    cuota global, `maxInstances: 2`, timeout acotado y prueba de rechazo en la solicitud 31.
+  - Segunda vuelta tras la corrección: build de Functions, typecheck y lint aprobados; Firebase
+    16 archivos/68 pruebas y E2E 8/8 aprobados. Treinta validaciones consecutivas tardaron
+    aproximadamente 33-52 ms por llamada caliente en emulador y la solicitud 31 fue rechazada.
+  - El plan de despliegue, rollback, costo y retirada vive en
+    `docs/firebase-consolidation-operations.md`. El gate posterior a la corrección quedó aprobado;
+    el operador autorizó Blaze, la misma facturación de staging, presupuesto USD 5 y bucket en
+    `europe-west1`.
+  - Blaze quedó activo y el presupuesto productivo se creó por COP 16.014 (USD 5 a la TRM vigente),
+    con alertas al 50 %, 90 % y 100 %. El bucket regional permanente
+    `jobsitejedi.firebasestorage.app` fue verificado en `europe-west1`.
+  - Firestore Rules, sus índices y Storage Rules se publicaron explícitamente a `jobsitejedi`.
+    El inventario posterior confirmó 9/9 Functions Gen 2 `ACTIVE`, Node 22, en `europe-west1`;
+    `ENABLE_PROJECT_CLEANUP` estuvo ausente y Auth conservó sus 3 usuarios.
+  - Smoke remoto sin fixtures: invitaciones rechazó protocolo inválido con HTTP 400 y roles rechazó
+    falta de sesión con HTTP 401. La SPA productiva `/auth` cargó correctamente. Los eventos graves
+    revisados fueron el smoke esperado y la carrera transitoria del primer alta, resuelta por un
+    reintento acotado.
+  - La observación de siete días comenzó el 2026-08-29; staging no se elimina antes del
+    2026-09-05 12:02 America/Bogota y aún requiere inventario final y confirmación destructiva.
+  - Artifact Registry quedó sin limpieza automática: la retención de un día fue rechazada por
+    riesgo de eliminar material de rollback y necesita autorización destructiva separada. T-018
+    permanece `en-progreso` durante la observación; `jobsitejedi-staging` sigue intacto.
+
+## Fase 8 — Remediación priorizada de la auditoría 2026-08-30
+
+Orden obligatorio de resolución local actualizado por decisión del operador: T-032 → T-026 →
+T-027 → T-028 → T-029. T-023/T-024/T-025 conservan su evidencia previa, pero deben repetirse bajo
+la nueva matriz de tres roles antes de aprobarse. T-030 y T-031 pueden continuar después sin bloquear
+la contención inmediata. Al terminar T-029 se
+repite el gate local completo; cualquier despliegue productivo sigue requiriendo una autorización
+explícita, separada y posterior del operador.
+
+### T-023 — Cerrar autoprovisión de roles y preparar identidades QA
+
+- **Prioridad:** P0 crítica · **Estado:** revisión · **Depende de:** T-003, T-015, T-020
+- Retirar `ensureBuilderRole` del cliente y del backend desplegable; ninguna identidad autenticada
+  puede asignarse un rol por sí misma.
+- Mantener como únicas vías de autorización el consumo transaccional de una invitación válida y la
+  provisión administrativa explícita. Solo `admin` puede emitir invitaciones `admin`/`manager`;
+  `manager` solo puede invitar `builder`. Revocar sesiones al degradar o retirar roles sensibles.
+- Añadir una prueba negativa para usuario autenticado sin rol/invitación y conservar pruebas de
+  consumo único, reintento idempotente y prohibición de escalamiento por `manager`.
+- Crear un seeder exclusivo de Firebase Auth Emulator para `admin@admin.com` (`admin`),
+  `manager@manager.com` (`manager`) y `builder@builder.com` (`builder`). La contraseña se
+  recibe por variable de entorno, nunca se versiona ni se imprime.
+- Documentar un runbook para auditar claims existentes; ejecutarlo contra producción queda fuera
+  de alcance hasta una autorización explícita.
+- **Aceptación:** una cuenta creada sin invitación permanece sin claim y las Rules le deniegan los
+  recursos protegidos; no existe callable cliente/backend de autoasignación; las invitaciones
+  siguen asignando el rol correcto una sola vez; el seeder rechaza cualquier host que no sea el
+  emulador y las pruebas focalizadas pasan.
+
+### T-024 — Implementar asignación manager → builder → proyecto → job
+
+- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-023, T-005
+- Definir el contrato de asignación operativo: admin o manager seleccionan un builder provisionado;
+  el proyecto guarda su UID asignado y cada job hereda el mismo `builderId`.
+- Añadir un listado mínimo y autorizado de builders para el selector del formulario; no aceptar
+  UIDs arbitrarios provenientes del frontend.
+- Asegurar que un builder solo lista proyectos y jobs asignados, mientras admin/manager conservan
+  administración y revisión.
+- Documentar compatibilidad y rollback del campo de asignación antes de cualquier migración. No se
+  aplica ninguna migración remota dentro de esta tarea.
+- **Aceptación:** integración y E2E crean el proyecto desde la UI como manager, lo asignan al builder
+  QA y comprueban que este lo ve; un segundo builder no lo ve y un UID inválido es rechazado.
+
+### T-025 — Endurecer integridad operativa y jornada activa única
+
+- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-004, T-006 y contrato de T-024
+- Aplicar esquemas, tipos, enums, límites, referencias project/job, campos inmutables y timestamps
+  canónicos en Rules para `jobs`, `jobCompletions`, `jobPhotos`, `timeTracking`,
+  `projectSwitches` y firmas de riesgo.
+- Reservar creación/borrado de jobs al manager; permitir al builder solo transiciones y evidencias
+  correspondientes a trabajos asignados, sin reescribir datos ya revisados.
+- Sustituir el patrón consulta→creación de jornada por un ID/lock determinista y transacción que
+  garantice una sola jornada activa por builder.
+- **Aceptación:** pruebas negativas impiden falsificar/borrar registros ajenos o canónicos y una
+  carrera con solicitudes concurrentes produce exactamente una jornada activa.
+
+#### Evidencia local T-023/T-024/T-025 — 2026-08-30
+
+- Base Git inspeccionada: `107d021620f0`; la evidencia corresponde al working tree local actual, no
+  a un SHA desplegable. T-028 conserva el pendiente de CI sobre el commit exacto.
+- Autorización: se retiraron todas las superficies runtime de autoasignación; `consumeInvitation`
+  queda como única ruta de alta por invitación. `test:provider-guard` pasó `8/8`.
+- QA Auth Emulator (evidencia histórica previa a T-032): se crearon, autenticaron y verificaron `admin@admin.com` sin rol,
+  `manager@manager.com` con `manager` y `builder@builder.com` con `builder`; la contraseña entró por
+  variable temporal, no se imprimió ni se persistió.
+- Asignación: callable manager-only, selector de builders provisionados, proyecto con
+  `builderId == ownerId` y jobs heredando la asignación. E2E validó manager → builder seleccionado y
+  denegación al segundo builder.
+- Integridad: proyectos no se crean/borran directamente desde cliente; jobs, fotos, firmas,
+  jornadas y cambios de proyecto tienen esquemas/transiciones/timestamps estrictos. Storage exige
+  job/asignación/estado, prohíbe overwrite y bloquea evidencia tras envío/revisión.
+- Gate Node `22.23.2`/JDK `21`: typecheck; lint `0` errores y `7` warnings conocidos; build; Functions
+  `3/3`; Storage unit `3/3`; OCR `3/3`; contrato CI `3/3`; Firebase Emulator `17/17` archivos y
+  `74/74` pruebas; Playwright Firebase `9/9`; `git diff --check` limpio.
+- Web Vitals local, cinco muestras por perfil: desktop p75 LCP `196 ms`, INP `16 ms`, CLS `0`;
+  móvil LCP `132 ms`, INP `16 ms`, CLS `0`.
+- Auditoría runtime: cliente `0` vulnerabilidades; Functions sin altas/críticas y con `7` moderadas
+  transitivas. No se aplicó el downgrade destructivo sugerido por `npm audit fix --force`.
+- Pendiente previo a cualquier Rules/deploy: dry-run y backfill autorizados de proyectos legacy y
+  reconciliación de jornadas activas sin marcador. No se ejecutó migración ni operación remota.
+
+### T-032 — Incorporar rol admin y bloquear elevación de privilegios
+
+- **Prioridad:** P0 crítica · **Estado:** revisión · **Depende de:** T-003, T-023, T-024, T-025
+- Ampliar el contrato de claims a `admin | manager | builder`; `admin` hereda las capacidades
+  operativas de manager, pero la elevación a `admin` o `manager` queda reservada a admin.
+- Actualizar cliente, rutas, repositorios, callables, Firestore Rules, Storage Rules, seeder y
+  documentación sin introducir una segunda fuente de roles ni una callable directa de promoción.
+- Probar admin permitido en operaciones manager, manager permitido solo al invitar builder,
+  manager rechazado al invitar manager/admin, builder rechazado y usuario sin rol rechazado.
+- Preparar el alta de `admin@admin.com` con claim `admin` exclusivamente en Auth Emulator. Cualquier
+  alta o cambio de claim remoto requiere una autorización productiva separada y revocación de sesión.
+- **Aceptación:** las tres identidades QA inician sesión y llegan al dashboard correcto; las reglas y
+  Functions aplican mínimo privilegio; no existe escalamiento desde manager/builder; suites locales
+  completas aprobadas y ADR/contrato/rollback coherentes.
+- **Evidencia local 2026-08-30:** seeder verificó `admin@admin.com → admin`,
+  `manager@manager.com → manager` y `builder@builder.com → builder` solo en Auth Emulator. Firebase
+  pasó 17 archivos/81 pruebas y E2E 11/11; manager no puede emitir invitaciones privilegiadas.
+
+### T-026 — Validar contenido de facturas y cerrar rutas Storage amplias
+
+- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-023, T-025
+- Detectar el tipo por bytes, validar/parsing de PDF, decodificar imágenes y generar siempre nombre
+  y extensión seguros en servidor. Los archivos no verificados permanecen en cuarentena.
+- Definir una estrategia de escaneo antimalware y costo antes de integrar un servicio de pago.
+- Restringir `/jobs/{jobId}/manager/**` al manager y al builder realmente asignado al job.
+- **Aceptación:** MIME/extensión forjados y payload no válido son rechazados; el manager solo puede
+  descargar archivos aprobados y un builder no puede leer evidencias de otro.
+- **Evidencia local 2026-08-30:** 7/7 tests de Functions, promoción desde cuarentena con nombre/MIME
+  canónicos, rechazo de bytes forjados y contenido PDF activo, límite exacto de 10 MiB y E2E de
+  envío/aprobación aprobados. Estrategia antimalware y costo documentados sin contratar servicios.
+
+### T-027 — Corregir Vite vulnerable y endurecer desarrollo local
+
+- **Prioridad:** P0 local · **Estado:** revisión · **Depende de:** T-002
+- Actualizar Vite a una versión corregida compatible y enlazar el servidor de desarrollo a
+  `127.0.0.1` por defecto; cualquier exposición LAN debe ser una opción explícita y documentada.
+- Revisar si alguna instancia vulnerable estuvo accesible desde una red no confiable; si la hubo,
+  escalar al operador la rotación de credenciales potencialmente expuestas.
+- **Aceptación:** auditoría sin el advisory conocido, build/typecheck/lint aprobados y prueba de que
+  el servidor por defecto no escucha en interfaces externas.
+- **Evidencia local 2026-08-30:** Vite `8.2.2`, plugin React SWC `4.3.3`, binding exclusivo a
+  `127.0.0.1`, contrato 4/4 y build aprobado. Auditoría runtime del cliente 0 vulnerabilidades; no se
+  usó `--force`.
+
+### T-028 — Hacer reproducible y exigente el gate de QA/CI
+
+- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-023, T-024, T-025, T-026, T-027
+- Ejecutar CI sobre el SHA exacto; incluir unit tests de Functions, OCR, Firebase Emulator y E2E.
+- Hacer fallar E2E ante `pageerror` o `console.error` no permitido, centralizar fixtures y reparar la
+  configuración Playwright principal.
+- Cubrir sesión expirada/revocada, pruebas concurrentes reales, límites exactos de Storage y el
+  recorrido manager→builder desde UI. Publicar traces/screenshots/reportes como artefactos de CI.
+- **Aceptación:** gate local Node 22/JDK 21 y CI remoto del mismo SHA pasan con evidencia y conteos
+  consistentes. La ejecución remota no autoriza despliegue.
+- **Avance local 2026-08-30:** CI ahora ejecuta unit tests de Functions, OCR, límites Storage,
+  Firebase y E2E; verifica `GITHUB_SHA`, fija `upload-artifact` a SHA inmutable y conserva reportes.
+  Playwright tiene cero reintentos, `forbidOnly`, un worker en CI y fixture central que falla ante
+  `pageerror`/`console.error`. Gate final: Firebase 81/81, E2E 11/11, tipos/builds/Functions/OCR/
+  Storage/contratos aprobados. Falta publicar un SHA y ejecutar CI remoto sobre ese mismo SHA.
+
+### T-029 — Incorporar App Check y controles de abuso
+
+- **Prioridad:** P1 seguridad · **Estado:** en-progreso · **Depende de:** T-023, T-028
+- Activar App Check primero en observación, medir clientes legítimos y luego preparar enforcement
+  con pruebas de token válido, ausente e inválido.
+- Reemplazar la cuota global `public` de invitaciones por partición resistente a abuso y conservar
+  un techo global de emergencia; añadir límites/lifecycle para cargas Storage.
+- **Aceptación:** el onboarding de un usuario no puede bloquear a todos, los clientes legítimos no
+  se rompen durante observación y el paso a enforcement tiene rollback documentado.
+- **Avance local 2026-08-30:** cliente preparado con reCAPTCHA Enterprise y Functions parametrizadas
+  con `ENFORCE_APP_CHECK=false`; cuota pública separada en 30/min por IP anonimizada y techo global
+  300/min. El límite exacto de cuarentena y el rollback están documentados en
+  `docs/app-check-rollout.md`. Registro remoto, observación y enforcement siguen sin ejecutarse.
+
+### T-030 — Acotar lecturas, listeners y presupuesto de rendimiento
+
+- **Prioridad:** P2 · **Estado:** pendiente · **Depende de:** T-024, T-025
+- Añadir paginación/límites a listados, eliminar listeners N+1 de inventario y fijar presupuestos de
+  lecturas, bundle y Web Vitals para flujos representativos.
+- Medir con datos aislados representativos y después con RUM/producción solo cuando exista
+  autorización y tratamiento de privacidad aprobado.
+- **Aceptación:** consultas críticas tienen límite/cursor, no existe N+1 por solicitud y el informe
+  registra p75, volumen de datos, costo estimado y regresiones del bundle.
+
+### T-031 — Cerrar deuda documental y modularizar sin microservicios
+
+- **Prioridad:** P2 · **Estado:** pendiente · **Depende de:** T-028
+- Sustituir README/AUDITORIA/MEJORAS obsoletos de Lovable/Supabase y consolidar un manifiesto por
+  release con SHA, runtimes, comandos, conteos y decisión de rollback.
+- Mantener monolito modular; separar `functions/src/index.ts` e `inventory.ts` por dominio y activar
+  strictness TypeScript de forma progresiva con lotes verificables.
+- Actualizar Graphify después de retirar nodos obsoletos para que vuelva a ser una fuente útil.
+- **Aceptación:** la documentación coincide con Firebase/Vercel vigentes, no hay runbooks
+  contradictorios y cada módulo conserva sus contratos y pruebas.
 
 ## Seguimiento de T-009 — 2026-08-27
 
@@ -791,6 +1053,23 @@ toquen producción necesitan confirmación explícita del operador.
 - T-011 queda en `revision`: proveedores, extracción, reportes, carga privada y firma ya tienen
   implementación y evidencia E2E; falta la revisión humana de los criterios de cierre. No hubo
   migraciones ni despliegues.
+
+## Validacion de cierre - 2026-08-28
+
+- El gate completo esta consolidado en `docs/review-gate-2026-08-28.md`.
+- Evidencia local: contratos 3/3, parser de Functions 3/3, Firebase 65/65, E2E 8/8,
+  typecheck y builds aprobados, 0 vulnerabilidades de runtime y Web Vitals dentro del presupuesto.
+- T-011: se corrigio una carrera de estado que podia duplicar la clave de un reporte o evaluacion;
+  el E2E ahora falla si React vuelve a emitir ese warning.
+- T-016: Chromium ya esta disponible y la medicion reproducible aprobo desktop y mobile. La
+  evidencia detallada vive en `docs/performance-baseline.md`.
+- T-022: `CI #2` paso ambos jobs en GitHub Actions. No hay rulesets activos y la integracion de
+  consulta no tiene permiso administrativo para validar o cambiar la proteccion clasica de `main`.
+- Seguridad: no hay hallazgos criticos. Quedan tres riesgos residuales documentados para decision
+  humana: tooling de desarrollo, revocacion de la clave publicable Supabase retirada y App Check.
+- El operador aprobo las 11 tareas el 2026-08-29, confirmo el aislamiento sin borrado remoto de
+  Supabase, acepto temporalmente el riesgo de tooling y eligio ambos jobs de CI como checks de
+  `main`. T-017 queda activa; T-018 sigue pendiente y este registro no autoriza produccion.
 
 ## Fuera de alcance hasta cerrar la Fase 2
 

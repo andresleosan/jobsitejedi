@@ -32,6 +32,14 @@ Firebase Authentication debe autorizar el hostname exacto `jobsitejedi.vercel.ap
 independiente de las variables de Vercel. No autorizar comodines de previews; cada hostname usado
 para OAuth debe revisarse y agregarse de forma explicita.
 
+## Staging aislado
+
+El proyecto Vercel `jobsitejedi` conserva Firebase de produccion en `Production` y `Preview`; no se
+cambian esos valores para T-017. Staging se publica en un proyecto Vercel Hobby separado llamado
+`jobsitejedi-staging`, con build command `npm run build:staging` y las seis variables de la
+aplicacion Web Firebase `jobsitejedi-staging`. Su hostname exacto se autoriza en Firebase Auth y
+App Check despues de conocer el deployment real. Ninguna variable se copia al repositorio.
+
 ## Procedimiento controlado
 
 1. Consultar la configuracion Web SDK oficial de Firebase en modo de solo lectura.

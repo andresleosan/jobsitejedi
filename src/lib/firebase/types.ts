@@ -1,4 +1,16 @@
-export type AppRole = "manager" | "builder";
+export type AppRole = "admin" | "manager" | "builder";
+
+export const isAppRole = (value: unknown): value is AppRole =>
+  value === "admin" || value === "manager" || value === "builder";
+
+export const isManagementRole = (
+  role: AppRole | null | undefined,
+): role is "admin" | "manager" => role === "admin" || role === "manager";
+
+export const roleHomePath = (role: AppRole): "/admins" | "/managers" | "/builders" => {
+  if (role === "admin") return "/admins";
+  return role === "manager" ? "/managers" : "/builders";
+};
 
 export interface SessionUser {
   id: string;
@@ -21,5 +33,4 @@ export interface InvitationOperations {
     expiresAt: Date;
   }>;
   consumeInvitation(input: { invitationId: string; userId: string }): Promise<void>;
-  assignRole(input: { userId: string; role: AppRole }): Promise<void>;
 }

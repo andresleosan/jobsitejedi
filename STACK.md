@@ -2,12 +2,12 @@
 
 Estado: `aceptado por el operador en checkpoint A2.1`
 
-Fecha: `2026-08-24`
+Fecha: `2026-08-30`
 
 ## Producto
 
 BuildTrack Pro es una aplicación de gestión de proyectos de construcción para los roles
-`manager` y `builder`. El flujo crítico es:
+`admin`, `manager` y `builder`. El flujo crítico es:
 
 `autenticación → dashboard por rol → proyectos/trabajos → tiempo/materiales → archivos y reportes`
 
@@ -29,12 +29,12 @@ La clasificación fue confirmada por el operador el `2026-08-24`.
 | Routing | React Router DOM | Activo |
 | Validación | Zod + React Hook Form | Activo |
 | Estado/cache | TanStack Query, hooks locales | Parcial |
-| Auth | Firebase Authentication | En construcción |
-| Datos | Cloud Firestore | Pendiente |
-| Archivos | Firebase Storage privado | Pendiente |
-| Backend privilegiado | Firebase Cloud Functions | Scaffold |
-| Testing | Vitest + Playwright | Parcial |
-| Infraestructura local | Firebase Emulator Suite | Configurada, no estabilizada |
+| Auth | Firebase Authentication | Activo |
+| Datos | Cloud Firestore | Activo |
+| Archivos | Firebase Storage privado | Activo |
+| Backend privilegiado | Firebase Cloud Functions | Implementado y validado en emuladores |
+| Testing | Vitest + Playwright | Activo en CI |
+| Infraestructura local | Firebase Emulator Suite | Estabilizada |
 | Proveedor legado | Supabase | Solo historial, fuera del runtime |
 
 ## Decisión de proveedor
@@ -63,12 +63,29 @@ migración podrán coexistir artefactos históricos, pero no una nueva ruta híb
 - `.env` debe permanecer fuera de Git; las credenciales históricas versionadas deben rotarse.
 - Toda regla de acceso se prueba para anónimo, propietario, usuario ajeno y manager.
 - Las funciones validan rol e input; el frontend no es frontera de seguridad.
+- App Check usa reCAPTCHA Enterprise en el cliente. El despliegue gradual y rollback están en
+  `docs/app-check-rollout.md`; `ENFORCE_APP_CHECK=false` permanece durante observación y solo cambia
+  con autorización separada.
+
+## Contrato de autorización por roles (T-032)
+
+- `admin` hereda las operaciones de `manager` y es el único rol que puede emitir invitaciones para
+  `admin` o `manager`.
+- `manager` puede emitir invitaciones únicamente para `builder`; no puede asignar, promover ni
+  degradar roles privilegiados.
+- `builder` solo opera sobre proyectos, trabajos y archivos que conserven su asignación canónica.
+- Los custom claims de Firebase son la fuente de autorización. Un documento `users/{uid}` nunca
+  puede cambiar el claim ni se acepta el rol enviado por el frontend como autoridad.
+- El dashboard de `admin` reutiliza la superficie operativa de manager y expone explícitamente su
+  rol; las reglas Firestore/Storage y las Functions aplican la herencia en servidor.
+- La decisión y sus alternativas están registradas en
+  `docs/adr/ADR-004-jerarquia-admin-manager-builder.md`.
 
 ## Contrato de autenticación Google (T-020)
 
 - Firebase Authentication conserva un solo contrato de sesión para email/contraseña y Google.
 - Google prueba identidad, pero no concede autorización: después del popup se exige un custom claim
-  `manager` o `builder`; si falta, el cliente cierra la sesión y muestra una explicación segura.
+  `admin`, `manager` o `builder`; si falta, el cliente cierra la sesión y muestra una explicación segura.
 - Las cuentas Google deben ser provisionadas por el flujo operativo autorizado antes de acceder.
   Crear una identidad en Firebase no crea perfiles, proyectos ni permisos de negocio.
 - El proveedor `Google` y cada dominio de despliegue se habilitan en Firebase Console por el operador;
@@ -78,7 +95,8 @@ migración podrán coexistir artefactos históricos, pero no una nueva ruta híb
 
 ## Contrato de despliegue Vercel (T-021)
 
-- El build exige las seis variables publicas `VITE_FIREBASE_*` de la aplicacion Web SDK de
+- El build exige las seis variables publicas `VITE_FIREBASE_*` de la aplicacion Web SDK y la site
+  key pública `VITE_FIREBASE_APPCHECK_SITE_KEY` de
   `jobsitejedi`; rechaza valores vacios, placeholders, otro project ID y modo emulador.
 - La validacion nunca imprime valores. Vercel conserva la configuracion remota y Git solo versiona
   nombres, reglas de formato y el procedimiento operativo.
@@ -233,6 +251,19 @@ backlog.
 - Antes de usar Functions con APIs externas se debe definir límite de costo, timeout,
   reintentos y alerta presupuestaria.
 
+### Staging aislado y costo
+
+- Target planificado: `jobsitejedi-staging`; nunca se reutiliza `jobsitejedi` para validar.
+- Firestore debe usar `eur3`, igual que produccion, y el frontend debe usar una aplicacion Web
+  separada.
+- Storage y Functions usan `europe-west1` para mantener el backend cerca de Firestore `eur3`; la
+  decision y sus alternativas estan registradas en `docs/adr/ADR-003-region-europea-firebase.md`.
+- Cloud Storage y Cloud Functions requieren Blaze. Para pruebas manuales de bajo volumen se estima
+  USD 0 a 5 por mes, sujeto al consumo real y sin limite duro automatico.
+- Staging usa Blaze con un presupuesto mensual de USD 5 y alertas al 50 %, 90 % y 100 %. Las
+  alertas no constituyen un limite duro; el operador debe detener staging ante consumo inesperado.
+- Contrato, gate, smoke y rollback: `docs/staging-operations.md`.
+
 ## Costo de OCR
 
 - **Tesseract.js 7.0.0:** biblioteca Apache-2.0 ejecutada en el navegador; costo de uso: `0` y sin
@@ -241,6 +272,16 @@ backlog.
   independientes y no se modifican en este slice.
 - **Degradacion:** si el CDN o el worker fallan, el builder conserva la captura manual; no hay
   reintentos infinitos ni llamadas pagas.
+
+## Costo de escaneo antimalware de facturas (T-026)
+
+- Diseño recomendado: ClamAV en Cloud Run + Eventarc + Storage siguiendo la arquitectura oficial de
+  Google Cloud; aún no desplegado.
+- Estimación inicial de bajo volumen: `USD 0–10/mes`, con alerta propuesta al 50 %, 90 % y 100 % de
+  `USD 10`. Las alertas no son límite duro.
+- La validación local de contenido usa `sharp`/`pdf-lib` sin tarifa por archivo. Integrar o desplegar
+  el escáner y sus recursos facturables requiere aprobación independiente.
+- Estrategia, degradación, lifecycle y rollback: `docs/invoice-malware-strategy.md`.
 
 ## Checkpoint A2.1
 

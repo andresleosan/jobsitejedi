@@ -1,77 +1,10 @@
-import { expect, test } from "@playwright/test";
-
-const projectId = "demo-jobsite-jedi";
-const authBaseUrl = "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1";
-const firestoreBaseUrl = `http://127.0.0.1:8080/v1/projects/${projectId}/databases/(default)/documents`;
-const functionsBaseUrl = `http://127.0.0.1:5001/${projectId}/us-central1`;
-
-interface AuthResponse {
-  idToken: string;
-  localId: string;
-}
-
-const requestJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
-  const response = await fetch(url, init);
-  const body = await response.text();
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}: ${body}`);
-  }
-  return body ? (JSON.parse(body) as T) : ({} as T);
-};
-
-const signUpBuilder = async (email: string, password: string) => {
-  const created = await requestJson<AuthResponse>(
-    `${authBaseUrl}/accounts:signUp?key=demo-api-key`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, password, returnSecureToken: true }),
-    },
-  );
-
-  await requestJson(
-    `${functionsBaseUrl}/ensureBuilderRole`,
-    {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${created.idToken}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ data: { role: "builder" } }),
-    },
-  );
-
-  return requestJson<AuthResponse>(
-    `${authBaseUrl}/accounts:signInWithPassword?key=demo-api-key`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, password, returnSecureToken: true }),
-    },
-  );
-};
-
-const firestoreString = (value: string) => ({ stringValue: value });
-const firestoreTimestamp = () => ({ timestampValue: new Date().toISOString() });
-
-const createFirestoreDocument = async (
-  collectionName: string,
-  documentId: string,
-  fields: Record<string, unknown>,
-  idToken: string,
-) => {
-  await requestJson(
-    `${firestoreBaseUrl}/${collectionName}?documentId=${encodeURIComponent(documentId)}`,
-    {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${idToken}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ fields }),
-    },
-  );
-};
+import { expect, test } from "./helpers/qa-test";
+import {
+  provisionAndSignInToAuthEmulator,
+  provisionEmulatorUser,
+  seedEmulatorJob,
+  seedEmulatorProject,
+} from "./helpers/firebase-auth-emulator";
 
 test("builder uploads private evidence and submits the job for review", async ({ page }) => {
   page.on("pageerror", (error) => console.error(`[browser pageerror] ${error.stack ?? error.message}`));
@@ -83,39 +16,36 @@ test("builder uploads private evidence and submits the job for review", async ({
   const password = "BuilderTest9!";
   const projectDocumentId = `e2e-project-${suffix}`;
   const jobDocumentId = `e2e-job-${suffix}`;
-  const session = await signUpBuilder(email, password);
+  const session = await provisionAndSignInToAuthEmulator({
+    email,
+    password,
+    displayName: "E2E Builder",
+    role: "builder",
+  });
+  const manager = await provisionEmulatorUser({
+    email: `e2e-manager-${suffix}@example.test`,
+    password,
+    displayName: "E2E Manager",
+    role: "manager",
+  });
 
-  await createFirestoreDocument(
-    "projects",
-    projectDocumentId,
-    {
-      ownerId: firestoreString(session.localId),
-      name: firestoreString("E2E Evidence Project"),
-      description: firestoreString("Browser acceptance fixture"),
-      clientName: firestoreString("E2E Client"),
-      address: firestoreString("Emulator Street 1"),
-      status: firestoreString("active"),
-      createdAt: firestoreTimestamp(),
-      updatedAt: firestoreTimestamp(),
-    },
-    session.idToken,
-  );
-
-  await createFirestoreDocument(
-    "jobs",
-    jobDocumentId,
-    {
-      projectId: firestoreString(projectDocumentId),
-      builderId: firestoreString(session.localId),
-      title: firestoreString("Upload completion evidence"),
-      description: firestoreString("Attach a photo from the work area"),
-      section: firestoreString("Exterior"),
-      status: firestoreString("approved"),
-      createdAt: firestoreTimestamp(),
-      updatedAt: firestoreTimestamp(),
-    },
-    session.idToken,
-  );
+  await seedEmulatorProject({
+    projectId: projectDocumentId,
+    builderId: session.localId,
+    createdBy: manager.uid,
+    name: "E2E Evidence Project",
+    description: "Browser acceptance fixture",
+    clientName: "E2E Client",
+    address: "Emulator Street 1",
+  });
+  await seedEmulatorJob({
+    jobId: jobDocumentId,
+    projectId: projectDocumentId,
+    builderId: session.localId,
+    title: "Upload completion evidence",
+    description: "Attach a photo from the work area",
+    section: "Exterior",
+  });
 
   await page.goto("/auth");
   await page.locator("#signin-email").fill(email);

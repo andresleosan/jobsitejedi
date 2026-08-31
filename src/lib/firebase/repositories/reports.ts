@@ -7,11 +7,12 @@ import {
   query,
   serverTimestamp,
   setDoc,
-  Timestamp,
   where,
   type DocumentData,
+  type Timestamp,
 } from "firebase/firestore";
 import { getCurrentRole } from "@/lib/firebase/auth";
+import { isManagementRole } from "@/lib/firebase/types";
 import { firebaseAuth, firebaseDb } from "@/lib/firebase/client";
 import {
   buildPrivateStoragePath,
@@ -82,7 +83,7 @@ const requireCurrentUser = () => {
 
 const requireManager = async () => {
   requireCurrentUser();
-  if ((await getCurrentRole()) !== "manager") throw new Error("Manager access is required");
+  if (!isManagementRole(await getCurrentRole())) throw new Error("Manager access is required");
 };
 
 const isValidCivilDate = (value: string): boolean => {
@@ -268,7 +269,7 @@ export const signRiskAssessment = async (riskAssessmentId: string): Promise<Risk
     await setDoc(signature, {
       riskAssessmentId: assessmentId,
       userId: user.uid,
-      signedAt: Timestamp.now(),
+      signedAt: serverTimestamp(),
     }, { merge: false });
   } catch (error) {
     const afterRace = await getDoc(signature);

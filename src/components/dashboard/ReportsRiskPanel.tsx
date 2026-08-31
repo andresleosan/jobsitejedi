@@ -112,7 +112,7 @@ const ReportsRiskPanel = ({ role, projects, selectedProjectId }: ReportsRiskPane
     setError(null);
     try {
       const created = await createDailyReport({ projectId: activeProjectId, date, description });
-      setReports((current) => [created, ...current]);
+      setReports((current) => [created, ...current.filter((report) => report.id !== created.id)]);
       setDescription("");
       toast({ title: "Report saved", description: "The daily report is now available to the project team." });
     } catch (submitError) {
@@ -133,7 +133,10 @@ const ReportsRiskPanel = ({ role, projects, selectedProjectId }: ReportsRiskPane
         title: assessmentTitle,
         file: assessmentFile,
       });
-      setAssessments((current) => [created, ...current]);
+      setAssessments((current) => [
+        created,
+        ...current.filter((assessment) => assessment.id !== created.id),
+      ]);
       setAssessmentTitle("");
       setAssessmentFile(null);
       toast({ title: "Assessment uploaded", description: "The private PDF is ready for builder sign-off." });

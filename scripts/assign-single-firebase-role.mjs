@@ -11,7 +11,7 @@ const {
 const { getAuth } = requireFromFunctions("firebase-admin/auth");
 
 const PROJECT_ID = "jobsitejedi";
-const ALLOWED_ROLES = new Set(["manager", "builder"]);
+const ALLOWED_ROLES = new Set(["admin", "manager", "builder"]);
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((argument) => {
@@ -31,7 +31,7 @@ const targetConfirmation = targetEmail
 const expectedConfirmation = `${PROJECT_ID}:${targetConfirmation}:${role}`;
 
 if (!ALLOWED_ROLES.has(role)) {
-  throw new Error("Use --role=manager or --role=builder.");
+  throw new Error("Use --role=admin, --role=manager, or --role=builder.");
 }
 if (args.project !== PROJECT_ID) {
   throw new Error(`Use --project=${PROJECT_ID}.`);
@@ -85,9 +85,16 @@ try {
 
   const previousClaims = JSON.parse(JSON.stringify(user.customClaims ?? {}));
   const previousRole = previousClaims.role ?? null;
-  if (previousRole !== null && previousRole !== role) {
+  const expectedCurrentRole = args["expected-current-role"] === "none"
+    ? null
+    : args["expected-current-role"];
+  if (
+    previousRole !== null
+    && previousRole !== role
+    && expectedCurrentRole !== previousRole
+  ) {
     throw new Error(
-      `Safety check failed: the user already has the different role '${previousRole}'.`,
+      "Safety check failed: the current role differs; pass --expected-current-role with the audited value.",
     );
   }
 
@@ -114,8 +121,10 @@ try {
       if (verified.customClaims?.role !== role) {
         throw new Error("The assigned role was not returned by Firebase Auth.");
       }
+      await auth.revokeRefreshTokens(user.uid);
     } catch (verificationError) {
       await auth.setCustomUserClaims(user.uid, previousClaims);
+      await auth.revokeRefreshTokens(user.uid).catch(() => undefined);
       throw new Error("Role verification failed and previous claims were restored.");
     }
 

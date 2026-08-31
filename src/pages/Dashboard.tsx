@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { roleHomePath, type AppRole } from "@/lib/firebase/types";
 
 const Dashboard = () => {
   const [isLoading, setIsLoading] = useState(true);
-  const [userRole, setUserRole] = useState<"manager" | "builder" | null>(null);
+  const [userRole, setUserRole] = useState<AppRole | null>(null);
   const navigate = useNavigate();
   const { user, isLoading: isAuthLoading } = useAuth();
 
@@ -26,11 +27,7 @@ const Dashboard = () => {
 
   useEffect(() => {
     if (!isLoading && userRole) {
-      if (userRole === "manager") {
-        navigate("/managers");
-      } else if (userRole === "builder") {
-        navigate("/builders");
-      }
+      navigate(roleHomePath(userRole));
     }
   }, [isLoading, userRole, navigate]);
 

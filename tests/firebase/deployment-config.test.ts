@@ -10,6 +10,18 @@ const packageJson = JSON.parse(
 const vercelJson = JSON.parse(
   readFileSync(resolve(root, "vercel.json"), "utf8"),
 ) as { rewrites: Array<{ source: string; destination: string }> };
+const functionsSource = readFileSync(
+  resolve(root, "functions/src/index.ts"),
+  "utf8",
+);
+const firebaseClientSource = readFileSync(
+  resolve(root, "src/lib/firebase/client.ts"),
+  "utf8",
+);
+const firebaseConfigSource = readFileSync(
+  resolve(root, "src/lib/firebase/config.ts"),
+  "utf8",
+);
 
 const validFirebaseEnv = {
   VITE_FIREBASE_API_KEY: `AIza${"a".repeat(32)}`,
@@ -18,13 +30,14 @@ const validFirebaseEnv = {
   VITE_FIREBASE_STORAGE_BUCKET: "jobsitejedi.firebasestorage.app",
   VITE_FIREBASE_MESSAGING_SENDER_ID: "548508412702",
   VITE_FIREBASE_APP_ID: "1:548508412702:web:abcdef1234567890",
+  VITE_FIREBASE_APPCHECK_SITE_KEY: "enterprise-public-site-key-123456",
   VITE_FIREBASE_USE_EMULATORS: "false",
 };
 
-const runValidator = (overrides: Record<string, string>) =>
+const runValidator = (overrides: Record<string, string>, mode = "production") =>
   spawnSync(
     process.execPath,
-    [resolve(root, "scripts/validate-firebase-client-env.mjs"), "production"],
+    [resolve(root, "scripts/validate-firebase-client-env.mjs"), mode],
     {
       cwd: root,
       encoding: "utf8",
@@ -42,6 +55,39 @@ describe("production deployment configuration", () => {
       "node scripts/validate-firebase-client-env.mjs production && vite build",
     );
     expect(runValidator({}).status).toBe(0);
+  });
+
+  test("isolates staging from the production Firebase project", () => {
+    expect(packageJson.scripts["build:staging"]).toBe(
+      "node scripts/validate-firebase-client-env.mjs staging && vite build --mode staging",
+    );
+    expect(runValidator({}, "staging").status).toBe(1);
+    expect(runValidator({
+      VITE_FIREBASE_AUTH_DOMAIN: "jobsitejedi-staging.firebaseapp.com",
+      VITE_FIREBASE_PROJECT_ID: "jobsitejedi-staging",
+      VITE_FIREBASE_STORAGE_BUCKET: "jobsitejedi-staging.firebasestorage.app",
+    }, "staging").status).toBe(0);
+  });
+
+  test("co-locates Functions with the European staging data plane", () => {
+    expect(functionsSource).toContain(
+      'setGlobalOptions({ region: "europe-west1" })',
+    );
+    expect(firebaseConfigSource).toContain(
+      'functionsRegion: "europe-west1"',
+    );
+    expect(firebaseClientSource).toContain(
+      "firebaseConfig.functionsRegion",
+    );
+  });
+
+  test("prepares App Check in observation mode with an explicit enforcement rollback", () => {
+    expect(firebaseClientSource).toContain("ReCaptchaEnterpriseProvider");
+    expect(firebaseClientSource).toContain("isTokenAutoRefreshEnabled: true");
+    expect(functionsSource).toContain(
+      'process.env.ENFORCE_APP_CHECK === "true"',
+    );
+    expect(functionsSource).toContain("enforceAppCheck: ENFORCE_APP_CHECK");
   });
 
   test("rejects Vercel-style placeholder values without printing them", () => {

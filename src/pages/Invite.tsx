@@ -9,12 +9,13 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import { invitationOperations } from "@/lib/firebase/functions";
+import { isManagementRole, roleHomePath, type AppRole } from "@/lib/firebase/types";
 import QRCode from "qrcode";
 
 const Invite = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [role, setRole] = useState<"builder" | "manager">("builder");
+  const [role, setRole] = useState<AppRole>("builder");
   const [invitationCode, setInvitationCode] = useState<string | null>(null);
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<Date | null>(null);
@@ -31,8 +32,8 @@ const Invite = () => {
       navigate("/auth");
       return;
     }
-    if (user.role !== "manager") {
-      navigate("/builders");
+    if (!isManagementRole(user.role)) {
+      if (user.role) navigate(roleHomePath(user.role), { replace: true });
       return;
     }
 
@@ -120,7 +121,7 @@ const Invite = () => {
     <div className="min-h-screen bg-muted/30">
       <header className="bg-card border-b shadow-sm sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4 flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => navigate("/managers")}>
+          <Button variant="ghost" size="sm" onClick={() => user?.role && navigate(roleHomePath(user.role))}>
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back
           </Button>
@@ -153,7 +154,7 @@ const Invite = () => {
               <Label>Invite as</Label>
               <Select 
                 value={role} 
-                onValueChange={(value: "builder" | "manager") => setRole(value)}
+                onValueChange={(value: AppRole) => setRole(value)}
                 disabled={!!invitationCode}
               >
                 <SelectTrigger className="w-full">
@@ -166,12 +167,22 @@ const Invite = () => {
                       Builder
                     </div>
                   </SelectItem>
-                  <SelectItem value="manager">
-                    <div className="flex items-center gap-2">
-                      <Users className="h-4 w-4" />
-                      Manager
-                    </div>
-                  </SelectItem>
+                  {user?.role === "admin" && (
+                    <>
+                      <SelectItem value="manager">
+                        <div className="flex items-center gap-2">
+                          <Users className="h-4 w-4" />
+                          Manager
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="admin">
+                        <div className="flex items-center gap-2">
+                          <Users className="h-4 w-4" />
+                          Admin
+                        </div>
+                      </SelectItem>
+                    </>
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -223,11 +234,8 @@ const Invite = () => {
                 {/* Role Badge */}
                 <div className="flex justify-center">
                   <Badge variant="outline" className="text-base px-4 py-2">
-                    {role === "builder" ? (
-                      <><HardHat className="h-4 w-4 mr-2" /> Builder Invitation</>
-                    ) : (
-                      <><Users className="h-4 w-4 mr-2" /> Manager Invitation</>
-                    )}
+                    {role === "builder" ? <HardHat className="mr-2 h-4 w-4" /> : <Users className="mr-2 h-4 w-4" />}
+                    {role[0].toUpperCase() + role.slice(1)} Invitation
                   </Badge>
                 </div>
 

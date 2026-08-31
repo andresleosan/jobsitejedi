@@ -1,76 +1,20 @@
-import { expect, test } from "@playwright/test";
-
-const projectId = "demo-jobsite-jedi";
-const authBaseUrl = "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1";
-const firestoreBaseUrl = `http://127.0.0.1:8080/v1/projects/${projectId}/databases/(default)/documents`;
-const functionsBaseUrl = `http://127.0.0.1:5001/${projectId}/us-central1`;
-
-interface AuthResponse {
-  idToken: string;
-  localId: string;
-}
-
-const requestJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
-  const response = await fetch(url, init);
-  const body = await response.text();
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}: ${body}`);
-  return body ? (JSON.parse(body) as T) : ({} as T);
-};
-
-const signIn = (email: string, password: string) => requestJson<AuthResponse>(
-  `${authBaseUrl}/accounts:signInWithPassword?key=demo-api-key`,
-  {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, password, returnSecureToken: true }),
-  },
-);
-
-const signUpBuilder = async (email: string, password: string, displayName: string) => {
-  const created = await requestJson<AuthResponse>(`${authBaseUrl}/accounts:signUp?key=demo-api-key`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, password, displayName, returnSecureToken: true }),
-  });
-  await requestJson(`${functionsBaseUrl}/ensureBuilderRole`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${created.idToken}`, "content-type": "application/json" },
-    body: JSON.stringify({ data: { role: "builder" } }),
-  });
-  return signIn(email, password);
-};
-
-const promoteToManager = async (userId: string) => {
-  const [{ getApps, initializeApp }, { getAuth }] = await Promise.all([
-    import("../functions/node_modules/firebase-admin/lib/app/index.js"),
-    import("../functions/node_modules/firebase-admin/lib/auth/index.js"),
-  ]);
-  const adminApp = getApps().find((app) => app.name === "invoice-browser-tests")
-    ?? initializeApp({ projectId }, "invoice-browser-tests");
-  await getAuth(adminApp).setCustomUserClaims(userId, { role: "manager" });
-};
-
-const firestoreString = (value: string) => ({ stringValue: value });
-const firestoreTimestamp = () => ({ timestampValue: new Date().toISOString() });
-
-const createFirestoreDocument = async (
-  collectionName: string,
-  documentId: string,
-  fields: Record<string, unknown>,
-  idToken: string,
-) => {
-  await requestJson(`${firestoreBaseUrl}/${collectionName}?documentId=${encodeURIComponent(documentId)}`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${idToken}`, "content-type": "application/json" },
-    body: JSON.stringify({ fields }),
-  });
-};
+import { expect, test } from "./helpers/qa-test";
+import {
+  provisionAndSignInToAuthEmulator,
+  provisionEmulatorUser,
+  seedEmulatorProject,
+} from "./helpers/firebase-auth-emulator";
 
 test("builder submits a private invoice and manager approves it", async ({ page }) => {
   test.setTimeout(60_000);
+  const reactKeyWarnings: string[] = [];
   page.on("pageerror", (error) => console.error(`[browser pageerror] ${error.stack ?? error.message}`));
   page.on("console", (message) => {
-    if (message.type() === "error") console.error(`[browser console] ${message.text()}`);
+    if (message.type() === "error") {
+      const text = message.text();
+      console.error(`[browser console] ${text}`);
+      if (text.includes("Encountered two children with the same key")) reactKeyWarnings.push(text);
+    }
   });
 
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -78,20 +22,28 @@ test("builder submits a private invoice and manager approves it", async ({ page 
   const builderEmail = `invoice-builder-${suffix}@example.test`;
   const managerEmail = `invoice-manager-${suffix}@example.test`;
   const projectDocumentId = `invoice-project-${suffix}`;
-  const builder = await signUpBuilder(builderEmail, password, "Invoice E2E Builder");
-  const managerBuilderSession = await signUpBuilder(managerEmail, password, "Invoice E2E Manager");
-  await promoteToManager(managerBuilderSession.localId);
+  const builder = await provisionAndSignInToAuthEmulator({
+    email: builderEmail,
+    password,
+    displayName: "Invoice E2E Builder",
+    role: "builder",
+  });
+  const manager = await provisionEmulatorUser({
+    email: managerEmail,
+    password,
+    displayName: "Invoice E2E Manager",
+    role: "manager",
+  });
 
-  await createFirestoreDocument("projects", projectDocumentId, {
-    ownerId: firestoreString(builder.localId),
-    name: firestoreString("Invoice E2E Project"),
-    description: firestoreString("Invoice browser fixture"),
-    clientName: firestoreString("Invoice Client"),
-    address: firestoreString("Accounts Lane 7"),
-    status: firestoreString("active"),
-    createdAt: firestoreTimestamp(),
-    updatedAt: firestoreTimestamp(),
-  }, builder.idToken);
+  await seedEmulatorProject({
+    projectId: projectDocumentId,
+    builderId: builder.localId,
+    createdBy: manager.uid,
+    name: "Invoice E2E Project",
+    description: "Invoice browser fixture",
+    clientName: "Invoice Client",
+    address: "Accounts Lane 7",
+  });
 
   await page.goto("/auth");
   await page.locator("#signin-email").fill(builderEmail);
@@ -175,11 +127,12 @@ test("builder submits a private invoice and manager approves it", async ({ page 
   await expect(managerInvoice).toContainText("Invoice E2E Builder");
   const download = page.waitForEvent("download");
   await managerInvoice.getByRole("button", { name: "Download invoice", exact: true }).click();
-  await expect((await download).suggestedFilename()).toBe("invoice-evidence.png");
+  await expect((await download).suggestedFilename()).toBe("invoice.png");
   await managerInvoice.getByLabel("Review notes for INV-E2E-2048").fill("Amount and project matched");
   await managerInvoice.getByRole("button", { name: "Approve invoice", exact: true }).click();
   await dialog.getByRole("tab", { name: "Approved", exact: true }).click();
   managerInvoice = dialog.locator('[data-testid="invoice-review"]').filter({ hasText: "INV-E2E-2048" });
   await expect(managerInvoice).toContainText("Approved");
   await expect(managerInvoice).toContainText("Amount and project matched");
+  expect(reactKeyWarnings).toEqual([]);
 });

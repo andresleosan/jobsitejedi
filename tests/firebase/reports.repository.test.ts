@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+import { provisionEmulatorUser } from "../../scripts/lib/firebase-auth-emulator.mjs";
 
 const ownerCredentials = {
   email: `reports-owner-${Date.now()}@example.test`,
@@ -19,27 +20,17 @@ let createRiskAssessment: typeof import("@/lib/firebase/repositories/reports").c
 let listRiskAssessments: typeof import("@/lib/firebase/repositories/reports").listRiskAssessments;
 let signRiskAssessment: typeof import("@/lib/firebase/repositories/reports").signRiskAssessment;
 let listRiskAssessmentSignatures: typeof import("@/lib/firebase/repositories/reports").listRiskAssessmentSignatures;
-let registerBuilder: typeof import("@/lib/firebase/auth").registerBuilder;
 let getCurrentRole: typeof import("@/lib/firebase/auth").getCurrentRole;
 let signIn: typeof import("@/lib/firebase/auth").signIn;
 let signOut: typeof import("@/lib/firebase/auth").signOut;
 let firebaseAuth: typeof import("@/lib/firebase/client").firebaseAuth;
-
-const promoteToManager = async (userId: string) => {
-  const [{ getApps, initializeApp }, { getAuth }] = await Promise.all([
-    import("../../functions/node_modules/firebase-admin/lib/app/index.js"),
-    import("../../functions/node_modules/firebase-admin/lib/auth/index.js"),
-  ]);
-  const adminApp = getApps().find((app) => app.name === "reports-repository-tests")
-    ?? initializeApp({ projectId: "demo-jobsite-jedi" }, "reports-repository-tests");
-  await getAuth(adminApp).setCustomUserClaims(userId, { role: "manager" });
-};
+let ownerId = "";
 
 describe("Firebase reports repository", () => {
   beforeAll(async () => {
     vi.stubEnv("VITE_FIREBASE_USE_EMULATORS", "true");
     ({ firebaseAuth } = await import("@/lib/firebase/client"));
-    ({ registerBuilder, getCurrentRole, signIn, signOut } = await import("@/lib/firebase/auth"));
+    ({ getCurrentRole, signIn, signOut } = await import("@/lib/firebase/auth"));
     ({ createProject } = await import("@/lib/firebase/repositories/projects"));
     ({
       createDailyReport,
@@ -49,7 +40,20 @@ describe("Firebase reports repository", () => {
       signRiskAssessment,
       listRiskAssessmentSignatures,
     } = await import("@/lib/firebase/repositories/reports"));
-    await registerBuilder(ownerCredentials);
+    const owner = await provisionEmulatorUser({
+      email: ownerCredentials.email,
+      password: ownerCredentials.password,
+      displayName: ownerCredentials.fullName,
+      role: "builder",
+    });
+    ownerId = owner.uid;
+    await provisionEmulatorUser({
+      email: managerCredentials.email,
+      password: managerCredentials.password,
+      displayName: managerCredentials.fullName,
+      role: "manager",
+    });
+    await signIn(ownerCredentials.email, ownerCredentials.password);
   });
 
   afterAll(async () => {
@@ -58,10 +62,15 @@ describe("Firebase reports repository", () => {
   });
 
   test("creates an owned daily report and an idempotent risk signature", async () => {
+    await signOut();
+    await signIn(managerCredentials.email, managerCredentials.password);
     const project = await createProject({
+      builderId: ownerId,
       name: "Reports repository project",
       clientName: "Reports client",
     });
+    await signOut();
+    await signIn(ownerCredentials.email, ownerCredentials.password);
     const report = await createDailyReport({
       projectId: project.id,
       date: "2026-08-28",
@@ -70,8 +79,6 @@ describe("Firebase reports repository", () => {
     expect(report.builderId).toBe(project.ownerId);
     expect((await listDailyReports(project.id)).some((item) => item.id === report.id)).toBe(true);
 
-    const manager = await registerBuilder(managerCredentials);
-    await promoteToManager(manager.id);
     await signOut();
     await signIn(managerCredentials.email, managerCredentials.password);
     await firebaseAuth.currentUser?.getIdToken(true);

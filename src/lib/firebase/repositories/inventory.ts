@@ -18,6 +18,7 @@ import {
 } from "firebase/firestore";
 import { getCurrentRole } from "@/lib/firebase/auth";
 import { firebaseAuth, firebaseDb } from "@/lib/firebase/client";
+import { isManagementRole } from "@/lib/firebase/types";
 import {
   buildPrivateStoragePath,
   deletePrivateFile,
@@ -214,7 +215,7 @@ const requireCurrentUser = () => {
 
 const requireManager = async () => {
   requireCurrentUser();
-  if ((await getCurrentRole()) !== "manager") throw new Error("Manager access is required");
+  if (!isManagementRole(await getCurrentRole())) throw new Error("Manager access is required");
 };
 
 const assertNonNegative = (value: number, field: string) => {
@@ -578,7 +579,7 @@ export const createToolRequest = async (input: {
 export const listToolRequests = async (statuses?: ToolRequestStatus[]) => {
   const user = requireCurrentUser();
   const role = await getCurrentRole();
-  const constraints = role === "manager"
+  const constraints = isManagementRole(role)
     ? statuses?.length ? [where("status", "in", statuses)] : []
     : [where("requestedBy", "==", user.uid)];
   const snapshots = await getDocs(query(requestsCollection, ...constraints));
@@ -620,7 +621,7 @@ export const updateToolRequest = async (input: {
   rejectionReason?: string | null;
 }) => {
   const user = requireCurrentUser();
-  if ((await getCurrentRole()) !== "manager") throw new Error("Manager access is required");
+  if (!isManagementRole(await getCurrentRole())) throw new Error("Manager access is required");
   const reference = doc(requestsCollection, requireText(input.requestId, "Request id"));
   const current = await getDoc(reference);
   if (!current.exists()) throw new Error("Tool request was not found");
@@ -733,7 +734,7 @@ export const checkoutTool = async (input: {
 export const listToolCheckouts = async (activeOnly = false) => {
   const user = requireCurrentUser();
   const role = await getCurrentRole();
-  const constraints = role === "manager"
+  const constraints = isManagementRole(role)
     ? activeOnly ? [where("returnedAt", "==", null)] : []
     : [where("checkedOutBy", "==", user.uid)];
   const snapshots = await getDocs(query(checkoutsCollection, ...constraints));
@@ -920,7 +921,7 @@ export const recordMaterialUsage = async (input: {
 export const listMaterialUsage = async (projectId?: string) => {
   const user = requireCurrentUser();
   const role = await getCurrentRole();
-  const constraints = role === "manager"
+  const constraints = isManagementRole(role)
     ? projectId?.trim() ? [where("projectId", "==", projectId.trim())] : []
     : [where("usedBy", "==", user.uid)];
   const snapshots = await getDocs(query(usageCollection, ...constraints));
@@ -1015,7 +1016,7 @@ export const getMaterialDeliveryRequest = async (requestId: string) => {
 export const listMaterialDeliveryRequests = async () => {
   const user = requireCurrentUser();
   const role = await getCurrentRole();
-  const constraints = role === "manager" ? [] : [where("userId", "==", user.uid)];
+  const constraints = isManagementRole(role) ? [] : [where("userId", "==", user.uid)];
   const snapshots = await getDocs(query(deliveryRequestsCollection, ...constraints));
   const requests = await Promise.all(snapshots.docs.map((snapshot) => getMaterialDeliveryRequest(snapshot.id)));
   return requests.filter((request): request is MaterialDeliveryRequestRecord => request !== null)
@@ -1034,7 +1035,7 @@ export const subscribeToMaterialDeliveryRequests = async (
   const sortRequests = (requests: MaterialDeliveryRequestRecord[]) => requests.sort((a, b) =>
     (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
 
-  if (role === "manager") {
+  if (isManagementRole(role)) {
     let requestRecords: MaterialDeliveryRequestRecord[] = [];
     let itemRecords: MaterialDeliveryItemRecord[] = [];
     let requestsReady = false;
@@ -1117,7 +1118,7 @@ export const updateMaterialDeliveryRequest = async (input: {
   status: MaterialDeliveryRequestRecord["status"];
 }) => {
   const user = requireCurrentUser();
-  if ((await getCurrentRole()) !== "manager") throw new Error("Manager access is required");
+  if (!isManagementRole(await getCurrentRole())) throw new Error("Manager access is required");
   const reference = doc(deliveryRequestsCollection, requireText(input.requestId, "Request id"));
   const transitions: Record<MaterialDeliveryRequestRecord["status"], MaterialDeliveryRequestRecord["status"][]> = {
     pending: ["in_progress", "rejected"], in_progress: ["delivered", "rejected"],
@@ -1205,7 +1206,7 @@ export const createRubbishRequest = async (input: {
 export const listRubbishRequests = async (status?: RubbishRequestRecord["status"]) => {
   const user = requireCurrentUser();
   const role = await getCurrentRole();
-  const constraints = role === "manager"
+  const constraints = isManagementRole(role)
     ? status ? [where("status", "==", status)] : []
     : [where("userId", "==", user.uid)];
   const snapshots = await getDocs(query(rubbishCollection, ...constraints));
@@ -1221,7 +1222,7 @@ export const subscribeToRubbishRequests = async (
 ): Promise<() => void> => {
   const user = requireCurrentUser();
   const role = await getCurrentRole();
-  const source = role === "manager"
+  const source = isManagementRole(role)
     ? rubbishCollection
     : query(rubbishCollection, where("userId", "==", user.uid));
   return onSnapshot(
@@ -1234,7 +1235,7 @@ export const subscribeToRubbishRequests = async (
 
 export const resolveRubbishRequest = async (requestId: string) => {
   const user = requireCurrentUser();
-  if ((await getCurrentRole()) !== "manager") throw new Error("Manager access is required");
+  if (!isManagementRole(await getCurrentRole())) throw new Error("Manager access is required");
   const reference = doc(rubbishCollection, requireText(requestId, "Request id"));
   await runTransaction(firebaseDb, async (transaction) => {
     const current = await transaction.get(reference);
