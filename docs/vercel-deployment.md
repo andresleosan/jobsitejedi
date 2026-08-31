@@ -11,6 +11,7 @@ y `Preview`, los valores oficiales de la aplicacion web Firebase `jobsitejedi`:
 - `VITE_FIREBASE_STORAGE_BUCKET`
 - `VITE_FIREBASE_MESSAGING_SENDER_ID`
 - `VITE_FIREBASE_APP_ID`
+- `VITE_FIREBASE_APPCHECK_SITE_KEY`
 
 El nombre de una variable nunca es un valor valido. Los valores se obtienen desde la configuracion
 Web SDK de Firebase Console o con `firebase apps:sdkconfig WEB <app-id> --project jobsitejedi`.
@@ -36,14 +37,15 @@ para OAuth debe revisarse y agregarse de forma explicita.
 
 El proyecto Vercel `jobsitejedi` conserva Firebase de produccion en `Production` y `Preview`; no se
 cambian esos valores para T-017. Staging se publica en un proyecto Vercel Hobby separado llamado
-`jobsitejedi-staging`, con build command `npm run build:staging` y las seis variables de la
-aplicacion Web Firebase `jobsitejedi-staging`. Su hostname exacto se autoriza en Firebase Auth y
-App Check despues de conocer el deployment real. Ninguna variable se copia al repositorio.
+`jobsitejedi-staging`, con build command `npm run build:staging` y las variables de la aplicacion
+Web Firebase `jobsitejedi-staging`, incluida su clave publica de App Check. Su hostname exacto se
+autoriza en Firebase Auth y App Check despues de conocer el deployment real. Ninguna variable se
+copia al repositorio.
 
 ## Procedimiento controlado
 
 1. Consultar la configuracion Web SDK oficial de Firebase en modo de solo lectura.
-2. Reemplazar juntas las seis variables en Vercel para `Production` y `Preview`.
+2. Reemplazar juntas las siete variables en Vercel para `Production` y `Preview`.
 3. Confirmar que `VITE_FIREBASE_USE_EMULATORS` no sea `true`.
 4. Agregar `jobsitejedi.vercel.app` a los dominios autorizados de Firebase Authentication.
 5. Desplegar el commit que contiene `vercel.json` y el validador.
