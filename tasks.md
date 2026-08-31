@@ -39,7 +39,7 @@ los dos estados cuenta como trabajo terminado o desplegado.
 Una tarea solo puede pasar a `revisión` después de ejecutar sus pruebas. Las tareas que
 toquen producción necesitan confirmación explícita del operador.
 
-## Reconciliación del backlog — 2026-08-28
+## Reconciliación del backlog — 2026-08-31
 
 - Los estados de los encabezados y esta sección son la fuente vigente; los bloques `Seguimiento`
   conservan la fotografía histórica del momento en que se escribieron.
@@ -55,12 +55,17 @@ toquen producción necesitan confirmación explícita del operador.
   validado en `jobsitejedi` y retirar `jobsitejedi-staging` solo después de una verificación segura.
 - T-017 queda `supersedida` por cambio de estrategia; T-018 concentra el despliegue productivo,
   la observación y el gate destructivo final.
-- La auditoría del 2026-08-30 detectó un bypass crítico de autorización y defectos en asignación e
-  integridad. La remediación local T-023/T-024/T-025 está en `revisión`; T-018 continúa `bloqueada`
-  hasta aprobar T-023 a T-029 y T-032, y repetir el gate sobre el SHA exacto que eventualmente se proponga
-  desplegar.
-- WIP local verificado: T-023, T-024 y T-025. Ninguna autoriza despliegue, migración remota ni
-  modificación de usuarios productivos.
+- El corte coordinado del 2026-08-31 desplegó T-023 a T-029, T-032 y T-033; la estabilización T-034
+  quedó fusionada en `main` en `864335ecf4e497221469e3462a623c5211e5846e`. El CI exacto de ese
+  merge aprobó calidad/contratos y Firebase Emulator/E2E con evidencia inmutable.
+- T-029 quedó `desplegada` como instrumentación/observación: la site key oficial y el cliente están
+  activos, y Functions conserva `ENFORCE_APP_CHECK=false`. T-035 separa el eventual enforcement y
+  permanece `en-progreso`. T-018 también permanece `en-progreso` porque `jobsitejedi-staging` sigue
+  intacto y su borrado exige siete días desde el nuevo corte, inventario final y autorización
+  destructiva separada.
+- Las tres identidades QA compartidas de producción están deshabilitadas, sin claims de aplicación y
+  con tombstones inactivos. La matriz positiva `admin`/`manager`/`builder` se prueba en Emulator; su
+  reactivación productiva no forma parte de este release.
 
 ## Fase 0 — Decisión y línea base
 
@@ -693,8 +698,8 @@ toquen producción necesitan confirmación explícita del operador.
 
 ### T-018 — Gate de producción
 
-- **Prioridad:** P0 · **Estado:** bloqueada · **Depende de:** T-013, T-015, T-016, T-023, T-024,
-  T-025, T-026, T-027, T-028, T-029, T-032
+- **Prioridad:** P0 · **Estado:** en-progreso · **Depende de:** T-013, T-015, T-016, T-023, T-024,
+  T-025, T-026, T-027, T-028, T-029, T-032, T-033, T-034
 - Verificar seguridad sin hallazgos críticos, tests aprobados, E2E final, rollback y
   backup cuando aplique.
 - Requiere confirmación explícita del operador antes de cualquier despliegue o migración.
@@ -730,24 +735,25 @@ toquen producción necesitan confirmación explícita del operador.
     falta de sesión con HTTP 401. La SPA productiva `/auth` cargó correctamente. Los eventos graves
     revisados fueron el smoke esperado y la carrera transitoria del primer alta, resuelta por un
     reintento acotado.
-  - La observación de siete días comenzó el 2026-08-29; staging no se elimina antes del
-    2026-09-05 12:02 America/Bogota y aún requiere inventario final y confirmación destructiva.
-  - Artifact Registry quedó sin limpieza automática: la retención de un día fue rechazada por
-    riesgo de eliminar material de rollback y necesita autorización destructiva separada. T-018
-    permanece `en-progreso` durante la observación; `jobsitejedi-staging` sigue intacto.
+  - Ese reloj quedó superado por el corte de seguridad posterior. La nueva observación comenzó el
+    2026-08-31 13:55 America/Bogota; staging no se elimina antes del 2026-09-07 13:55 y aún requiere
+    inventario final, smoke, revisión de costo y confirmación destructiva en ese momento.
+  - El corte final dejó 9/9 Functions v4 activas, Rules coordinadas, dos usuarios autorizados con
+    grants exactos, tres identidades QA deshabilitadas con tombstones y cero diferencias
+    Auth↔Firestore. No hubo migración de proyectos, jobs ni archivos.
+  - Artifact Registry quedó configurado para retirar imágenes de compilación con más de un día. El
+    código y las revisiones Git son la fuente de rollback; `jobsitejedi-staging` sigue intacto.
 
 ## Fase 8 — Remediación priorizada de la auditoría 2026-08-30
 
-Orden obligatorio de resolución local actualizado por decisión del operador: T-032 → T-026 →
-T-027 → T-028 → T-029. T-023/T-024/T-025 conservan su evidencia previa, pero deben repetirse bajo
-la nueva matriz de tres roles antes de aprobarse. T-030 y T-031 pueden continuar después sin bloquear
-la contención inmediata. Al terminar T-029 se
-repite el gate local completo; cualquier despliegue productivo sigue requiriendo una autorización
-explícita, separada y posterior del operador.
+El orden T-032 → T-026 → T-027 → T-028 → T-029 se ejecutó con la matriz de tres roles. El operador
+autorizó por separado la mutación de grants, el despliegue coordinado y la publicación mediante PR.
+T-029 entregó la observación sin enforcement; T-035 gobierna la decisión posterior de enforcement.
+T-030 y T-031 siguen como mejoras posteriores y no bloquean el release ya desplegado.
 
 ### T-023 — Cerrar autoprovisión de roles y preparar identidades QA
 
-- **Prioridad:** P0 crítica · **Estado:** revisión · **Depende de:** T-003, T-015, T-020
+- **Prioridad:** P0 crítica · **Estado:** desplegada · **Depende de:** T-003, T-015, T-020
 - Retirar `ensureBuilderRole` del cliente y del backend desplegable; ninguna identidad autenticada
   puede asignarse un rol por sí misma.
 - Mantener como únicas vías de autorización el consumo transaccional de una invitación válida y la
@@ -759,8 +765,23 @@ explícita, separada y posterior del operador.
 - Crear un seeder exclusivo de Firebase Auth Emulator para `admin@admin.com` (`admin`),
   `manager@manager.com` (`manager`) y `builder@builder.com` (`builder`). La contraseña se
   recibe por variable de entorno, nunca se versiona ni se imprime.
-- Documentar un runbook para auditar claims existentes; ejecutarlo contra producción queda fuera
-  de alcance hasta una autorización explícita.
+- Documentar un runbook para auditar claims existentes. La ejecución productiva posterior solo se
+  realizó tras la autorización explícita y quedó registrada sin PII ni valores de grants.
+- Los scripts de asignación/revocación rechazan PII por `argv`, reciben un manifiesto JSON acotado
+  por `stdin` y ligan cada `apply` a un desafío interactivo aleatorio de un solo uso y a la huella
+  completa de custom claims/documento grant; repiten inventario e identidad y releen ambos estados
+  antes de mutar. La escritura del grant y cualquier compensación usan precondición transaccional y
+  no sobrescriben un tombstone o grant cambiado concurrentemente. El runbook exige además una
+  ventana administrativa exclusiva porque Auth y Firestore no comparten una transacción. Un
+  `apply` en CI o sin TTY falla cerrado. El verificador automatizado de login solo cubre el proveedor
+  `password`; Google requiere login interactivo y comprobación manual equivalente. La asignación
+  exige un único proveedor exacto; la revocación se ancla a correo+UID para que un cambio de providers
+  no pueda bloquear la retirada de privilegios.
+- **Evidencia automatizada del nuevo desafío:** 23/23 pruebas locales cubren binding de todos los
+  campos, challenge fresco, claves JSON duplicadas/escapadas, cambios simulados en las huellas de
+  claims/grant, CAS contra tombstones concurrentes, canarios de redacción y aislamiento de
+  secretos/debug en procesos hijos. La suite no inyecta fallos en Firebase remoto ni acredita por sí
+  sola todos los pasos de compensación.
 - **Aceptación:** una cuenta creada sin invitación permanece sin claim y las Rules le deniegan los
   recursos protegidos; no existe callable cliente/backend de autoasignación; las invitaciones
   siguen asignando el rol correcto una sola vez; el seeder rechaza cualquier host que no sea el
@@ -768,7 +789,7 @@ explícita, separada y posterior del operador.
 
 ### T-024 — Implementar asignación manager → builder → proyecto → job
 
-- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-023, T-005
+- **Prioridad:** P0 · **Estado:** desplegada · **Depende de:** T-023, T-005
 - Definir el contrato de asignación operativo: admin o manager seleccionan un builder provisionado;
   el proyecto guarda su UID asignado y cada job hereda el mismo `builderId`.
 - Añadir un listado mínimo y autorizado de builders para el selector del formulario; no aceptar
@@ -782,7 +803,7 @@ explícita, separada y posterior del operador.
 
 ### T-025 — Endurecer integridad operativa y jornada activa única
 
-- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-004, T-006 y contrato de T-024
+- **Prioridad:** P0 · **Estado:** desplegada · **Depende de:** T-004, T-006 y contrato de T-024
 - Aplicar esquemas, tipos, enums, límites, referencias project/job, campos inmutables y timestamps
   canónicos en Rules para `jobs`, `jobCompletions`, `jobPhotos`, `timeTracking`,
   `projectSwitches` y firmas de riesgo.
@@ -793,10 +814,10 @@ explícita, separada y posterior del operador.
 - **Aceptación:** pruebas negativas impiden falsificar/borrar registros ajenos o canónicos y una
   carrera con solicitudes concurrentes produce exactamente una jornada activa.
 
-#### Evidencia local T-023/T-024/T-025 — 2026-08-30
+#### Evidencia histórica local T-023/T-024/T-025 — 2026-08-30
 
-- Base Git inspeccionada: `107d021620f0`; la evidencia corresponde al working tree local actual, no
-  a un SHA desplegable. T-028 conserva el pendiente de CI sobre el commit exacto.
+- Base Git inspeccionada entonces: `107d021620f0`; esa evidencia correspondía al working tree local,
+  no a un SHA desplegable. El cierre remoto vigente está en T-028/T-033/T-034.
 - Autorización: se retiraron todas las superficies runtime de autoasignación; `consumeInvitation`
   queda como única ruta de alta por invitación. `test:provider-guard` pasó `8/8`.
 - QA Auth Emulator (evidencia histórica previa a T-032): se crearon, autenticaron y verificaron `admin@admin.com` sin rol,
@@ -815,12 +836,13 @@ explícita, separada y posterior del operador.
   móvil LCP `132 ms`, INP `16 ms`, CLS `0`.
 - Auditoría runtime: cliente `0` vulnerabilidades; Functions sin altas/críticas y con `7` moderadas
   transitivas. No se aplicó el downgrade destructivo sugerido por `npm audit fix --force`.
-- Pendiente previo a cualquier Rules/deploy: dry-run y backfill autorizados de proyectos legacy y
-  reconciliación de jornadas activas sin marcador. No se ejecutó migración ni operación remota.
+- Pendiente histórico previo a aquel Rules/deploy: dry-run de proyectos legacy y reconciliación de
+  jornadas sin marcador. El corte final no encontró ni migró proyectos/jobs; la operación remota se
+  limitó a grants de usuarios autorizados y tombstones QA.
 
 ### T-032 — Incorporar rol admin y bloquear elevación de privilegios
 
-- **Prioridad:** P0 crítica · **Estado:** revisión · **Depende de:** T-003, T-023, T-024, T-025
+- **Prioridad:** P0 crítica · **Estado:** desplegada · **Depende de:** T-003, T-023, T-024, T-025
 - Ampliar el contrato de claims a `admin | manager | builder`; `admin` hereda las capacidades
   operativas de manager, pero la elevación a `admin` o `manager` queda reservada a admin.
 - Actualizar cliente, rutas, repositorios, callables, Firestore Rules, Storage Rules, seeder y
@@ -838,7 +860,7 @@ explícita, separada y posterior del operador.
 
 ### T-033 — Cerrar pre-hijacking e integridad de invitaciones v4
 
-- **Prioridad:** P0 crítica · **Estado:** en-progreso · **Depende de:** T-023, T-028, T-032
+- **Prioridad:** P0 crítica · **Estado:** desplegada · **Depende de:** T-023, T-028, T-032
 - [x] Deshabilitar de forma reversible las tres identidades QA compartidas en producción mientras se
   corrige el flujo; no ejecutar canjes ni reactivarlas sin una autorización productiva separada.
 - [x] Retirar `createUserWithEmailAndPassword` del navegador. Crear por Admin SDK un placeholder con
@@ -859,27 +881,46 @@ explícita, separada y posterior del operador.
   verificación Auth↔Firestore, compensación comprobada y bloqueo ante estado indeterminado.
 - [x] Corregir QR para aceptar fragmento seguro, query heredada o código crudo solo en el origen
   exacto y ruta `/auth`, rechazando esquemas, hosts y payloads ambiguos.
-- [ ] Aprobar bajo Node 22/JDK 21: Functions unit, Auth/Firestore/Storage Emulator, provider guard,
+- [x] Aprobar bajo Node 22/JDK 21: Functions unit, Auth/Firestore/Storage Emulator, provider guard,
   QR, typecheck, lint, build cliente/Functions, OCR, contratos y Playwright completo para admin,
   manager y builder, sin `console.error`, `pageerror` ni flaky aceptado.
 - [x] Ejecutar autocrítica final de seguridad/QA y actualizar evidencia con conteos reales. El
-  operador autorizó commit/push/CI el 2026-08-31; producción sigue bloqueada hasta una autorización
-  separada para backfill y despliegue.
-- **Evidencia local 2026-08-31:** Node 22.23.2/JDK 21; Firebase Emulator 17 archivos y 127/127;
-  Playwright completo 12/12 y onboarding focal 1/1; Functions 10/10, provider guard 9/9, operaciones
-  de rol 5/5, CI/Vite 4/4, OCR 3/3 y Storage helper 3/3. Typecheck, lint (0 errores/7 warnings
+  operador autorizó y se verificó el corte productivo coordinado del 2026-08-31.
+- **Evidencia final 2026-08-31:** Node 22.23.2/JDK 21; Firebase Emulator 18 archivos y 133/133;
+  Playwright completo 12/12, onboarding burn-in 5/5 y concurrencia focal 6/6; Functions 10/10,
+  provider guard 9/9, operaciones de rol 14/14 en el SHA de aplicación, CI/Vite 4/4, OCR 3/3 y Storage
+  helper 3/3. Typecheck,
+  lint (0 errores/7 warnings
   históricos), build Functions y build cliente development aprobados. Auditoría: cliente 0;
   Functions 6 moderadas transitivas, 0 altas/críticas. La autocrítica no encontró vías críticas/altas.
-  `npm run build` productivo local sigue fallando cerrado por el placeholder App Check de `.env`; el
-  build remoto del SHA y el backfill productivo de grants continúan como bloqueos separados.
+  La compilación productiva de Vercel validó la site key oficial. El inventario posterior confirmó
+  5 usuarios, 2 activos con grants exactos, 3 QA deshabilitados con tombstones y 0 diferencias; no
+  se migraron proyectos/jobs. PR #4 y el CI de `main` `33433050837` quedaron verdes sobre el código
+  desplegado `864335ecf4e497221469e3462a623c5211e5846e`.
+- **Endurecimiento operativo posterior, aún separado de ese SHA de aplicación:** la validación local
+  actual de los scripts administrativos es 23/23; su evidencia remota corresponde al PR/CI que
+  publique esta revisión, no al run `33433050837`.
 - **Aceptación:** el escenario pre-hijack no crea invitación ni rol; reset/login/verificación/consumo
   elimina el marcador exactamente una vez; retry devuelve el mismo código; v1-v3 fallan cerrado; una
   revocación nunca se restaura; las tres identidades QA del emulador ejercitan permisos positivos y
   negativos; todos los gates locales pasan con evidencia reproducible.
 
+### T-034 — Estabilizar solicitudes de sesión durante logout y navegación
+
+- **Prioridad:** P0 · **Estado:** desplegada · **Depende de:** T-028, T-033
+- Descartar resultados y errores de consultas que ya no pertenecen a la sesión activa; impedir que
+  respuestas fuera de orden sobrescriban el proyecto/job vigente y conservar errores reales de la
+  sesión activa.
+- Cubrir cierre de sesión, generaciones obsoletas y defectos de callbacks sin retries, sleeps ni
+  excepciones permisivas en el fixture QA.
+- **Evidencia 2026-08-31:** seis pruebas focales, onboarding 5/5, Firebase 133/133 y E2E 12/12
+  pasaron localmente. PR #4 (`557caac763c8ae67ba3766d2e4958f9662afc70f`) y su CI remoto
+  `33432508491` quedaron verdes; el merge `864335ecf4e497221469e3462a623c5211e5846e` repitió ambos
+  jobs en `33433050837` y pasó. Vercel publicó esa revisión en producción.
+
 ### T-026 — Validar contenido de facturas y cerrar rutas Storage amplias
 
-- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-023, T-025
+- **Prioridad:** P0 · **Estado:** desplegada · **Depende de:** T-023, T-025
 - Detectar el tipo por bytes, validar/parsing de PDF, decodificar imágenes y generar siempre nombre
   y extensión seguros en servidor. Los archivos no verificados permanecen en cuarentena.
 - Definir una estrategia de escaneo antimalware y costo antes de integrar un servicio de pago.
@@ -892,7 +933,7 @@ explícita, separada y posterior del operador.
 
 ### T-027 — Corregir Vite vulnerable y endurecer desarrollo local
 
-- **Prioridad:** P0 local · **Estado:** revisión · **Depende de:** T-002
+- **Prioridad:** P0 local · **Estado:** desplegada · **Depende de:** T-002
 - Actualizar Vite a una versión corregida compatible y enlazar el servidor de desarrollo a
   `127.0.0.1` por defecto; cualquier exposición LAN debe ser una opción explícita y documentada.
 - Revisar si alguna instancia vulnerable estuvo accesible desde una red no confiable; si la hubo,
@@ -905,7 +946,7 @@ explícita, separada y posterior del operador.
 
 ### T-028 — Hacer reproducible y exigente el gate de QA/CI
 
-- **Prioridad:** P1 · **Estado:** revisión · **Depende de:** T-023, T-024, T-025, T-026, T-027
+- **Prioridad:** P1 · **Estado:** desplegada · **Depende de:** T-023, T-024, T-025, T-026, T-027
 - Ejecutar CI sobre el SHA exacto; incluir unit tests de Functions, OCR, Firebase Emulator y E2E.
 - Hacer fallar E2E ante `pageerror` o `console.error` no permitido, centralizar fixtures y reparar la
   configuración Playwright principal.
@@ -917,21 +958,37 @@ explícita, separada y posterior del operador.
   Firebase y E2E; verifica `GITHUB_SHA`, fija `upload-artifact` a SHA inmutable y conserva reportes.
   Playwright tiene cero reintentos, `forbidOnly`, un worker en CI y fixture central que falla ante
   `pageerror`/`console.error`. Gate final: Firebase 81/81, E2E 11/11, tipos/builds/Functions/OCR/
-  Storage/contratos aprobados. Falta publicar un SHA y ejecutar CI remoto sobre ese mismo SHA.
+  Storage/contratos aprobados. El candidato `557caac763c8ae67ba3766d2e4958f9662afc70f` y el merge
+  `864335ecf4e497221469e3462a623c5211e5846e` pasaron CI remoto completo en las ejecuciones
+  `33432508491` y `33433050837`, respectivamente; ambas publicaron evidencia QA inmutable.
 
-### T-029 — Incorporar App Check y controles de abuso
+### T-029 — Incorporar App Check en observación y controles de abuso
 
-- **Prioridad:** P1 seguridad · **Estado:** en-progreso · **Depende de:** T-023, T-028
-- Activar App Check primero en observación, medir clientes legítimos y luego preparar enforcement
-  con pruebas de token válido, ausente e inválido.
+- **Prioridad:** P1 seguridad · **Estado:** desplegada · **Depende de:** T-023, T-028
+- Activar App Check en observación sin rechazar clientes legítimos; separar el eventual enforcement
+  en T-035 con pruebas y autorización propias.
 - Reemplazar la cuota global `public` de invitaciones por partición resistente a abuso y conservar
   un techo global de emergencia; añadir límites/lifecycle para cargas Storage.
-- **Aceptación:** el onboarding de un usuario no puede bloquear a todos, los clientes legítimos no
-  se rompen durante observación y el paso a enforcement tiene rollback documentado.
-- **Avance local 2026-08-30:** cliente preparado con reCAPTCHA Enterprise y Functions parametrizadas
-  con `ENFORCE_APP_CHECK=false`; cuota pública separada en 30/min por IP anonimizada y techo global
-  300/min. El límite exacto de cuarentena y el rollback están documentados en
-  `docs/app-check-rollout.md`. Registro remoto, observación y enforcement siguen sin ejecutarse.
+- **Aceptación:** la clave oficial y el cliente están desplegados, Functions observa con enforcement
+  desactivado, el onboarding de un usuario no puede bloquear a todos y el rollback está documentado.
+- **Avance productivo 2026-08-31:** cliente desplegado con reCAPTCHA Enterprise y site key oficial;
+  Functions conserva `ENFORCE_APP_CHECK=false`. La observación comenzó el 2026-08-31 13:55
+  America/Bogota; cuota pública separada en 30/min por IP anonimizada y techo global 300/min. El
+  eventual enforcement pasa a T-035 y no se habilita antes del 2026-09-07 13:55 ni sin evidencia de
+  tráfico legítimo, pruebas de tokens y autorización productiva separada. El lifecycle de cuarentena
+  también sigue pendiente de inventario y autorización propia.
+
+### T-035 — Evaluar y habilitar enforcement de App Check
+
+- **Prioridad:** P1 seguridad · **Estado:** en-progreso · **Depende de:** T-029
+- Observar durante al menos siete días las métricas verificadas/no verificadas y errores legítimos de
+  Auth, Firestore, Storage, Functions y navegador, sin usar las identidades QA productivas
+  deshabilitadas.
+- Probar token válido, ausente e inválido; documentar el impacto por producto y verificar el rollback
+  a `ENFORCE_APP_CHECK=false` antes de cambiar una sola política remota.
+- **Aceptación:** no antes del 2026-09-07 13:55 America/Bogota, métricas y QA demuestran que el tráfico
+  legítimo está cubierto, el operador concede una nueva autorización productiva explícita y se
+  monitorean 24 horas posteriores. La fecha por sí sola no autoriza enforcement.
 
 ### T-030 — Acotar lecturas, listeners y presupuesto de rendimiento
 

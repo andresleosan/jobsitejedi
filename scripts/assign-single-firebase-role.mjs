@@ -1,10 +1,19 @@
 import { createRequire } from "node:module";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   assertRoleAssignmentTarget,
+  authorizationClaimsFingerprint,
+  authorizationGrantFingerprint,
   authorizationGrantMatches,
+  authorizationStateFingerprint,
   isAuthorizationGrantId,
+  writeAuthorizationGrantWithPrecondition,
 } from "./lib/firebase-role-safety.mjs";
+import {
+  readRoleOperationInput,
+  redactRoleOperationError,
+} from "./lib/firebase-role-operation-input.mjs";
+import { requireInteractiveRoleConfirmation } from "./lib/interactive-role-confirmation.mjs";
 
 const requireFromFunctions = createRequire(
   new URL("../functions/package.json", import.meta.url),
@@ -18,74 +27,49 @@ const { getAuth } = requireFromFunctions("firebase-admin/auth");
 const { getFirestore, Timestamp } = requireFromFunctions("firebase-admin/firestore");
 
 const PROJECT_ID = "jobsitejedi";
-const ALLOWED_ROLES = new Set(["admin", "manager", "builder"]);
 
-const grantFingerprint = (grant) => JSON.stringify({
-  keys: grant && typeof grant === "object" ? Object.keys(grant).sort() : [],
-  active: grant?.active ?? null,
-  role: grant?.role ?? null,
-  grantId: grant?.grantId ?? null,
-  updatedAt: typeof grant?.updatedAt?.toMillis === "function"
-    ? grant.updatedAt.toMillis()
-    : null,
-});
-
-const args = Object.fromEntries(
-  process.argv.slice(2).map((argument) => {
-    const [key, ...value] = argument.replace(/^--/, "").split("=");
-    return [key, value.join("=")];
-  }),
-);
-
-const role = args.role;
-const apply = args.apply === "true";
-const targetEmail = args.email?.trim().toLowerCase() || null;
-const targetUid = args.uid?.trim() || null;
-const expectedProvider = args.provider || null;
-const expectedUsers = Number(args["expected-users"]);
-const expectedCurrentRoleArgument = args["expected-current-role"];
-const expectedCurrentRole = expectedCurrentRoleArgument === "none"
-  ? null
-  : expectedCurrentRoleArgument;
-const expectedConfirmation = [
-  PROJECT_ID,
-  "assign",
-  `email:${targetEmail}`,
-  `uid:${targetUid}`,
-  `provider:${expectedProvider}`,
-  `current:${expectedCurrentRoleArgument}`,
-  `role:${role}`,
-].join(":");
-
-if (!ALLOWED_ROLES.has(role)) {
-  throw new Error("Use --role=admin, --role=manager, or --role=builder.");
-}
-if (args.project !== PROJECT_ID) {
-  throw new Error(`Use --project=${PROJECT_ID}.`);
-}
-if (!targetEmail || !/^\S+@\S+\.\S+$/.test(targetEmail)) {
-  throw new Error("Use a valid exact --email value.");
-}
-if (!targetUid || !/^\S{1,128}$/.test(targetUid)) {
-  throw new Error("Use the exact audited --uid value.");
-}
-if (!expectedProvider || !/^\S{1,128}$/.test(expectedProvider)) {
-  throw new Error("Use the exact audited --provider value.");
-}
-if (!Number.isInteger(expectedUsers) || expectedUsers < 1) {
-  throw new Error("Use --expected-users=<positive integer>.");
-}
-if (expectedCurrentRole !== null && !ALLOWED_ROLES.has(expectedCurrentRole)) {
-  throw new Error("Use --expected-current-role=none, admin, manager, or builder.");
-}
-if (apply && args.confirm !== expectedConfirmation) {
-  throw new Error(`Use --confirm=${expectedConfirmation} to apply the change.`);
+let roleOperationInput;
+try {
+  roleOperationInput = await readRoleOperationInput({
+    action: "assign",
+    projectId: PROJECT_ID,
+  });
+} catch {
+  console.error(JSON.stringify({
+    project: PROJECT_ID,
+    mode: "input-rejected",
+    reason: "INVALID_INPUT",
+    message: "Role assignment requires one exact JSON manifest on stdin; argv is rejected.",
+  }));
+  process.exit(1);
 }
 
-const app = initializeApp({
-  credential: applicationDefault(),
-  projectId: PROJECT_ID,
-});
+const {
+  role,
+  apply,
+  targetEmail,
+  targetUid,
+  expectedProvider,
+  expectedUsers,
+  expectedCurrentRole,
+  operationBindingHash,
+} = roleOperationInput;
+
+let app;
+try {
+  app = initializeApp({
+    credential: applicationDefault(),
+    projectId: PROJECT_ID,
+  });
+} catch {
+  console.error(JSON.stringify({
+    project: PROJECT_ID,
+    mode: apply ? "apply-failed" : "dry-run-failed",
+    reason: "FIREBASE_INIT_FAILED",
+    message: "Firebase Admin initialization failed; verify the approved runtime configuration.",
+  }));
+  process.exit(1);
+}
 
 try {
   const auth = getAuth(app);
@@ -112,7 +96,7 @@ try {
   const previousRole = previousClaims.role ?? null;
   if (previousRole !== expectedCurrentRole) {
     throw new Error(
-      "Safety check failed: the current role differs from --expected-current-role.",
+      "Safety check failed: the current role differs from expectedCurrentRole.",
     );
   }
 
@@ -135,7 +119,7 @@ try {
         project: PROJECT_ID,
         totalUsers: requiredUserCount,
         targetMode: "email-and-uid",
-        providerVerified: expectedProvider,
+        identityBindingVerified: true,
         emailVerified: true,
         previousRole,
         requestedRole: role,
@@ -146,17 +130,54 @@ try {
     );
     process.exitCode = 0;
   } else {
-    const latestBeforeMutation = await auth.getUser(user.uid);
+    const observedStateFingerprint = authorizationStateFingerprint({
+      claims: previousClaims,
+      grant: previousGrant,
+      grantExists: previousGrantSnapshot.exists,
+    });
+    const confirmationBinding = createHash("sha256")
+      .update(`${operationBindingHash}:${observedStateFingerprint}`, "utf8")
+      .digest("hex");
+    console.error(JSON.stringify({
+      project: PROJECT_ID,
+      totalUsers: requiredUserCount,
+      identityBindingVerified: true,
+      previousRole,
+      requestedRole: role,
+      mode: "confirmation-required",
+    }));
+    await requireInteractiveRoleConfirmation({
+      action: "assign",
+      binding: confirmationBinding,
+    });
+
+    const [latestPage, latestGrantSnapshot] = await Promise.all([
+      auth.listUsers(expectedUsers + 1),
+      grantReference.get(),
+    ]);
+    if (latestPage.users.length !== expectedUsers || latestPage.pageToken) {
+      throw new Error("Safety check failed: the user inventory changed before apply.");
+    }
+    const latestMatchingUsers = latestPage.users.filter(
+      (candidate) => candidate.email?.toLowerCase() === targetEmail,
+    );
+    if (latestMatchingUsers.length !== 1) {
+      throw new Error("Safety check failed: the target identity changed before apply.");
+    }
+    const latestBeforeMutation = latestMatchingUsers[0];
     assertRoleAssignmentTarget({
       user: latestBeforeMutation,
       targetEmail,
       targetUid,
       expectedProvider,
     });
+    const latestGrant = latestGrantSnapshot.exists ? latestGrantSnapshot.data() : null;
     if (
-      (latestBeforeMutation.customClaims?.role ?? null) !== previousRole
-      || (latestBeforeMutation.customClaims?.authorizationGrantId ?? null)
-        !== (previousClaims.authorizationGrantId ?? null)
+      authorizationClaimsFingerprint(latestBeforeMutation.customClaims ?? {})
+        !== authorizationClaimsFingerprint(previousClaims)
+      || latestGrantSnapshot.exists !== previousGrantSnapshot.exists
+      || authorizationGrantFingerprint(latestGrant)
+        !== authorizationGrantFingerprint(previousGrant)
     ) {
       throw new Error("Safety check failed: the audited authorization state changed before apply.");
     }
@@ -177,8 +198,15 @@ try {
     let refreshTokensRevoked = false;
 
     try {
+      await writeAuthorizationGrantWithPrecondition({
+        firestore,
+        grantReference,
+        expectedExists: previousGrantSnapshot.exists,
+        expectedGrant: previousGrant,
+        nextExists: true,
+        nextGrant,
+      });
       mutationAttempted = true;
-      await grantReference.set(nextGrant);
       await auth.setCustomUserClaims(user.uid, nextClaims);
       const [verified, verifiedGrantSnapshot] = await Promise.all([
         auth.getUser(user.uid),
@@ -205,16 +233,22 @@ try {
       refreshTokensRevoked = await auth.revokeRefreshTokens(user.uid)
         .then(() => true)
         .catch(() => false);
-    } catch {
+    } catch (error) {
+      if (!mutationAttempted) throw error;
       if (mutationAttempted) {
         let compensationVerified = false;
+        let compensationGrantRestored = false;
         try {
           await auth.setCustomUserClaims(user.uid, previousClaims);
-          if (previousGrantSnapshot.exists && previousGrant) {
-            await grantReference.set(previousGrant);
-          } else {
-            await grantReference.delete();
-          }
+          await writeAuthorizationGrantWithPrecondition({
+            firestore,
+            grantReference,
+            expectedExists: true,
+            expectedGrant: nextGrant,
+            nextExists: previousGrantSnapshot.exists,
+            nextGrant: previousGrant,
+          });
+          compensationGrantRestored = true;
           const [restoredUser, restoredGrantSnapshot] = await Promise.all([
             auth.getUser(user.uid),
             grantReference.get(),
@@ -227,7 +261,8 @@ try {
             && (restoredUser.customClaims?.authorizationGrantId ?? null)
               === (previousClaims.authorizationGrantId ?? null)
             && restoredGrantSnapshot.exists === previousGrantSnapshot.exists
-            && grantFingerprint(restoredGrant) === grantFingerprint(previousGrant)
+            && authorizationGrantFingerprint(restoredGrant)
+              === authorizationGrantFingerprint(previousGrant)
           );
         } catch {
           compensationVerified = false;
@@ -240,7 +275,16 @@ try {
             grantId: nextGrantId,
             updatedAt: Timestamp.now(),
           };
-          const accessFailedClosed = await grantReference.set(inactiveGrant)
+          const accessFailedClosed = await writeAuthorizationGrantWithPrecondition({
+            firestore,
+            grantReference,
+            expectedExists: compensationGrantRestored
+              ? previousGrantSnapshot.exists
+              : true,
+            expectedGrant: compensationGrantRestored ? previousGrant : nextGrant,
+            nextExists: true,
+            nextGrant: inactiveGrant,
+          })
             .then(() => grantReference.get())
             .then((snapshot) => snapshot.exists && authorizationGrantMatches({
               grant: snapshot.data(),
@@ -267,7 +311,7 @@ try {
         project: PROJECT_ID,
         totalUsers: requiredUserCount,
         targetMode: "email-and-uid",
-        providerVerified: expectedProvider,
+        identityBindingVerified: true,
         emailVerified: true,
         previousRole,
         currentRole: role,
@@ -279,24 +323,16 @@ try {
     );
   }
 } catch (error) {
-  const code =
-    typeof error === "object" && error !== null && "code" in error
-      ? String(error.code)
-      : "unknown";
-  const rawMessage =
-    error instanceof Error
-      ? error.message.split("\n", 1)[0]
-      : "Firebase role operation failed.";
-  const message =
-    code === "unknown"
-      ? rawMessage
-      : "Firebase Admin request failed; verify credentials and quota project.";
+  const { reason, message } = redactRoleOperationError({
+    error,
+    action: "assignment",
+  });
 
   console.error(
     JSON.stringify({
       project: PROJECT_ID,
       mode: apply ? "apply-failed" : "dry-run-failed",
-      code,
+      reason,
       message,
     }),
   );

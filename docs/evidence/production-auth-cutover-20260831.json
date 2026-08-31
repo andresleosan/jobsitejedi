@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "project": "jobsitejedi",
+  "cutoverAt": "2026-08-31T13:55:00-05:00",
+  "authorizationRef": "AUTHZ-JEDI-20260831-CUTOVER-01",
+  "authorizationOperationRevision": "3de173e12a6e4ba0b8f1e01057db3f3b951078ac",
+  "applicationRelease": "864335ecf4e497221469e3462a623c5211e5846e",
+  "pullRequests": [3, 4],
+  "ciRuns": [33432508491, 33433050837],
+  "vercelApplicationDeployment": "HVMXDbSrwh8XYaXram1b99M7N3Vx",
+  "authAudit": {
+    "users": 5,
+    "activeUsers": 2,
+    "disabledQaUsers": 3,
+    "grantDocuments": 5,
+    "activeExactPairs": 2,
+    "inactiveQaTombstones": 3,
+    "mismatches": 0
+  },
+  "functions": {
+    "active": 9,
+    "runtime": "nodejs22",
+    "region": "europe-west1",
+    "remoteHash": "51ca9e5912b808e7e4a8d3fd908d47d355662ef9",
+    "unsafeLegacyFunctionsAbsent": [
+      "setUserRole",
+      "ensureBuilderRole"
+    ]
+  },
+  "rules": {
+    "firestore": "deployed-grant-v4",
+    "storage": "deployed-grant-v4"
+  },
+  "businessDataMigration": {
+    "projects": false,
+    "jobs": false,
+    "files": false
+  },
+  "containsPersonalData": false,
+  "containsCredentialsOrGrantValues": false
+}

@@ -1,5 +1,8 @@
 # Despliegue web en Vercel
 
+Estado: producción verificada el 2026-08-31 con la configuración oficial de `jobsitejedi` y App
+Check en observación.
+
 ## Contrato de configuracion Firebase
 
 Vite incorpora las variables `VITE_*` durante el build. Vercel debe definir, para `Production`
@@ -33,25 +36,39 @@ Firebase Authentication debe autorizar el hostname exacto `jobsitejedi.vercel.ap
 independiente de las variables de Vercel. No autorizar comodines de previews; cada hostname usado
 para OAuth debe revisarse y agregarse de forma explicita.
 
-## Staging aislado
+## Estrategia vigente de staging
 
-El proyecto Vercel `jobsitejedi` conserva Firebase de produccion en `Production` y `Preview`; no se
-cambian esos valores para T-017. Staging se publica en un proyecto Vercel Hobby separado llamado
-`jobsitejedi-staging`, con build command `npm run build:staging` y las variables de la aplicacion
-Web Firebase `jobsitejedi-staging`, incluida su clave publica de App Check. Su hostname exacto se
-autoriza en Firebase Auth y App Check despues de conocer el deployment real. Ninguna variable se
-copia al repositorio.
+T-017 y el frontend Vercel separado fueron supersedidos. `Production` y `Preview` del proyecto
+Vercel `jobsitejedi` apuntan a la aplicación Web oficial de Firebase `jobsitejedi`; no se mezclan
+variables de `jobsitejedi-staging`.
 
-## Procedimiento controlado
+El proyecto Firebase `jobsitejedi-staging` permanece únicamente como recurso temporal pendiente de
+retirada controlada. No recibe usuarios ni datos de prueba y no se elimina desde Vercel. Su posible
+borrado no ocurre antes del 2026-09-07 13:55 America/Bogota y requiere inventario y autorización
+destructiva separada.
+
+## Procedimiento controlado aplicado y reutilizable
 
 1. Consultar la configuracion Web SDK oficial de Firebase en modo de solo lectura.
 2. Reemplazar juntas las siete variables en Vercel para `Production` y `Preview`.
 3. Confirmar que `VITE_FIREBASE_USE_EMULATORS` no sea `true`.
-4. Agregar `jobsitejedi.vercel.app` a los dominios autorizados de Firebase Authentication.
-5. Desplegar el commit que contiene `vercel.json` y el validador.
-6. Verificar `/auth` con carga directa, email/contrasena, redireccion por claim `manager` y Google.
+4. Mantener `jobsitejedi.vercel.app` en los dominios autorizados de Firebase Authentication y App
+   Check; no autorizar comodines de preview.
+5. Desplegar el commit que contiene `vercel.json` y el validador, y exigir CI verde sobre su SHA.
+6. Verificar carga directa de `/auth` y `/`, redirección anónima de rutas protegidas y consola sin
+   errores. Los positivos de `admin`/`manager`/`builder` se ejecutan en Emulator/E2E; no se reactivan
+   credenciales QA compartidas de producción para el smoke.
 
 La actualizacion de variables no modifica usuarios, claims, reglas ni datos Firestore.
+
+## Evidencia productiva — 2026-08-31
+
+- Release de aplicación: `864335ecf4e497221469e3462a623c5211e5846e`.
+- CI de `main`: [run 33433050837](https://github.com/andresleosan/jobsitejedi/actions/runs/33433050837),
+  ambos jobs verdes.
+- Deployment `HVMXDbSrwh8XYaXram1b99M7N3Vx`: `Ready`, `Production` y `Current` al verificar la release.
+- El build productivo aceptó `VITE_FIREBASE_APPCHECK_SITE_KEY` oficial sin revelar su valor.
+- `/auth` mostró el formulario esperado, `/admins` anónimo redirigió a `/auth` y `/` cargó la SPA.
 
 Referencias oficiales:
 
@@ -63,6 +80,7 @@ Referencias oficiales:
 ## Rollback
 
 - Restaurar los valores anteriores de Vercel desde el historial de variables y promover el ultimo
-  deployment estable.
+  deployment estable que siga cumpliendo el contrato de grants v4.
 - Retirar `jobsitejedi.vercel.app` de dominios autorizados solo si el dominio deja de servir la app.
 - No eliminar usuarios ni claims como parte del rollback del frontend.
+- No restaurar un cliente que dependa de `setUserRole`, `ensureBuilderRole` o invitaciones v1-v3.

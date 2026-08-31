@@ -1,10 +1,20 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import {
+  assertRevokedAuthorizationState,
   assertRoleRevocationTarget,
+  authorizationClaimsFingerprint,
+  authorizationGrantFingerprint,
   authorizationGrantMatches,
+  authorizationStateFingerprint,
   isAuthorizationGrantId,
+  writeAuthorizationGrantWithPrecondition,
 } from "./lib/firebase-role-safety.mjs";
+import {
+  readRoleOperationInput,
+  redactRoleOperationError,
+} from "./lib/firebase-role-operation-input.mjs";
+import { requireInteractiveRoleConfirmation } from "./lib/interactive-role-confirmation.mjs";
 
 const requireFromFunctions = createRequire(
   new URL("../functions/package.json", import.meta.url),
@@ -18,56 +28,47 @@ const { getAuth } = requireFromFunctions("firebase-admin/auth");
 const { getFirestore, Timestamp } = requireFromFunctions("firebase-admin/firestore");
 
 const PROJECT_ID = "jobsitejedi";
-const ALLOWED_ROLES = new Set(["admin", "manager", "builder"]);
 
-const args = Object.fromEntries(
-  process.argv.slice(2).map((argument) => {
-    const [key, ...value] = argument.replace(/^--/, "").split("=");
-    return [key, value.join("=")];
-  }),
-);
-
-const expectedCurrentRole = args["expected-current-role"];
-const apply = args.apply === "true";
-const targetEmail = args.email?.trim().toLowerCase() || null;
-const targetUid = args.uid?.trim() || null;
-const expectedProvider = args.provider || null;
-const expectedUsers = Number(args["expected-users"]);
-const expectedConfirmation = [
-  PROJECT_ID,
-  "revoke",
-  `email:${targetEmail}`,
-  `uid:${targetUid}`,
-  `provider:${expectedProvider}`,
-  `current:${expectedCurrentRole}`,
-].join(":");
-
-if (!ALLOWED_ROLES.has(expectedCurrentRole)) {
-  throw new Error("Use --expected-current-role=admin, manager, or builder.");
-}
-if (args.project !== PROJECT_ID) {
-  throw new Error(`Use --project=${PROJECT_ID}.`);
-}
-if (!targetEmail || !/^\S+@\S+\.\S+$/.test(targetEmail)) {
-  throw new Error("Use a valid exact --email value.");
-}
-if (!targetUid || !/^\S{1,128}$/.test(targetUid)) {
-  throw new Error("Use the exact audited --uid value.");
-}
-if (!expectedProvider || !/^\S{1,128}$/.test(expectedProvider)) {
-  throw new Error("Use the exact audited --provider value.");
-}
-if (!Number.isInteger(expectedUsers) || expectedUsers < 1) {
-  throw new Error("Use --expected-users=<positive integer>.");
-}
-if (apply && args.confirm !== expectedConfirmation) {
-  throw new Error(`Use --confirm=${expectedConfirmation} to apply the change.`);
+let roleOperationInput;
+try {
+  roleOperationInput = await readRoleOperationInput({
+    action: "revoke",
+    projectId: PROJECT_ID,
+  });
+} catch {
+  console.error(JSON.stringify({
+    project: PROJECT_ID,
+    mode: "input-rejected",
+    reason: "INVALID_INPUT",
+    message: "Role revocation requires one exact JSON manifest on stdin; argv is rejected.",
+  }));
+  process.exit(1);
 }
 
-const app = initializeApp({
-  credential: applicationDefault(),
-  projectId: PROJECT_ID,
-});
+const {
+  apply,
+  targetEmail,
+  targetUid,
+  expectedUsers,
+  expectedCurrentRole,
+  operationBindingHash,
+} = roleOperationInput;
+
+let app;
+try {
+  app = initializeApp({
+    credential: applicationDefault(),
+    projectId: PROJECT_ID,
+  });
+} catch {
+  console.error(JSON.stringify({
+    project: PROJECT_ID,
+    mode: apply ? "apply-failed" : "dry-run-failed",
+    reason: "FIREBASE_INIT_FAILED",
+    message: "Firebase Admin initialization failed; verify the approved runtime configuration.",
+  }));
+  process.exit(1);
+}
 
 try {
   const auth = getAuth(app);
@@ -84,7 +85,7 @@ try {
   }
 
   const user = matchingUsers[0];
-  assertRoleRevocationTarget({ user, targetEmail, targetUid, expectedProvider });
+  assertRoleRevocationTarget({ user, targetEmail, targetUid });
   const previousClaims = JSON.parse(JSON.stringify(user.customClaims ?? {}));
   const previousRole = previousClaims.role ?? null;
   const firestore = getFirestore(app);
@@ -105,7 +106,7 @@ try {
 
   if (previousRole !== expectedCurrentRole && !alreadyRevoked) {
     throw new Error(
-      "Safety check failed: the current role differs from --expected-current-role.",
+      "Safety check failed: the current role differs from expectedCurrentRole.",
     );
   }
 
@@ -114,7 +115,7 @@ try {
       project: PROJECT_ID,
       totalUsers: expectedUsers,
       targetMode: "email-and-uid",
-      providerVerified: expectedProvider,
+      identityBindingVerified: true,
       previousRole,
       requestedAction: "revoke",
       mode: apply ? "already-revoked" : "dry-run",
@@ -122,17 +123,53 @@ try {
     }));
     process.exitCode = 0;
   } else {
-    const latestBeforeMutation = await auth.getUser(user.uid);
+    const observedStateFingerprint = authorizationStateFingerprint({
+      claims: previousClaims,
+      grant: previousGrant,
+      grantExists: previousGrantSnapshot.exists,
+    });
+    const confirmationBinding = createHash("sha256")
+      .update(`${operationBindingHash}:${observedStateFingerprint}`, "utf8")
+      .digest("hex");
+    console.error(JSON.stringify({
+      project: PROJECT_ID,
+      totalUsers: expectedUsers,
+      identityBindingVerified: true,
+      previousRole,
+      requestedAction: "revoke",
+      mode: "confirmation-required",
+    }));
+    await requireInteractiveRoleConfirmation({
+      action: "revoke",
+      binding: confirmationBinding,
+    });
+
+    const [latestPage, latestGrantSnapshot] = await Promise.all([
+      auth.listUsers(expectedUsers + 1),
+      grantReference.get(),
+    ]);
+    if (latestPage.users.length !== expectedUsers || latestPage.pageToken) {
+      throw new Error("Safety check failed: the user inventory changed before apply.");
+    }
+    const latestMatchingUsers = latestPage.users.filter(
+      (candidate) => candidate.email?.toLowerCase() === targetEmail,
+    );
+    if (latestMatchingUsers.length !== 1) {
+      throw new Error("Safety check failed: the target identity changed before apply.");
+    }
+    const latestBeforeMutation = latestMatchingUsers[0];
     assertRoleRevocationTarget({
       user: latestBeforeMutation,
       targetEmail,
       targetUid,
-      expectedProvider,
     });
+    const latestGrant = latestGrantSnapshot.exists ? latestGrantSnapshot.data() : null;
     if (
-      latestBeforeMutation.customClaims?.role !== expectedCurrentRole
-      || (latestBeforeMutation.customClaims?.authorizationGrantId ?? null)
-        !== (previousClaims.authorizationGrantId ?? null)
+      authorizationClaimsFingerprint(latestBeforeMutation.customClaims ?? {})
+        !== authorizationClaimsFingerprint(previousClaims)
+      || latestGrantSnapshot.exists !== previousGrantSnapshot.exists
+      || authorizationGrantFingerprint(latestGrant)
+        !== authorizationGrantFingerprint(previousGrant)
     ) {
       throw new Error("Safety check failed: the audited authorization state changed before apply.");
     }
@@ -154,40 +191,35 @@ try {
     let refreshTokensRevoked = false;
 
     try {
+      await writeAuthorizationGrantWithPrecondition({
+        firestore,
+        grantReference,
+        expectedExists: previousGrantSnapshot.exists,
+        expectedGrant: previousGrant,
+        nextExists: true,
+        nextGrant: inactiveGrant,
+      });
       mutationAttempted = true;
-      await grantReference.set(inactiveGrant);
       await auth.setCustomUserClaims(user.uid, nextClaims);
       const [verifiedUser, verifiedGrantSnapshot] = await Promise.all([
         auth.getUser(user.uid),
         grantReference.get(),
       ]);
-      assertRoleRevocationTarget({
+      assertRevokedAuthorizationState({
         user: verifiedUser,
         targetEmail,
         targetUid,
-        expectedProvider,
+        grantSnapshot: verifiedGrantSnapshot,
+        expectedRole: expectedCurrentRole,
+        expectedGrantId: revocationGrantId,
       });
-      if (
-        verifiedUser.customClaims?.role !== undefined
-        || verifiedUser.customClaims?.authorizationGrantId !== undefined
-        || verifiedUser.customClaims?.invitationEnrollmentId !== undefined
-        || !verifiedGrantSnapshot.exists
-        || !authorizationGrantMatches({
-          grant: verifiedGrantSnapshot.data(),
-          role: expectedCurrentRole,
-          grantId: revocationGrantId,
-          active: false,
-        })
-      ) {
-        throw new Error("The revoked authorization state was not returned exactly.");
-      }
       refreshTokensRevoked = await auth.revokeRefreshTokens(user.uid)
         .then(() => true)
         .catch(() => false);
-    } catch {
+    } catch (error) {
+      if (!mutationAttempted) throw error;
       if (mutationAttempted) {
-        const accessFailedClosed = await grantReference.set(inactiveGrant)
-          .then(() => grantReference.get())
+        const accessFailedClosed = await grantReference.get()
           .then((snapshot) => snapshot.exists && authorizationGrantMatches({
             grant: snapshot.data(),
             role: expectedCurrentRole,
@@ -225,7 +257,7 @@ try {
       project: PROJECT_ID,
       totalUsers: expectedUsers,
       targetMode: "email-and-uid",
-      providerVerified: expectedProvider,
+      identityBindingVerified: true,
       previousRole,
       currentRole: null,
       authorizationGrantActive: false,
@@ -235,20 +267,15 @@ try {
     }));
   }
 } catch (error) {
-  const code = typeof error === "object" && error !== null && "code" in error
-    ? String(error.code)
-    : "unknown";
-  const rawMessage = error instanceof Error
-    ? error.message.split("\n", 1)[0]
-    : "Firebase role revocation failed.";
-  const message = code === "unknown"
-    ? rawMessage
-    : "Firebase Admin request failed; verify credentials and quota project.";
+  const { reason, message } = redactRoleOperationError({
+    error,
+    action: "revocation",
+  });
 
   console.error(JSON.stringify({
     project: PROJECT_ID,
     mode: apply ? "apply-failed" : "dry-run-failed",
-    code,
+    reason,
     message,
   }));
   process.exitCode = 1;

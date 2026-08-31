@@ -1,11 +1,15 @@
 # Contrato de control para Cloud Functions
 
-Estado: implementado en local, sin despliegue ni migración de producción.
+Estado: contrato v4 desplegado en producción el 2026-08-31. Release de aplicación
+`864335ecf4e497221469e3462a623c5211e5846e`; las nueve Functions activas comparten el hash remoto
+`51ca9e5912b808e7e4a8d3fd908d47d355662ef9`. No hubo migración de proyectos, jobs ni archivos.
 
 ## `functionRateLimits/{hash}`
 
 Colección administrativa escrita únicamente por Cloud Functions. El identificador es un
-SHA-256 de `operación:uid`, por lo que no expone el UID en la ruta. Cada documento contiene:
+SHA-256 de `operación:subjectId`. El `subjectId` es el UID para cuotas autenticadas, una huella
+anonimizada de la IP para la cuota pública por origen o un centinela global para el techo agregado;
+ni el UID ni la IP sin anonimizar aparecen en la ruta. Cada documento contiene:
 
 | Campo | Tipo | Uso |
 | --- | --- | --- |
@@ -14,8 +18,9 @@ SHA-256 de `operación:uid`, por lo que no expone el UID en la ruta. Cada docume
 | `requestCount` | integer | Solicitudes aceptadas dentro de la ventana. |
 | `updatedAt` | timestamp | Marca para limpieza programada. |
 
-Las reglas Firestore mantienen esta colección fuera del acceso de clientes. Los límites son
-por usuario y operación; la limpieza elimina documentos sin actividad durante 24 horas.
+Las reglas Firestore mantienen esta colección fuera del acceso de clientes. Los límites se
+particionan por operación y sujeto —UID, IP anonimizada o global—; la limpieza elimina documentos
+sin actividad durante 24 horas.
 
 ## `authorizationGrants/{uid}`
 
@@ -34,9 +39,11 @@ match completo; los callables además releen Firebase Auth y comprueban sesión 
 grant invalida tokens anteriores aunque conserven el mismo rol. Revocar escribe primero
 `active:false`, luego retira claims; el tombstone evita que una carrera o retry reactive permisos.
 
-El rollout tiene migración aditiva: con la versión antigua aún activa se crean claims/documentos para
-todos los usuarios autorizados. Solo después se despliegan conjuntamente Functions y Rules nuevas.
-No hay backfill cliente ni fallback a `role` solamente.
+El rollout del 2026-08-31 aplicó primero la reconciliación aditiva de claim/grant para cada usuario
+activo autorizado; solo después publicó conjuntamente Functions y Rules. El resultado agregado fue
+2 pares activos exactos, 3 tombstones QA y 0 diferencias Auth↔Firestore. Para cambios futuros se
+conserva el mismo orden: grants antes de Rules que los exigen. No hay backfill cliente ni fallback a
+`role` solamente.
 
 ## Invitaciones v4, idempotencia y compensación
 
