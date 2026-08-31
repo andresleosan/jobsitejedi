@@ -2,7 +2,7 @@
 
 Estado: `reconciliado con STACK.md y tasks.md`
 
-Fecha: `2026-08-30`
+Fecha: `2026-08-31`
 
 ## Problema
 
@@ -19,8 +19,11 @@ puedan liberarse sin regresiones.
   exclusivamente para `builder`.
 - `builder`: ejecuta trabajos, registra tiempo y materiales, aporta evidencia y consulta su obra.
 
-Principio de mínimo privilegio: solo un `admin` puede invitar nuevos `admin` o `manager`; no existe
-autoasignación de roles desde el cliente y un `manager` nunca puede elevar privilegios.
+Principio de mínimo privilegio: un `admin` puede invitar managers y builders, un manager solo
+builders, y el alta de otro admin usa el runbook administrativo con autorización explícita. No
+existe autoasignación de roles desde el cliente y un `manager` nunca puede elevar privilegios.
+Un rol cacheado tampoco basta: cada sesión debe coincidir con el grant server-side vigente, de modo
+que una rotación o revocación corte tokens anteriores sin esperar su expiración.
 
 ## Flujo crítico
 

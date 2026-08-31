@@ -751,8 +751,9 @@ explícita, separada y posterior del operador.
 - Retirar `ensureBuilderRole` del cliente y del backend desplegable; ninguna identidad autenticada
   puede asignarse un rol por sí misma.
 - Mantener como únicas vías de autorización el consumo transaccional de una invitación válida y la
-  provisión administrativa explícita. Solo `admin` puede emitir invitaciones `admin`/`manager`;
-  `manager` solo puede invitar `builder`. Revocar sesiones al degradar o retirar roles sensibles.
+  provisión administrativa explícita. `admin` puede invitar `manager`/`builder`; `manager` solo puede
+  invitar `builder`; el alta de `admin` usa exclusivamente el runbook administrativo. Revocar
+  sesiones al degradar o retirar roles sensibles.
 - Añadir una prueba negativa para usuario autenticado sin rol/invitación y conservar pruebas de
   consumo único, reintento idempotente y prohibición de escalamiento por `manager`.
 - Crear un seeder exclusivo de Firebase Auth Emulator para `admin@admin.com` (`admin`),
@@ -834,6 +835,47 @@ explícita, separada y posterior del operador.
 - **Evidencia local 2026-08-30:** seeder verificó `admin@admin.com → admin`,
   `manager@manager.com → manager` y `builder@builder.com → builder` solo en Auth Emulator. Firebase
   pasó 17 archivos/81 pruebas y E2E 11/11; manager no puede emitir invitaciones privilegiadas.
+
+### T-033 — Cerrar pre-hijacking e integridad de invitaciones v4
+
+- **Prioridad:** P0 crítica · **Estado:** en-progreso · **Depende de:** T-023, T-028, T-032
+- [x] Deshabilitar de forma reversible las tres identidades QA compartidas en producción mientras se
+  corrige el flujo; no ejecutar canjes ni reactivarlas sin una autorización productiva separada.
+- [x] Retirar `createUserWithEmailAndPassword` del navegador. Crear por Admin SDK un placeholder con
+  contraseña aleatoria no observable y `invitationEnrollmentId` server-side.
+- [x] Rechazar toda cuenta preexistente sin marcador, verificada o no, y ligar v4 a UID, hash de
+  correo, hash de enrolamiento, generación y lock exactos.
+- [x] Activar contraseña mediante el password reset de Firebase con `continueUrl=/auth` fijo, sin
+  código ni correo; conservar la verificación de email separada antes del consumo.
+- [x] Hacer recuperable una respuesta perdida con `requestKey` de 256 bits, código cifrado AES-GCM y
+  hash server-side; otro request no puede reemplazar el lock activo.
+- [x] Preservar claims ajenos, retirar el marcador al asignar, releer Auth antes de confirmar y
+  bloquear el script operativo si existe un enrolamiento activo.
+- [x] Sacar `admin` del autoservicio; admin puede invitar manager/builder y una invitación manager
+  exige autenticación de menos de cinco minutos.
+- [x] Exigir un grant server-only exacto en Rules, Storage y callables; rotarlo al asignar, crear el
+  grant con la confirmación de invitación y revocar de forma monotónica mediante tombstone.
+- [x] Endurecer las operaciones administrativas con correo+UID+proveedor+conteo+rol anterior exactos,
+  verificación Auth↔Firestore, compensación comprobada y bloqueo ante estado indeterminado.
+- [x] Corregir QR para aceptar fragmento seguro, query heredada o código crudo solo en el origen
+  exacto y ruta `/auth`, rechazando esquemas, hosts y payloads ambiguos.
+- [ ] Aprobar bajo Node 22/JDK 21: Functions unit, Auth/Firestore/Storage Emulator, provider guard,
+  QR, typecheck, lint, build cliente/Functions, OCR, contratos y Playwright completo para admin,
+  manager y builder, sin `console.error`, `pageerror` ni flaky aceptado.
+- [x] Ejecutar autocrítica final de seguridad/QA y actualizar evidencia con conteos reales. El
+  operador autorizó commit/push/CI el 2026-08-31; producción sigue bloqueada hasta una autorización
+  separada para backfill y despliegue.
+- **Evidencia local 2026-08-31:** Node 22.23.2/JDK 21; Firebase Emulator 17 archivos y 127/127;
+  Playwright completo 12/12 y onboarding focal 1/1; Functions 10/10, provider guard 9/9, operaciones
+  de rol 5/5, CI/Vite 4/4, OCR 3/3 y Storage helper 3/3. Typecheck, lint (0 errores/7 warnings
+  históricos), build Functions y build cliente development aprobados. Auditoría: cliente 0;
+  Functions 6 moderadas transitivas, 0 altas/críticas. La autocrítica no encontró vías críticas/altas.
+  `npm run build` productivo local sigue fallando cerrado por el placeholder App Check de `.env`; el
+  build remoto del SHA y el backfill productivo de grants continúan como bloqueos separados.
+- **Aceptación:** el escenario pre-hijack no crea invitación ni rol; reset/login/verificación/consumo
+  elimina el marcador exactamente una vez; retry devuelve el mismo código; v1-v3 fallan cerrado; una
+  revocación nunca se restaura; las tres identidades QA del emulador ejercitan permisos positivos y
+  negativos; todos los gates locales pasan con evidencia reproducible.
 
 ### T-026 — Validar contenido de facturas y cerrar rutas Storage amplias
 

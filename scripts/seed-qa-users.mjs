@@ -30,8 +30,9 @@ const fixtures = [
   },
 ];
 
+const provisioned = new Map();
 for (const fixture of fixtures) {
-  await provisionEmulatorUser({ ...fixture, password });
+  provisioned.set(fixture.email, await provisionEmulatorUser({ ...fixture, password }));
 }
 
 const verifyPasswordSignIn = async (fixture) => {
@@ -61,6 +62,14 @@ const verifyPasswordSignIn = async (fixture) => {
   const actualRole = typeof claims.role === "string" ? claims.role : null;
   if (actualRole !== fixture.role) {
     throw new Error(`[qa-seed] Sign-in claim verification failed for ${fixture.email}`);
+  }
+  const expectedGrantId = provisioned.get(fixture.email)?.authorizationGrantId;
+  if (
+    typeof claims.authorizationGrantId !== "string"
+    || !/^[a-f0-9]{32}$/.test(claims.authorizationGrantId)
+    || claims.authorizationGrantId !== expectedGrantId
+  ) {
+    throw new Error(`[qa-seed] Sign-in grant verification failed for ${fixture.email}`);
   }
 };
 

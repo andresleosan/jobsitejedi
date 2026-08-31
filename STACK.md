@@ -2,7 +2,7 @@
 
 Estado: `aceptado por el operador en checkpoint A2.1`
 
-Fecha: `2026-08-30`
+Fecha: `2026-08-31`
 
 ## Producto
 
@@ -48,7 +48,7 @@ migración podrán coexistir artefactos históricos, pero no una nueva ruta híb
 
 ## Arquitectura objetivo
 
-- `src/lib/firebase/auth.ts`: sesión, registro, login, logout y claims de rol.
+- `src/lib/firebase/auth.ts`: sesión, activación segura por invitación, login, logout y claims de rol.
 - `src/lib/firebase/repositories/`: acceso tipado a Firestore por dominio.
 - `src/lib/firebase/storage.ts`: upload, descarga, thumbnails y URLs temporales.
 - `functions/src/`: invitaciones, claims, procesamiento privilegiado y tareas programadas.
@@ -69,17 +69,33 @@ migración podrán coexistir artefactos históricos, pero no una nueva ruta híb
 
 ## Contrato de autorización por roles (T-032)
 
-- `admin` hereda las operaciones de `manager` y es el único rol que puede emitir invitaciones para
-  `admin` o `manager`.
+- `admin` hereda las operaciones de `manager`, puede emitir invitaciones para `manager` o `builder`
+  y no puede crear otro admin por autoservicio; esa operación usa el runbook administrativo.
 - `manager` puede emitir invitaciones únicamente para `builder`; no puede asignar, promover ni
   degradar roles privilegiados.
 - `builder` solo opera sobre proyectos, trabajos y archivos que conserven su asignación canónica.
-- Los custom claims de Firebase son la fuente de autorización. Un documento `users/{uid}` nunca
-  puede cambiar el claim ni se acepta el rol enviado por el frontend como autoridad.
+- Los custom claims de Firebase son la fuente del rol. Firestore/Storage Rules comparan token con
+  `authorizationGrants/{uid}`; los callables comparan además el UserRecord y la sesión vigentes. Un
+  documento `users/{uid}` nunca cambia el rol y el frontend no es autoridad.
+- La revocación escribe primero un tombstone server-only `active:false`; no espera la expiración del
+  ID token ni borra el tombstone. Deshabilitar o editar Auth desde Console no reemplaza este paso.
 - El dashboard de `admin` reutiliza la superficie operativa de manager y expone explícitamente su
   rol; las reglas Firestore/Storage y las Functions aplican la herencia en servidor.
 - La decisión y sus alternativas están registradas en
   `docs/adr/ADR-004-jerarquia-admin-manager-builder.md`.
+
+## Contrato de activación por invitación (T-033)
+
+- Functions precrea un placeholder Auth con contraseña aleatoria no observable y marcador
+  `invitationEnrollmentId`; el navegador nunca crea identidades Firebase.
+- La invitación v4 liga UID, email hasheado, enrolamiento, generación y lock por destino. Una clave
+  cliente de 256 bits permite recuperar la misma respuesta sin guardar el código en claro.
+- Firebase password reset fija la contraseña mediante correo con `continueUrl=/auth` sin datos de la
+  invitación. Después se exige login nuevo y email verificado antes de asignar el rol.
+- El consumo crea el grant server-only en la misma transacción que completa la invitación; usa
+  `create` para no reactivar un grant previo y un retry completado solo verifica, nunca restaura.
+- Cuentas preexistentes sin marcador no se adoptan, v1-v3 fallan cerrado y el marcador jamás concede
+  acceso por sí solo. El contrato y rollback están en `docs/auth-role-operations.md`.
 
 ## Contrato de autenticación Google (T-020)
 

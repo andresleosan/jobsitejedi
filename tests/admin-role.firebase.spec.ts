@@ -12,7 +12,7 @@ const signIn = async (
   await page.getByRole("button", { name: "Sign In", exact: true }).click();
 };
 
-test("admin reaches its dashboard and can issue privileged invitations", async ({ page }) => {
+test("admin reaches its dashboard, invites managers, and cannot self-service another admin", async ({ page }) => {
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const password = "AdminRoleE2E9!";
   const adminEmail = `admin-role-${suffix}@example.test`;
@@ -28,8 +28,13 @@ test("admin reaches its dashboard and can issue privileged invitations", async (
   await expect(page.getByRole("heading", { name: "Admin Dashboard" })).toBeVisible();
   await page.getByRole("link", { name: "Invite member" }).click();
   await page.getByRole("combobox").click();
-  await expect(page.getByRole("option", { name: "Admin" })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Admin" })).toHaveCount(0);
   await expect(page.getByRole("option", { name: "Manager" })).toBeVisible();
+  await page.getByRole("option", { name: "Manager" }).click();
+  await page.getByLabel("Invitee email").fill(`invited-manager-${suffix}@example.test`);
+  await page.getByRole("button", { name: "Generate QR Code" }).click();
+  await expect(page.getByAltText("Invitation QR Code")).toBeVisible();
+  await expect(page.getByText("Manager Invitation", { exact: true })).toBeVisible();
 });
 
 test("manager cannot issue privileged invitations", async ({ page }) => {
@@ -50,4 +55,9 @@ test("manager cannot issue privileged invitations", async ({ page }) => {
   await expect(page.getByRole("option", { name: "Builder" })).toBeVisible();
   await expect(page.getByRole("option", { name: "Admin" })).toHaveCount(0);
   await expect(page.getByRole("option", { name: "Manager" })).toHaveCount(0);
+  await page.getByRole("option", { name: "Builder" }).click();
+  await page.getByLabel("Invitee email").fill(`invited-builder-${suffix}@example.test`);
+  await page.getByRole("button", { name: "Generate QR Code" }).click();
+  await expect(page.getByAltText("Invitation QR Code")).toBeVisible();
+  await expect(page.getByText("Builder Invitation", { exact: true })).toBeVisible();
 });

@@ -19,18 +19,26 @@ export interface SessionUser {
   role: AppRole | null;
 }
 
-export interface InvitationValidation {
-  valid: boolean;
-  role: AppRole;
-  invitationId: string;
-  errorMessage: string | null;
-}
+export type InvitationValidation =
+  | {
+      valid: true;
+      role: AppRole;
+      expiresAt: Date;
+      errorMessage: null;
+    }
+  | {
+      valid: false;
+      role: null;
+      expiresAt: null;
+      errorMessage: string;
+    };
 
 export interface InvitationOperations {
-  validateInvitationCode(code: string): Promise<InvitationValidation>;
-  createInvitation(input: { role: AppRole }): Promise<{
+  validateInvitationCode(code: string, targetEmail?: string): Promise<InvitationValidation>;
+  createInvitation(input: { role: AppRole; targetEmail: string; requestKey?: string }): Promise<{
     code: string;
+    role: AppRole;
     expiresAt: Date;
   }>;
-  consumeInvitation(input: { invitationId: string; userId: string }): Promise<void>;
+  consumeInvitation(input: { code: string }): Promise<void>;
 }

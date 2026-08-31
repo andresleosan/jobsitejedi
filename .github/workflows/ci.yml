@@ -52,6 +52,7 @@ jobs:
           npm run typecheck
           npm run lint
           npm run test:provider-guard
+          npm run test:role-operations
           npm run build:functions
           npm --prefix functions test
           npm run test:storage

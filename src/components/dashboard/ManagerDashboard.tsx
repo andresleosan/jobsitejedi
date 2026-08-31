@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { BriefcaseBusiness, Building2, FileSpreadsheet, LogOut, Plus, ReceiptText, Trash2, Truck, Users, Warehouse } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { signOut } from "@/lib/firebase/auth";
+import { firebaseAuth } from "@/lib/firebase/client";
 import { listProjects, type ProjectRecord } from "@/lib/firebase/repositories/projects";
 import CreateProjectDialog from "./CreateProjectDialog";
 import ProjectList from "./ProjectList";
@@ -21,7 +22,7 @@ interface ManagerDashboardProps {
   role: "admin" | "manager";
 }
 
-const ManagerDashboard = ({ userId: _userId, role }: ManagerDashboardProps) => {
+const ManagerDashboard = ({ userId, role }: ManagerDashboardProps) => {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
@@ -32,12 +33,25 @@ const ManagerDashboard = ({ userId: _userId, role }: ManagerDashboardProps) => {
   const [isSupplierCatalogOpen, setIsSupplierCatalogOpen] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
+  const isMountedRef = useRef(true);
+  const isSigningOutRef = useRef(false);
+
+  useEffect(() => () => {
+    isMountedRef.current = false;
+  }, []);
+
+  const ownsActiveSession = useCallback(() =>
+    isMountedRef.current
+    && !isSigningOutRef.current
+    && firebaseAuth.currentUser?.uid === userId, [userId]);
 
   const fetchProjects = useCallback(async () => {
     setIsLoadingProjects(true);
     try {
-      setProjects(await listProjects());
+      const nextProjects = await listProjects();
+      if (ownsActiveSession()) setProjects(nextProjects);
     } catch (error) {
+      if (!ownsActiveSession()) return;
       console.error("Error fetching manager projects:", error);
       toast({
         title: "Projects could not be loaded",
@@ -45,19 +59,21 @@ const ManagerDashboard = ({ userId: _userId, role }: ManagerDashboardProps) => {
         variant: "destructive",
       });
     } finally {
-      setIsLoadingProjects(false);
+      if (ownsActiveSession()) setIsLoadingProjects(false);
     }
-  }, [toast]);
+  }, [ownsActiveSession, toast]);
 
   useEffect(() => {
     void fetchProjects();
   }, [fetchProjects]);
 
   const handleSignOut = async () => {
+    isSigningOutRef.current = true;
     try {
       await signOut();
       navigate("/auth");
     } catch (error) {
+      isSigningOutRef.current = false;
       toast({
         title: "Sign out failed",
         description: error instanceof Error ? error.message : "The session could not be closed.",
@@ -200,7 +216,7 @@ const ManagerDashboard = ({ userId: _userId, role }: ManagerDashboardProps) => {
         open={isJobImportOpen}
         onOpenChange={setIsJobImportOpen}
         projects={projects}
-        userId={_userId}
+        userId={userId}
       />
     </div>
   );

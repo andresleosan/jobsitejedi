@@ -10,6 +10,59 @@ interface QRScannerDialogProps {
   onScan: (code: string) => void;
 }
 
+const INVITATION_CODE_PATTERN = /^[A-F0-9]{12}$/;
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+const normalizeInvitationCode = (value: string | null): string | null => {
+  if (!value) return null;
+  const normalized = value.trim().toUpperCase();
+  return INVITATION_CODE_PATTERN.test(normalized) ? normalized : null;
+};
+
+const hasSafeScheme = (url: URL): boolean =>
+  url.protocol === "https:" ||
+  (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname));
+
+// Kept here so the scanner and its pure payload-contract tests share one parser.
+// eslint-disable-next-line react-refresh/only-export-components
+export const extractInvitationCode = (
+  decodedText: string,
+  expectedOrigin: string,
+): string | null => {
+  const rawCode = normalizeInvitationCode(decodedText);
+  if (rawCode) return rawCode;
+
+  let scannedUrl: URL;
+  let allowedOrigin: URL;
+  try {
+    scannedUrl = new URL(decodedText.trim());
+    allowedOrigin = new URL(expectedOrigin);
+  } catch {
+    return null;
+  }
+
+  if (
+    !hasSafeScheme(scannedUrl) ||
+    !hasSafeScheme(allowedOrigin) ||
+    scannedUrl.origin !== allowedOrigin.origin ||
+    scannedUrl.username ||
+    scannedUrl.password ||
+    (scannedUrl.pathname !== "/auth" && scannedUrl.pathname !== "/auth/")
+  ) {
+    return null;
+  }
+
+  const fragmentParams = new URLSearchParams(scannedUrl.hash.replace(/^#/, ""));
+  const codeCandidates = [
+    ...scannedUrl.searchParams.getAll("code"),
+    ...fragmentParams.getAll("code"),
+  ];
+
+  return codeCandidates.length === 1
+    ? normalizeInvitationCode(codeCandidates[0])
+    : null;
+};
+
 export const QRScannerDialog = ({ open, onClose, onScan }: QRScannerDialogProps) => {
   const [error, setError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(true);
@@ -44,20 +97,18 @@ export const QRScannerDialog = ({ open, onClose, onScan }: QRScannerDialogProps)
 
   const handleScan = useCallback(
     (decodedText: string) => {
-      // Extract code from URL if it's a full URL
-      let code = decodedText;
-      try {
-        if (decodedText.includes("code=")) {
-          const url = new URL(decodedText);
-          code = url.searchParams.get("code") || decodedText;
-        }
-      } catch {
-        // Not a URL, use as-is
+      const code = extractInvitationCode(decodedText, window.location.origin);
+      if (!code) {
+        setError("This QR code is not a valid invitation for this site.");
+        setIsStarting(false);
+        void stopScanner();
+        return;
       }
+
       onScan(code);
       handleClose();
     },
-    [onScan, handleClose]
+    [handleClose, onScan, stopScanner]
   );
 
   useEffect(() => {

@@ -128,6 +128,7 @@ const directRoleAssignmentSources = [
 ];
 
 const forbiddenDirectRoleAssignment = /\b(?:ensureBuilderRole|setUserRole|assignUserRole|registerBuilder)\b/g;
+const forbiddenClientAuthProvisioning = /\bcreateUserWithEmailAndPassword\b/g;
 
 function directRoleAssignmentReferences(): string[] {
   return directRoleAssignmentSources.flatMap((filePath) => {
@@ -136,6 +137,19 @@ function directRoleAssignmentReferences(): string[] {
     return lines.flatMap((line, index) => {
       const matches = [...line.matchAll(forbiddenDirectRoleAssignment)];
       return matches.map((match) => `${filePath}:${index + 1}: ${match[0]}`);
+    });
+  });
+}
+
+function clientAuthProvisioningReferences(): string[] {
+  return sourceFiles(resolve(process.cwd(), "src")).flatMap((filePath) => {
+    const source = readFileSync(filePath, "utf8");
+    const lines = source.split(/\r?\n/);
+    return lines.flatMap((line, index) => {
+      const matches = [...line.matchAll(forbiddenClientAuthProvisioning)];
+      return matches.map((match) => (
+        `${relative(process.cwd(), filePath)}:${index + 1}: ${match[0]}`
+      ));
     });
   });
 }
@@ -178,6 +192,14 @@ describe("provider migration guard", () => {
 });
 
 describe("authorization surface guard", () => {
+  test("keeps Firebase Auth identity creation out of browser runtime code", () => {
+    const provisioningReferences = clientAuthProvisioningReferences();
+    expect(
+      provisioningReferences,
+      `Client-side Firebase Auth provisioning was reintroduced:\n${provisioningReferences.join("\n")}`,
+    ).toEqual([]);
+  });
+
   test("keeps direct role-assignment callables out of runtime code", () => {
     const roleAssignmentReferences = directRoleAssignmentReferences();
     expect(
@@ -189,9 +211,64 @@ describe("authorization surface guard", () => {
   test("keeps invitation consumption as the runtime role-assignment path", () => {
     const backend = readFileSync(resolve(process.cwd(), "functions/src/index.ts"), "utf8");
     const client = readFileSync(resolve(process.cwd(), "src/lib/firebase/auth.ts"), "utf8");
+    const authPage = readFileSync(resolve(process.cwd(), "src/pages/Auth.tsx"), "utf8");
+    const roleOperation = readFileSync(
+      resolve(process.cwd(), "scripts/assign-single-firebase-role.mjs"),
+      "utf8",
+    );
+    const roleRevocation = readFileSync(
+      resolve(process.cwd(), "scripts/revoke-single-firebase-role.mjs"),
+      "utf8",
+    );
+    const loginVerifier = readFileSync(
+      resolve(process.cwd(), "scripts/verify-single-firebase-login.mjs"),
+      "utf8",
+    );
+    const roleSafety = readFileSync(
+      resolve(process.cwd(), "scripts/lib/firebase-role-safety.mjs"),
+      "utf8",
+    );
 
     expect(backend).toContain("export const consumeInvitation");
     expect(client).toContain("export const registerWithInvitation");
+    expect(backend).not.toContain("request.data.invitationId");
+    expect(client).not.toContain("invitationId");
+    expect(backend).toContain('.where("codeHash", "==", codeHash)');
+    expect(backend).toContain("!user.emailVerified");
+    expect(backend).toContain('collection("invitationTargets")');
+    expect(backend).toContain("const INVITATION_SCHEMA_VERSION = 4");
+    expect(backend).toContain("getOrCreateInvitationTarget");
+    expect(backend).toContain("targetEnrollmentHash");
+    expect(backend).toContain("requestKeyHash");
+    expect(backend).toContain("decryptInvitationCode");
+    expect(backend).toContain("delete preservedClaims.invitationEnrollmentId");
+    expect(backend).toContain("request.auth.token.authorizationGrantId");
+    expect(backend).toContain('collection("authorizationGrants")');
+    expect(backend).toContain("transaction.create(authorizationGrantReference");
+    expect(backend).toContain('claimAssignmentState: "not_started"');
+    expect(client).toContain("export const requestInvitationActivation");
+    expect(client).toContain("sendPasswordResetEmail");
+    expect(client).toContain("export const completeInvitationRegistration");
+    expect(client).toContain("token.claims.authorizationGrantId");
+    expect(authPage).toContain("validationSequenceRef");
+    expect(authPage).toContain("validatedInvitationCode !== normalizedInvitationCode");
+    expect(authPage).toContain("buildtrack.pendingInvitation");
+    expect(roleSafety).toContain("user.emailVerified !== true");
+    expect(roleSafety).toContain("user.customClaims?.invitationEnrollmentId !== undefined");
+    expect(roleOperation).toContain("assertRoleAssignmentTarget");
+    expect(roleOperation).toContain("targetUid");
+    expect(roleOperation).toContain("authorizationGrantId: nextGrantId");
+    expect(roleOperation).toContain('collection("authorizationGrants")');
+    expect(roleOperation).toContain("Role assignment state is indeterminate");
+    expect(roleRevocation).toContain("assertRoleRevocationTarget");
+    expect(roleRevocation).toContain("active: false");
+    expect(roleRevocation).toContain("delete nextClaims.role");
+    expect(roleRevocation).toContain("Role revocation state is indeterminate");
+    expect(roleRevocation).not.toContain("setCustomUserClaims(user.uid, previousClaims)");
+    expect(loginVerifier).toContain("authorizationGrantMatches");
+    expect(loginVerifier).toContain("protectedRead");
+    expect(loginVerifier).toContain("targetUid");
+    expect(loginVerifier).toContain("expectedUsers");
   });
 });
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { signOut } from "@/lib/firebase/auth";
 import { listProjects, type ProjectRecord } from "@/lib/firebase/repositories/projects";
 import {
@@ -37,6 +37,7 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
   const [isMaterialDeliveryDialogOpen, setIsMaterialDeliveryDialogOpen] = useState(false);
   const [isRubbishDialogOpen, setIsRubbishDialogOpen] = useState(false);
   const [isInvoiceDialogOpen, setIsInvoiceDialogOpen] = useState(false);
+  const isSigningOutRef = useRef(false);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -46,7 +47,7 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
       setProjects(data);
       if (data.length > 0 && !selectedProjectId) setSelectedProjectId(data[0].id);
     } catch (error) {
-      console.error("Error fetching projects:", error);
+      if (!isSigningOutRef.current) console.error("Error fetching projects:", error);
       return;
     }
   }, [selectedProjectId]);
@@ -60,7 +61,7 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
         setSelectedProjectId(data.projectId);
       }
     } catch (error) {
-      console.error("Error checking clock in status:", error);
+      if (!isSigningOutRef.current) console.error("Error checking clock in status:", error);
     }
   }, []);
 
@@ -159,6 +160,7 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
   };
 
   const handleSignOut = async () => {
+    isSigningOutRef.current = true;
     try {
       await signOut();
       toast({
@@ -167,6 +169,7 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
       });
       navigate("/auth");
     } catch (error) {
+      isSigningOutRef.current = false;
       toast({
         title: "Error",
         description: error instanceof Error ? error.message : "Failed to sign out",

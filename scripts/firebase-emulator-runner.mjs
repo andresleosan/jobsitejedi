@@ -18,6 +18,10 @@ const targets = {
     script: "test:e2e:firebase",
     args: ["--", "tests/auth.firebase.spec.ts", "--workers=1"],
   },
+  "invitation-e2e": {
+    script: "test:e2e:firebase",
+    args: ["--", "tests/invitation-onboarding.firebase.spec.ts", "--workers=1"],
+  },
   "tool-e2e": {
     script: "test:e2e:firebase",
     args: ["--", "tests/tool-inventory.firebase.spec.ts", "--workers=1"],
