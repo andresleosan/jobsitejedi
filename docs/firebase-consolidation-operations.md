@@ -1,148 +1,160 @@
-# Consolidacion Firebase en `jobsitejedi`
+# Consolidación Firebase en `jobsitejedi`
 
-Fecha: 2026-08-29
+Estado: corte productivo verificado el 2026-08-31; `jobsitejedi-staging` permanece intacto.
 
-## Objetivo y limite
+## Alcance y límites
 
-Consolidar en el proyecto Firebase original `jobsitejedi` el backend ya validado en
-`jobsitejedi-staging`. La retirada de staging no forma parte del mismo cambio: solo puede ocurrir
-despues de observar produccion durante al menos siete dias, repetir el inventario y obtener una
-confirmacion destructiva en el momento del borrado.
+El backend, las reglas y el cliente vigentes se consolidaron en `jobsitejedi`. La operación incluyó
+la reconciliación dirigida de autorización Auth↔Firestore necesaria para el contrato de grants v4;
+no importó ni migró proyectos, jobs, facturas, fotos o archivos desde staging.
 
-## Inventario verificado
+La retirada de `jobsitejedi-staging` no forma parte de este corte. Solo puede ocurrir después de la
+nueva ventana de observación, un inventario final, smoke y revisión de costo satisfactorios, y una
+confirmación destructiva separada en el momento del borrado.
 
-| Recurso | `jobsitejedi` | `jobsitejedi-staging` | Accion |
-| --- | --- | --- | --- |
-| Auth | 3 usuarios; Google y email ya usados | 0 usuarios | Conservar produccion; no importar |
-| Firestore | `eur3`; sin colecciones | `eur3`; sin colecciones | Desplegar reglas e indices; no copiar datos |
-| Storage | No habilitado; plan gratuito | Bucket `europe-west1`; 0 archivos | Crear bucket productivo y desplegar reglas |
-| Functions | No listables/no desplegadas | 9 Functions Node 22 en `europe-west1` | Desplegar las 9 desde Git |
-| Aplicacion Web | Activa y usada por Vercel | Activa, sin frontend publicado | Conservar la app Web productiva |
+## Manifiesto inmutable del corte — 2026-08-31
 
-No se exportan usuarios ni hashes de contrasena. No se mueven fixtures, documentos ni archivos
-porque staging esta vacio y produccion tampoco contiene documentos o archivos que fusionar.
+### Código, CI y frontend
 
-## Checkpoint de costo completado
+- Contrato v4: PR [#3](https://github.com/andresleosan/jobsitejedi/pull/3), candidato
+  `3de173e12a6e4ba0b8f1e01057db3f3b951078ac`, merge
+  `aaf8aad42ac009a46eacf03ee33c3419aeaa2210`.
+- Estabilización de sesión: PR [#4](https://github.com/andresleosan/jobsitejedi/pull/4), candidato
+  `557caac763c8ae67ba3766d2e4958f9662afc70f`, release de aplicación
+  `864335ecf4e497221469e3462a623c5211e5846e`.
+- El [CI del candidato](https://github.com/andresleosan/jobsitejedi/actions/runs/33432508491) y el
+  [CI exacto de `main`](https://github.com/andresleosan/jobsitejedi/actions/runs/33433050837)
+  terminaron verdes en sus dos jobs y publicaron evidencia QA inmutable.
+- Vercel aceptó la configuración Firebase/App Check oficial y publicó el deployment
+  `HVMXDbSrwh8XYaXram1b99M7N3Vx` como `Ready`/producción para la release de aplicación. La ruta
+  pública es [jobsitejedi.vercel.app](https://jobsitejedi.vercel.app/).
 
-Cloud Storage y Cloud Functions requieren Blaze. El operador completo este checkpoint el
-2026-08-29:
+### Autorización productiva
 
-- [x] Se autorizo y vinculo `jobsitejedi` a la misma cuenta de facturacion de staging.
-- [x] Se configuro un presupuesto mensual de COP 16.014, equivalente a USD 5 con la TRM vigente
-  de COP 3.202,79 por USD, con alertas al 50 %, 90 % y 100 %. Las alertas no son un limite duro.
-- [x] Se creo `jobsitejedi.firebasestorage.app` como bucket regional permanente en
-  `europe-west1` (Belgica), clase Regional.
+El inventario posterior, registrado sin correos, UIDs, tokens ni valores de grants, fue:
 
-La consola de Google Cloud confirmo que el presupuesto aplica exclusivamente al proyecto
-`jobsitejedi` y que los tres umbrales quedaron activos.
+| Comprobación | Resultado |
+| --- | ---: |
+| Usuarios Auth totales | 5 |
+| Usuarios activos autorizados | 2 |
+| Identidades QA compartidas deshabilitadas | 3 |
+| Grants activos exactos | 2 |
+| Tombstones QA inactivos | 3 |
+| Diferencias Auth↔Firestore | 0 |
 
-## Gate previo
+El recibo redactado versionado está en
+[`evidence/production-auth-cutover-20260831.json`](evidence/production-auth-cutover-20260831.json)
+(Git blob `8d4ea8364b81305b78e10e1517a07e55917ce532`).
 
-```powershell
-npm.cmd audit --omit=dev
-npm.cmd run test:ci-contract
-npm.cmd run test:provider-guard
-npm.cmd run typecheck
-npm.cmd run lint
-npm.cmd run build:functions
-npm.cmd run test:firebase:emulator
-npm.cmd run test:e2e:firebase:emulator
-npm.cmd run build
-```
+Las identidades QA compartidas no se reactivaron: quedaron deshabilitadas, sin claims de aplicación
+y con tombstones `active:false`. Los positivos de `admin`, `manager` y `builder` se ejecutan en
+Firebase Auth Emulator. Cualquier reactivación productiva o creación de una identidad administrativa
+requiere credenciales no compartidas, manifiesto exacto y una autorización separada.
 
-La aceptacion exige 0 vulnerabilidades runtime, 0 errores de lint, suites Firebase/E2E completas y
-ausencia de hallazgos criticos. Los avisos conocidos deben quedar documentados y no pueden ocultar
-errores.
+### Backend y reglas
 
-## Baseline de rendimiento de esta release
+Quedaron activas nueve Functions Gen 2, Node 22, en `europe-west1`, todas con el hash remoto
+`51ca9e5912b808e7e4a8d3fd908d47d355662ef9`:
 
-El frontend no cambio: el build productivo conserva el baseline ya documentado en
-`docs/performance-baseline.md`. La unica ruta modificada fue `validateInvitationCode`.
+- `cleanupOldProjects`
+- `consumeInvitation`
+- `createAssignedProject`
+- `createManagerInvitation`
+- `extractJobsFromExcel`
+- `listAssignableBuilders`
+- `reviewInvoice`
+- `submitInvoice`
+- `validateInvitationCode`
 
-- Medicion: 30 llamadas consecutivas con Functions y Firestore Emulator, despues del arranque.
-- Resultado observado: aproximadamente 33-52 ms por llamada caliente.
-- Proteccion: la solicitud 31 dentro de la ventana fue rechazada con `resource-exhausted`.
-- Costo de consulta: cada validacion permitida ejecuta una transaccion de limite y, si el formato
-  es valido, una busqueda acotada a un documento. No se detecto N+1 ni un cuello de botella que
-  justifique optimizacion o `scalability-patterns` antes del deploy.
+Las Functions inseguras heredadas `setUserRole` y `ensureBuilderRole` no existen en el inventario
+activo. Firestore Rules y Storage Rules se publicaron coordinadamente con el contrato de grant
+server-only. Artifact Registry quedó configurado para retirar imágenes de compilación con más de un
+día; Git y el manifiesto de release son la fuente duradera de reconstrucción.
 
-## Orden de despliegue
+### Smokes posteriores
 
-1. Registrar commit, inventario productivo y estado de los gates.
-2. Completar el checkpoint Blaze y crear el bucket `jobsitejedi.firebasestorage.app` en
-   `europe-west1`.
-3. Desplegar reglas e indices Firestore y reglas Storage explicitamente a `jobsitejedi`.
-4. Desplegar las nueve Functions desde el codigo versionado, todas en `europe-west1`, con
-   `ENABLE_PROJECT_CLEANUP` ausente o distinto de `true`.
-5. Verificar inventario 9/9 y ejecutar smokes negativos de autenticacion/invitaciones.
-6. Ejecutar smoke funcional con cuentas productivas existentes, sin crear datos permanentes salvo
-   un fixture identificado y reversible.
-7. Revisar logs, errores y consumo. App Check inicia en observacion; su enforcement requiere un
-   cambio separado para no bloquear clientes legitimos.
+- Una lectura Firestore sin autenticación respondió `403 PERMISSION_DENIED`.
+- `listAssignableBuilders` sin autenticación respondió `401 UNAUTHENTICATED`.
+- Un código inválido en `validateInvitationCode` respondió de forma segura con `valid:false`.
+- `/auth` cargó con el formulario esperado; `/admins` anónimo redirigió a `/auth`; `/` cargó la SPA.
 
-## Ejecucion productiva de 2026-08-29
+No se usaron las cuentas QA deshabilitadas para un positivo productivo. La matriz completa de roles
+se validó con Emulator/E2E y el smoke remoto se limitó deliberadamente a comprobaciones negativas y
+públicas sin crear datos persistentes.
 
-Revision base registrada: `a7be8a287f10fcf71b933e44df8e524c3d9b5891`. El despliegue incluyo
-cambios locales todavia no confirmados en Git; por eso tambien se registraron estas huellas:
+## Orden coordinado aplicado
 
-| Artefacto | SHA-256 |
-| --- | --- |
-| `firestore.rules` | `F0C73A8F0B710F69854314FB7828C47A9D00D80A0B6089D20E8DD0FAA5336949` |
-| `firestore.indexes.json` | `6742255415C36DAF631B52F233039190AF819205CC41FA58D07DD7D9E180C2B9` |
-| `storage.rules` | `EA9538E101538F63C203FEE47497E182495C9BD2E34320FB32D4FDAA2C5B6A7A` |
-| `functions/src/index.ts` | `C6C054039E25E2AB61B0DD0059E95E3AB07749C4A9CC6E22A40A6DECA9D39126` |
-| `functions/lib/index.js` | `D5030720BD7809F877C3CA96532A06E48BBA632CCC35AF105F6939F81182EAB3` |
+1. Congelar altas y mantener deshabilitadas las identidades QA compartidas.
+2. Inventariar Auth y preparar el manifiesto exacto de cada usuario activo.
+3. Crear/rotar primero los grants activos, verificar Auth↔Firestore y revocar sesiones anteriores.
+4. Confirmar dos pares activos exactos, tres tombstones QA y cero diferencias.
+5. Desplegar desde el candidato revisado Functions y Rules v4; verificar 9/9 y ausencia de las dos
+   Functions inseguras.
+6. Publicar el cliente, exigir sesiones nuevas y ejecutar CI, smokes y revisión del inventario.
+7. Corregir la carrera de logout detectada por el CI de `main`, repetir todo el gate y publicar la
+   estabilización por PR #4.
 
-Resultado remoto:
+Este orden es también el mínimo para cambios futuros: grants antes de Rules que los exigen. Nunca se
+publican Rules basadas en grants si un usuario activo autorizado todavía carece de su par exacto.
 
-- Blaze activo con la cuenta de facturacion autorizada y el presupuesto descrito arriba.
-- Bucket vacio confirmado en `europe-west1`; sus reglas productivas compilaron y fueron publicadas.
-- Reglas Firestore e indices publicados explicitamente con `--project jobsitejedi`; no habia
-  indices compuestos ni datos que importar.
-- Nueve de nueve Functions Gen 2 activas, Node 22, todas en `europe-west1`. El primer alta dejo
-  4/9 por una carrera al crear el bucket interno de fuentes; un reintento acotado creo las cinco
-  restantes y el inventario final confirmo 9/9 `ACTIVE`.
-- `cleanupOldProjects` quedo programada cada 24 horas, pero `ENABLE_PROJECT_CLEANUP` estuvo ausente:
-  puede limpiar invitaciones y limites expirados, no proyectos de negocio.
-- Smoke sin credenciales y sin fixtures: `validateInvitationCode` rechazo un envelope invalido con
-  HTTP 400 `INVALID_ARGUMENT`; `ensureBuilderRole` rechazo una solicitud valida sin sesion con
-  HTTP 401 `UNAUTHENTICATED`.
-- `https://jobsitejedi.vercel.app/auth` cargo la SPA productiva y la consola Firebase confirmo las
-  mismas tres cuentas Auth (una fila de cabecera y tres usuarios). No se modificaron usuarios,
-  proveedores ni claims.
-- Los dos eventos graves encontrados en las primeras 100 lineas de logs corresponden al envelope
-  invalido del smoke y a la carrera transitoria del primer alta. La Function afectada fue creada
-  correctamente en el reintento; no se observo un error runtime nuevo sin explicar.
+## Evidencia QA final
 
-Artifact Registry conserva por ahora sus imagenes de compilacion sin politica automatica de
-limpieza. Firebase advirtio que esto puede producir un cargo mensual pequeno. La politica propuesta
-de un dia no se aplico porque borraria material util para rollback y requiere una autorizacion
-destructiva separada. Durante la observacion se debe vigilar este consumo y elegir una retencion
-compatible con rollback antes de acumular nuevas releases.
+- Node `22.23.2` y JDK `21`.
+- Firebase Emulator: 18 archivos, 133/133 pruebas.
+- Playwright Firebase: 12/12, cero retries; onboarding burn-in 5/5.
+- Concurrencia/sesión focal: 6/6; Functions unit 10/10; provider guard 9/9; seguridad de roles 14/14
+  en el SHA de aplicación;
+  CI/Vite 4/4; Storage helper 3/3; OCR 3/3.
+- El tooling administrativo endurecido después del corte tiene 23/23 pruebas locales; su publicación
+  y CI son una revisión separada y no se atribuyen al SHA de aplicación de esta acta.
+- Typecheck, build de Functions, build cliente y lint aprobados. Quedan siete warnings históricos de
+  Fast Refresh y el aviso conocido de chunk grande; no hubo errores.
+- Auditoría del cliente: cero vulnerabilidades runtime. Functions conserva seis alertas moderadas
+  transitivas y cero altas/críticas; no se aplicó el downgrade incompatible propuesto por `--force`.
 
-## Rollback
+## App Check
 
-- Frontend/Auth: no se cambian durante este despliegue; conservar la aplicacion Web y proveedores
-  actuales.
-- Firestore/Storage Rules: volver a desplegar la revision Git anterior. Firebase no ofrece rollback
-  automatico de Rules, por lo que el commit previo debe quedar registrado antes del cambio.
-- Functions: si el smoke falla, detener trafico desde el frontend y retirar las Functions nuevas o
-  volver a desplegar la revision estable. No habilitar borrado automatico de proyectos.
-- Datos: no hay importacion. Si aparece cualquier documento/archivo inesperado antes del deploy,
-  detener el proceso y redefinir backup antes de continuar.
-- Bucket: su region es permanente. Un rollback funcional no elimina el bucket; queda vacio y con
-  reglas restrictivas hasta una decision operativa posterior.
+La site key oficial está configurada en Vercel y el cliente reCAPTCHA Enterprise está desplegado sin
+versionar ni imprimir su valor. Functions conserva `ENFORCE_APP_CHECK=false`: App Check está en
+observación, no en enforcement.
+
+La observación del release vigente comenzó el 2026-08-31 13:55 America/Bogota. No se considera
+enforcement antes del 2026-09-07 13:55 y, aun después, requiere métricas legítimas, pruebas de token
+válido/ausente/inválido y autorización productiva separada.
+
+## Rollback seguro
+
+- No restaurar invitaciones v1-v3, `setUserRole`, `ensureBuilderRole` ni Rules basadas solo en
+  `role`; reautorizarían tokens viejos o grants revocados.
+- Mantener siempre Rules con grants y corregir Functions hacia adelante. Una versión anterior del
+  cliente solo es elegible si respeta el mismo contrato v4.
+- No borrar grants ni reactivar tombstones. Una revocación iniciada es monotónica; restaurar acceso
+  es una asignación nueva con grant rotado y autorización explícita.
+- No reactivar las identidades QA compartidas como rollback. Un positivo productivo futuro exige
+  identidades controladas individualmente y autorización separada.
+- El bucket y su región son permanentes. Un rollback funcional no elimina datos, usuarios, bucket ni
+  proyecto Firebase.
 
 ## Gate de retirada de staging
 
-La observacion comenzo el 2026-08-29. El primer momento elegible es el 2026-09-05 despues de las
-12:02, hora de Colombia, siempre que se cumpla todo lo siguiente:
+El reloj anterior del 2026-08-29 quedó invalidado por el corte de seguridad posterior. La nueva
+observación comenzó el 2026-08-31 13:55 America/Bogota; el primer momento elegible es el
+2026-09-07 13:55, siempre que se cumpla todo lo siguiente:
 
-- [ ] Produccion mantiene 9/9 Functions activas y smoke limpio.
-- [ ] No hay errores nuevos ni consumo inesperado.
-- [ ] Staging sigue con 0 usuarios, 0 documentos y 0 archivos.
-- [ ] Se conserva evidencia de configuracion y del commit desplegado.
-- [ ] El operador confirma explicitamente el borrado destructivo.
+- [ ] Producción mantiene 9/9 Functions activas, Rules vigentes y smokes limpios.
+- [ ] No hay errores nuevos, diferencias Auth↔Firestore ni consumo inesperado.
+- [ ] `jobsitejedi-staging` mantiene el inventario esperado y no contiene un recurso que deba
+  respaldarse o migrarse.
+- [ ] Se conserva evidencia del release, configuración recuperable y plan de reversión.
+- [ ] El operador confirma explícitamente el borrado destructivo en ese momento.
 
-Solo entonces se elimina `jobsitejedi-staging`, se comprueba que deje de facturar y se retira su
-alias de `.firebaserc`. El proyecto original `jobsitejedi` nunca se incluye en el comando de borrado.
+Solo entonces se elimina exactamente `jobsitejedi-staging`, se comprueba que deje de facturar y se
+retira su alias. `jobsitejedi` nunca se incluye en la operación destructiva.
+
+## Registro histórico del 2026-08-29
+
+El despliegue inicial del 2026-08-29, sus inventarios de tres usuarios, huellas locales y orden
+Rules→Functions pertenecen a una versión anterior al contrato de grants v4. Se conservan en el
+historial Git únicamente como evidencia histórica: no son baseline de rollback ni instrucciones
+operativas vigentes. El corte del 2026-08-31 reemplaza íntegramente ese manifiesto y reinicia los
+relojes de observación.

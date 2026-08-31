@@ -8,6 +8,14 @@ import {
   authorizationGrantMatches,
   isAuthorizationGrantId,
 } from "./lib/firebase-role-safety.mjs";
+import {
+  readRoleOperationInput,
+  redactRoleOperationError,
+} from "./lib/firebase-role-operation-input.mjs";
+import {
+  clearQaDebugEnvironment,
+  createSafeQaChildEnvironment,
+} from "./lib/secure-qa-process-environment.mjs";
 
 const requireFromFunctions = createRequire(
   new URL("../functions/package.json", import.meta.url),
@@ -21,45 +29,41 @@ const { getAuth } = requireFromFunctions("firebase-admin/auth");
 const { getFirestore } = requireFromFunctions("firebase-admin/firestore");
 
 const PROJECT_ID = "jobsitejedi";
-const ALLOWED_ROLES = new Set(["admin", "manager", "builder"]);
 const ROLE_PATHS = {
   admin: "/admins",
   manager: "/managers",
   builder: "/builders",
 };
 const workspaceRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const password = process.env.FIREBASE_QA_PASSWORD;
+clearQaDebugEnvironment(process.env);
 
-const args = Object.fromEntries(
-  process.argv.slice(2).map((argument) => {
-    const [key, ...value] = argument.replace(/^--/, "").split("=");
-    return [key, value.join("=")];
-  }),
-);
-const expectedRole = args.role;
-const targetEmail = args.email?.trim().toLowerCase() || null;
-const targetUid = args.uid?.trim() || null;
-const expectedProvider = args.provider || null;
-const expectedUsers = Number(args["expected-users"]);
+let roleOperationInput;
+try {
+  roleOperationInput = await readRoleOperationInput({
+    action: "verify",
+    projectId: PROJECT_ID,
+  });
+  if (roleOperationInput.expectedProvider !== "password") {
+    throw new Error("unsupported-provider");
+  }
+} catch {
+  console.error(JSON.stringify({
+    project: PROJECT_ID,
+    mode: "input-rejected",
+    reason: "INVALID_INPUT",
+    message: "Role verification requires one exact password-provider JSON manifest on stdin.",
+  }));
+  process.exit(1);
+}
 
-if (args.project !== PROJECT_ID) throw new Error(`Use --project=${PROJECT_ID}.`);
-if (!ALLOWED_ROLES.has(expectedRole)) {
-  throw new Error("Use --role=admin, --role=manager, or --role=builder.");
-}
-if (!targetEmail || !/^\S+@\S+\.\S+$/.test(targetEmail)) {
-  throw new Error("Use a valid exact --email value.");
-}
-if (!targetUid || !/^\S{1,128}$/.test(targetUid)) {
-  throw new Error("Use the exact audited --uid value.");
-}
-if (!expectedProvider || !/^\S{1,128}$/.test(expectedProvider)) {
-  throw new Error("Use the exact audited --provider value.");
-}
-if (expectedProvider !== "password") {
-  throw new Error("This verifier supports only the exact password provider.");
-}
-if (!Number.isInteger(expectedUsers) || expectedUsers < 1) {
-  throw new Error("Use --expected-users=<positive integer>.");
-}
+const {
+  role: expectedRole,
+  targetEmail,
+  targetUid,
+  expectedProvider,
+  expectedUsers,
+} = roleOperationInput;
 
 const waitForServer = async (serverProcess) => {
   const deadline = Date.now() + 30_000;
@@ -80,17 +84,14 @@ const waitForServer = async (serverProcess) => {
 
 const verifyUiLogin = async (email, secret, expectedPath) => {
   const viteCli = join(workspaceRoot, "node_modules", "vite", "bin", "vite.js");
-  const serverEnv = { ...process.env, VITE_FIREBASE_USE_EMULATORS: "false" };
-  delete serverEnv.FIREBASE_AUTH_EMULATOR_HOST;
-  delete serverEnv.FIRESTORE_EMULATOR_HOST;
-  delete serverEnv.FIREBASE_STORAGE_EMULATOR_HOST;
+  const childEnvironment = createSafeQaChildEnvironment(process.env);
 
   const server = spawn(
     process.execPath,
     [viteCli, "--host", "127.0.0.1", "--port", "41732", "--strictPort"],
     {
       cwd: workspaceRoot,
-      env: serverEnv,
+      env: childEnvironment,
       stdio: "ignore",
       windowsHide: true,
     },
@@ -100,7 +101,11 @@ const verifyUiLogin = async (email, secret, expectedPath) => {
   try {
     await waitForServer(server);
     const { chromium } = await import("playwright");
-    browser = await chromium.launch({ channel: "chrome", headless: true });
+    browser = await chromium.launch({
+      channel: "chrome",
+      headless: true,
+      env: childEnvironment,
+    });
     const page = await browser.newPage();
     await page.goto("http://127.0.0.1:41732/auth");
     await page.getByLabel("Email", { exact: true }).fill(email);
@@ -124,21 +129,48 @@ const verifyUiLogin = async (email, secret, expectedPath) => {
   }
 };
 
-const envSource = await readFile(new URL("../.env", import.meta.url), "utf8");
+let envSource;
+try {
+  envSource = await readFile(new URL("../.env", import.meta.url), "utf8");
+} catch {
+  console.error(JSON.stringify({
+    project: PROJECT_ID,
+    mode: "verification-failed",
+    reason: "CLIENT_CONFIG_UNAVAILABLE",
+    message: "Firebase client configuration is unavailable for login verification.",
+  }));
+  process.exit(1);
+}
 const apiKeyLine = envSource
   .split(/\r?\n/u)
   .find((line) => line.startsWith("VITE_FIREBASE_API_KEY="));
 const apiKey = apiKeyLine?.slice(apiKeyLine.indexOf("=") + 1).trim();
-const password = process.env.FIREBASE_QA_PASSWORD;
-delete process.env.FIREBASE_QA_PASSWORD;
 
-if (!apiKey) throw new Error("VITE_FIREBASE_API_KEY is unavailable.");
-if (!password) throw new Error("The QA password must be provided through secure input.");
+if (!apiKey || !password) {
+  console.error(JSON.stringify({
+    project: PROJECT_ID,
+    mode: "verification-failed",
+    reason: "SECURE_INPUT_UNAVAILABLE",
+    message: "Firebase client configuration and in-memory QA secret are required.",
+  }));
+  process.exit(1);
+}
 
-const app = initializeApp({
-  credential: applicationDefault(),
-  projectId: PROJECT_ID,
-});
+let app;
+try {
+  app = initializeApp({
+    credential: applicationDefault(),
+    projectId: PROJECT_ID,
+  });
+} catch {
+  console.error(JSON.stringify({
+    project: PROJECT_ID,
+    mode: "verification-failed",
+    reason: "FIREBASE_INIT_FAILED",
+    message: "Firebase Admin initialization failed; verify the approved runtime configuration.",
+  }));
+  process.exit(1);
+}
 
 try {
   const auth = getAuth(app);
@@ -243,6 +275,18 @@ try {
       credentialsPersisted: false,
     }),
   );
+} catch (error) {
+  const { reason, message } = redactRoleOperationError({
+    error,
+    action: "verification",
+  });
+  console.error(JSON.stringify({
+    project: PROJECT_ID,
+    mode: "verification-failed",
+    reason,
+    message,
+  }));
+  process.exitCode = 1;
 } finally {
   await deleteApp(app);
 }

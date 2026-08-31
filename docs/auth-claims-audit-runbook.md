@@ -1,6 +1,23 @@
 # Auditoría y revocación de claims de autorización
 
-Estado: procedimiento preparado; no ejecutado contra producción.
+Estado: procedimiento ejecutado de forma controlada en producción el 2026-08-31; sigue siendo el
+runbook obligatorio para futuras asignaciones y revocaciones.
+
+## Resultado agregado del corte
+
+- 5 usuarios Auth inventariados, sin registrar correos reales, UIDs, tokens ni valores de grants.
+- 2 usuarios activos quedaron con rol y grant server-only exactos.
+- 3 identidades QA compartidas quedaron deshabilitadas, sin claims de aplicación y con tombstones
+  `active:false`.
+- 5 documentos de grant: 2 activos y 3 inactivos; 0 diferencias Auth↔Firestore.
+- Se revocaron sesiones cuando aplicaba y se releyó el estado final. No hubo estado indeterminado.
+
+La ejecución no creó ni migró proyectos, jobs o archivos. Una identidad QA deshabilitada no se
+reactiva como rollback; recuperar acceso es una asignación nueva, autorizada y con grant rotado.
+
+Recibo auditable redactado: [`evidence/production-auth-cutover-20260831.json`](evidence/production-auth-cutover-20260831.json),
+Git blob `8d4ea8364b81305b78e10e1517a07e55917ce532`. Registra fecha, referencia de autorización, revisión
+del código, release, CI y agregados finales sin incorporar PII ni material de autenticación.
 
 ## Modelo vigente
 
@@ -44,12 +61,14 @@ token frente a Rules: no sustituye la rotación/tombstone del script autorizado.
 ## Remediación propuesta
 
 1. Preparar una lista exacta de UIDs, acción propuesta, justificación y rollback.
-2. Obtener confirmación explícita del operador antes de modificar una sola cuenta productiva.
-3. Para asignar o corregir, exigir siempre correo, UID, proveedor, conteo y rol anterior exactos. El
-   script bloquea cuenta deshabilitada, email no verificado o `invitationEnrollmentId` activo.
+2. Obtener confirmación explícita del operador y una ventana exclusiva antes de modificar una sola
+   cuenta productiva: una operación por vez, sin cambios paralelos desde Console, otro host o job.
+3. Para asignar o corregir, exigir siempre correo, UID, proveedor único, conteo y rol anterior exactos.
+   El script bloquea cuenta deshabilitada, email no verificado o `invitationEnrollmentId` activo. La
+   revocación se ancla a correo+UID y no puede ser bloqueada por cambios en proveedores vinculados.
 4. Rotar conjuntamente `authorizationGrantId` en Auth y el documento activo server-side. El grant se
-   cambia primero para invalidar inmediatamente tokens viejos; luego se verifica Auth↔Firestore y se
-   revocan refresh tokens best-effort.
+   cambia primero mediante una transacción con precondición de huella exacta para no pisar un cambio
+   concurrente; luego se verifica Auth↔Firestore y se revocan refresh tokens best-effort.
 5. Para revocar, escribir y releer primero un tombstone `active:false`, retirar los tres claims de
    autorización/enrolamiento y revocar tokens. Nunca borrar el tombstone ni compensar restaurando
    privilegios. Un doble fallo que impida confirmar el tombstone bloquea producción como estado
@@ -75,5 +94,5 @@ En Firebase Auth Emulator se usan:
 - `admin@admin.com`: rol `admin` y grant local vigente.
 
 La contraseña llega por `QA_TEST_PASSWORD`; el seeder debe rechazar hosts que no sean loopback y
-el proyecto debe ser exactamente `demo-jobsite-jedi`. Estas cuentas nunca se crean en producción
-como parte del flujo QA.
+el proyecto debe ser exactamente `demo-jobsite-jedi`. El flujo QA no crea ni reactiva cuentas en
+producción. Los homólogos compartidos que ya existen allí permanecen deshabilitados y sin acceso.
