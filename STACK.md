@@ -37,6 +37,30 @@ La clasificación fue confirmada por el operador el `2026-08-24`.
 | Infraestructura local | Firebase Emulator Suite | Estabilizada |
 | Proveedor legado | Supabase | Solo historial, fuera del runtime |
 
+## Identidad visual para la landing pública (T-landing)
+
+La landing conserva el azul de producto como señal de acción, pero deja de usar el patrón
+intercambiable de hero centrado + cuatro cards iguales + gradiente. El lenguaje visual se inspira
+en convenciones observadas en [Fieldwire](https://www.fieldwire.com/construction-management-software/),
+[Procore](https://www.procore.com/project-management) y [Autodesk Forma](https://construction.autodesk.com/):
+la obra como contexto principal, visibilidad compartida entre campo y oficina, y mensajes anclados
+en el ciclo real del proyecto.
+
+- **Paleta:** tinta carbón para lectura y confianza; azul de BuildTrack para acciones y continuidad
+  con el producto; naranja de alta visibilidad para actividad y handoffs; superficies blanco
+  hormigón para que el panel de proyecto sea el elemento dominante.
+- **Tipografía:** `ui-sans-serif` del sistema, con titulares compactos y tracking ligeramente
+  negativo; evita depender de una fuente remota para que la página pública siga siendo rápida y
+  estable en una obra con conectividad irregular.
+- **Layout:** composición asimétrica de dos columnas: una promesa concreta a la izquierda y un
+  panel editorial de “project pulse” a la derecha; después, una narrativa de captura → coordinación
+  → cierre en lugar de una grilla plana de funcionalidades.
+- **Elemento firma:** el panel estático de estado de proyecto muestra fase, personas en sitio,
+  entrega y último handoff en una sola superficie. Es una ilustración del producto, no una métrica
+  de clientes ni un dato operativo real.
+- **Tono:** directo, práctico y atento al ritmo de la obra. Se evitan claims no verificables
+  (“cientos de equipos”), dashboards decorativos sin contexto y gradientes como recurso principal.
+
 ## Decisión de proveedor
 
 Firebase queda adoptado como proveedor único de runtime para evitar la sesión dividida entre
