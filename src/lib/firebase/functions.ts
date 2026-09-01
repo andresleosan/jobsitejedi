@@ -80,6 +80,46 @@ export interface AssignableBuilder {
   displayName: string | null;
 }
 
+export type AccessRequestStatus = "pending" | "approving" | "approved" | "rejected";
+
+export interface AccessRequestRecord {
+  id: string;
+  email: string;
+  fullName: string;
+  phone: string | null;
+  requestedRole: AppRole | null;
+  status: AccessRequestStatus;
+  requestedAt: Date | null;
+  reviewedAt: Date | null;
+  decisionReason: string | null;
+}
+
+type AccessRequestCallableRecord = Omit<AccessRequestRecord, "requestedAt" | "reviewedAt"> & {
+  requestedAt: string | null;
+  reviewedAt: string | null;
+};
+
+const submitAccessRequestCallable = httpsCallable<
+  { requestedRole: AppRole; fullName: string; phone?: string | null },
+  { status: "pending" | "approving"; requestedRole: AppRole }
+>(firebaseFunctions, "submitAccessRequest");
+
+const listAccessRequestsCallable = httpsCallable<
+  Record<string, never>,
+  { requests: AccessRequestCallableRecord[] }
+>(firebaseFunctions, "listAccessRequests");
+
+const reviewAccessRequestCallable = httpsCallable<
+  { requestId: string; decision: "approve" | "reject"; reason?: string | null },
+  AccessRequestCallableRecord
+>(firebaseFunctions, "reviewAccessRequest");
+
+const toAccessRequestRecord = (record: AccessRequestCallableRecord): AccessRequestRecord => ({
+  ...record,
+  requestedAt: record.requestedAt ? new Date(record.requestedAt) : null,
+  reviewedAt: record.reviewedAt ? new Date(record.reviewedAt) : null,
+});
+
 export interface CreateAssignedProjectCallableInput {
   projectId: string;
   builderId: string;
@@ -178,3 +218,24 @@ export const createAssignedProjectRecord = async (
   input: CreateAssignedProjectCallableInput,
 ): Promise<{ projectId: string }> =>
   (await createAssignedProjectCallable(input)).data;
+
+export const accessRequestOperations = {
+  async submitAccessRequest(input: {
+    requestedRole: AppRole;
+    fullName: string;
+    phone?: string | null;
+  }) {
+    return (await submitAccessRequestCallable(input)).data;
+  },
+  async listAccessRequests(): Promise<AccessRequestRecord[]> {
+    const result = await listAccessRequestsCallable({});
+    return result.data.requests.map(toAccessRequestRecord);
+  },
+  async reviewAccessRequest(input: {
+    requestId: string;
+    decision: "approve" | "reject";
+    reason?: string | null;
+  }): Promise<AccessRequestRecord> {
+    return toAccessRequestRecord((await reviewAccessRequestCallable(input)).data);
+  },
+};

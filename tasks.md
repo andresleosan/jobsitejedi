@@ -1190,6 +1190,19 @@ T-030 y T-031 siguen como mejoras posteriores y no bloquean el release ya desple
   Supabase, acepto temporalmente el riesgo de tooling y eligio ambos jobs de CI como checks de
   `main`. T-017 queda activa; T-018 sigue pendiente y este registro no autoriza produccion.
 
+## T-036 — Solicitudes de acceso sin correo ni QR
+
+- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-003, T-032
+- Reemplazar la experiencia QR por un registro que solicita `admin`, `manager` o `builder`.
+- Mostrar en el panel admin el solicitante, correo, teléfono, perfil solicitado y acciones de
+  aprobar/rechazar.
+- Mantener `accessRequests` server-only y asignar claims/grant únicamente después de verificar
+  la aprobación en Functions.
+- **Evidencia:** contrato de Functions (14/14), `typecheck`, `build:functions`, guard de proveedor
+  (9/9), reglas Firestore (19/19) y Functions con emulador (25/25) aprobados. El runner oficial
+  requiere Node 22; la ejecución equivalente local se hizo con Node 24 y JDK 21 instalado.
+  No hubo despliegue ni modificación de producción.
+
 ## Fuera de alcance hasta cerrar la Fase 2
 
 - Nuevas features de negocio.

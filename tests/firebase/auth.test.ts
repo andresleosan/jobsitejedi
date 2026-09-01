@@ -23,10 +23,12 @@ const readEmulatorOobCodes = async (): Promise<Array<{ email?: string }>> => {
 let getCurrentRole: typeof import("@/lib/firebase/auth").getCurrentRole;
 let normalizeAuthError: typeof import("@/lib/firebase/auth").normalizeAuthError;
 let registerWithInvitation: typeof import("@/lib/firebase/auth").registerWithInvitation;
+let registerForAccess: typeof import("@/lib/firebase/auth").registerForAccess;
 let signIn: typeof import("@/lib/firebase/auth").signIn;
 let signOut: typeof import("@/lib/firebase/auth").signOut;
 let subscribeToAuth: typeof import("@/lib/firebase/auth").subscribeToAuth;
 let invitationOperations: typeof import("@/lib/firebase/functions").invitationOperations;
+let accessRequestOperations: typeof import("@/lib/firebase/functions").accessRequestOperations;
 let firebaseAuth: typeof import("@/lib/firebase/client").firebaseAuth;
 let disableEmulatorUser: (uid: string) => Promise<void>;
 let setEmulatorClaims: (uid: string, claims: Record<string, unknown>) => Promise<void>;
@@ -42,12 +44,13 @@ describe("Firebase Auth adapter", () => {
     ({
       getCurrentRole,
       normalizeAuthError,
+      registerForAccess,
       registerWithInvitation,
       signIn,
       signOut,
       subscribeToAuth,
     } = await import("@/lib/firebase/auth"));
-    ({ invitationOperations } = await import("@/lib/firebase/functions"));
+    ({ invitationOperations, accessRequestOperations } = await import("@/lib/firebase/functions"));
     ({ firebaseAuth } = await import("@/lib/firebase/client"));
     const [{ getApps, initializeApp }, { getAuth }] = await Promise.all([
       import("../../functions/node_modules/firebase-admin/lib/app/index.js"),
@@ -131,27 +134,50 @@ describe("Firebase Auth adapter", () => {
     );
   });
 
-  test("rejects and signs out an authenticated identity without an application role", async () => {
+  test("keeps an authenticated identity without a role available for access requests", async () => {
     const credentials = makeCredentials("missing-role");
     await provisionEmulatorUser({ ...credentials, role: null });
 
-    await expect(signIn(credentials.email, credentials.password)).rejects.toThrow(
-      "This account has no assigned BuildTrack role. Contact an administrator",
-    );
+    const user = await signIn(credentials.email, credentials.password);
+    expect(user.role).toBeNull();
     expect(await getCurrentRole()).toBeNull();
-    expect(firebaseAuth.currentUser).toBeNull();
+    expect(firebaseAuth.currentUser?.email).toBe(credentials.email);
+    await signOut();
   });
 
-  test("rejects and signs out a role claim without a current authorization grant", async () => {
+  test("registers an identity as roleless and creates an access request", async () => {
+    const credentials = makeCredentials("access-registration");
+    await expect(registerForAccess({
+      ...credentials,
+      requestedRole: "builder",
+      phone: "+57 300 555 0101",
+    })).resolves.toEqual({ status: "pending", requestedRole: "builder" });
+    expect(firebaseAuth.currentUser).toBeNull();
+
+    const registered = await readEmulatorUserByEmail(credentials.email);
+    const reviewer = makeCredentials("access-reviewer");
+    expect(registered.customClaims).toEqual({});
+    await provisionEmulatorUser({ ...reviewer, role: "admin" });
+    await signIn(reviewer.email, reviewer.password);
+    await expect(accessRequestOperations.listAccessRequests()).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({
+        email: credentials.email,
+        requestedRole: "builder",
+        status: "pending",
+      })]),
+    );
+  });
+
+  test("keeps a role claim without a current authorization grant outside the app", async () => {
     const credentials = makeCredentials("missing-grant");
     const provisioned = await provisionEmulatorUser({ ...credentials, role: "builder" });
     await setEmulatorClaims(provisioned.uid, { role: "builder" });
 
-    await expect(signIn(credentials.email, credentials.password)).rejects.toThrow(
-      "This account has no assigned BuildTrack role. Contact an administrator",
-    );
+    const user = await signIn(credentials.email, credentials.password);
+    expect(user.role).toBeNull();
     expect(await getCurrentRole()).toBeNull();
-    expect(firebaseAuth.currentUser).toBeNull();
+    expect(firebaseAuth.currentUser?.email).toBe(credentials.email);
+    await signOut();
   });
 
   test.each([

@@ -177,6 +177,12 @@ service cloud.firestore {
           && request.resource.data[field] == request.auth.token.name);
     }
 
+    // Access requests are handled only by callable functions using Admin SDK.
+    // No client, including an authenticated admin, may read or forge them.
+    match /accessRequests/{requestId} {
+      allow read, write: if false;
+    }
+
     function roleClaimIsImmutable() {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(["role"]);
     }

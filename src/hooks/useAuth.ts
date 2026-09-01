@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import {
+  registerForAccess,
   registerWithInvitation,
+  submitAccessRequest,
   signIn,
   signInWithGoogle,
   signOut,
@@ -26,6 +28,8 @@ export const useAuth = () => {
     isLoading,
     signIn,
     signInWithGoogle,
+    registerForAccess,
+    submitAccessRequest,
     registerWithInvitation,
     signOut,
   };
