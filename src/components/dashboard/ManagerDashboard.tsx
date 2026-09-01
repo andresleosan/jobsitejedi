@@ -17,6 +17,7 @@ import JobImportDialog from "./JobImportDialog";
 import SupplierCatalogDialog from "./SupplierCatalogDialog";
 import ReportsRiskPanel from "./ReportsRiskPanel";
 import AccessRequestsPanel from "./AccessRequestsPanel";
+import AdminUsersPanel from "./AdminUsersPanel";
 import { runActiveSessionTask } from "./active-session-task";
 
 interface ManagerDashboardProps {
@@ -133,6 +134,7 @@ const ManagerDashboard = ({ userId, email, role }: ManagerDashboardProps) => {
 
       <main className="container mx-auto space-y-6 px-4 py-6">
         {role === "admin" && <AccessRequestsPanel isSessionActive={ownsActiveSession} />}
+        {role === "admin" && <AdminUsersPanel adminId={userId} isSessionActive={ownsActiveSession} />}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Card>

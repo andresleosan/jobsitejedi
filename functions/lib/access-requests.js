@@ -53,6 +53,20 @@ const normalizeAccessRequestReviewInput = (value) => {
     const reason = payload.reason == null || payload.reason === ""
         ? null
         : requireText(payload.reason, "Review reason", 500);
-    return { requestId, decision: payload.decision, reason };
+    const approvedRole = payload.approvedRole == null || payload.approvedRole === ""
+        ? null
+        : typeof payload.approvedRole === "string"
+            ? payload.approvedRole.trim().toLowerCase()
+            : null;
+    if (approvedRole !== null && !isAccessRequestRole(approvedRole)) {
+        throw new Error("A valid approved role is required");
+    }
+    if (payload.decision === "approve" && approvedRole === null) {
+        throw new Error("A valid approved role is required");
+    }
+    if (payload.decision === "reject" && reason === null) {
+        throw new Error("A rejection reason is required");
+    }
+    return { requestId, decision: payload.decision, reason, approvedRole };
 };
 exports.normalizeAccessRequestReviewInput = normalizeAccessRequestReviewInput;

@@ -38,12 +38,12 @@ test("rejects malformed access requests and unsupported roles", () => {
 
 test("accepts only approve or reject review decisions", () => {
   assert.deepEqual(
-    normalizeAccessRequestReviewInput({ requestId: "user-12345", decision: "approve" }),
-    { requestId: "user-12345", decision: "approve", reason: null },
+    normalizeAccessRequestReviewInput({ requestId: "user-12345", decision: "approve", approvedRole: "builder" }),
+    { requestId: "user-12345", decision: "approve", reason: null, approvedRole: "builder" },
   );
   assert.deepEqual(
     normalizeAccessRequestReviewInput({ requestId: "user-12345", decision: "reject", reason: "  Not enough detail  " }),
-    { requestId: "user-12345", decision: "reject", reason: "Not enough detail" },
+    { requestId: "user-12345", decision: "reject", reason: "Not enough detail", approvedRole: null },
   );
   assert.throws(
     () => normalizeAccessRequestReviewInput({ requestId: "", decision: "approve" }),
@@ -52,6 +52,14 @@ test("accepts only approve or reject review decisions", () => {
   assert.throws(
     () => normalizeAccessRequestReviewInput({ requestId: "user-12345", decision: "pending" }),
     /decision/i,
+  );
+  assert.throws(
+    () => normalizeAccessRequestReviewInput({ requestId: "user-12345", decision: "approve" }),
+    /approved role/i,
+  );
+  assert.throws(
+    () => normalizeAccessRequestReviewInput({ requestId: "user-12345", decision: "reject" }),
+    /rejection reason/i,
   );
 });
 

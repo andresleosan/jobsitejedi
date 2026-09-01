@@ -642,7 +642,12 @@ type RateLimitOperation =
   | "submitAccessRequest"
   | "getAccessRequestStatus"
   | "listAccessRequests"
-  | "reviewAccessRequest";
+  | "reviewAccessRequest"
+  | "listAccessRequestHistory"
+  | "clearAccessRequestHistory"
+  | "listPlatformUsers"
+  | "updatePlatformUserRole"
+  | "revokePlatformUserAccess";
 
 const RATE_LIMITS: Record<RateLimitOperation, { maxRequests: number; windowMs: number }> = {
   createManagerInvitation: { maxRequests: 10, windowMs: 60 * 1000 },
@@ -659,6 +664,11 @@ const RATE_LIMITS: Record<RateLimitOperation, { maxRequests: number; windowMs: n
   getAccessRequestStatus: { maxRequests: 30, windowMs: 60 * 1000 },
   listAccessRequests: { maxRequests: 30, windowMs: 60 * 1000 },
   reviewAccessRequest: { maxRequests: 30, windowMs: 60 * 1000 },
+  listAccessRequestHistory: { maxRequests: 30, windowMs: 60 * 1000 },
+  clearAccessRequestHistory: { maxRequests: 3, windowMs: 15 * 60 * 1000 },
+  listPlatformUsers: { maxRequests: 10, windowMs: 60 * 1000 },
+  updatePlatformUserRole: { maxRequests: 20, windowMs: 60 * 1000 },
+  revokePlatformUserAccess: { maxRequests: 20, windowMs: 60 * 1000 },
 };
 
 const anonymizedRequesterId = (rawIp: string | undefined): string => {
@@ -1475,14 +1485,48 @@ const accessRequestResponse = (
   data: Record<string, unknown>,
 ) => ({
   id: requestId,
+  requestId: typeof data.requestId === "string" ? data.requestId : requestId,
   email: typeof data.email === "string" ? data.email : "",
   fullName: typeof data.fullName === "string" ? data.fullName : "",
   phone: typeof data.phone === "string" ? data.phone : null,
   requestedRole: isAppRole(data.requestedRole) ? data.requestedRole : null,
+  approvedRole: isAppRole(data.approvedRole) ? data.approvedRole : null,
   status: isAccessRequestStatus(data.status) ? data.status : "rejected",
   requestedAt: data.requestedAt instanceof Timestamp ? data.requestedAt.toDate().toISOString() : null,
   reviewedAt: data.reviewedAt instanceof Timestamp ? data.reviewedAt.toDate().toISOString() : null,
   decisionReason: typeof data.decisionReason === "string" ? data.decisionReason : null,
+});
+
+const accessRequestHistoryReference = (requestId: string, requestedAt: unknown) => {
+  const requestedAtMillis = requestedAt instanceof Timestamp ? requestedAt.toMillis() : Date.now();
+  return getFirestore()
+    .collection("accessRequestHistory")
+    .doc(`${requestId}_${requestedAtMillis}`);
+};
+
+const accessRequestHistoryRecord = (
+  requestId: string,
+  data: Record<string, unknown>,
+  status: "approved" | "rejected",
+  reviewedAt: Timestamp,
+  reviewedBy: string,
+  decisionReason: string | null,
+  approvedRole: AppRole | null,
+) => ({
+  schemaVersion: ACCESS_REQUEST_SCHEMA_VERSION,
+  requestId,
+  uid: requestId,
+  email: typeof data.email === "string" ? data.email : "",
+  fullName: typeof data.fullName === "string" ? data.fullName : "",
+  phone: typeof data.phone === "string" ? data.phone : null,
+  requestedRole: data.requestedRole,
+  approvedRole,
+  status,
+  requestedAt: data.requestedAt instanceof Timestamp ? data.requestedAt : reviewedAt,
+  reviewedAt,
+  reviewedBy,
+  decisionReason,
+  createdAt: reviewedAt,
 });
 
 export const getAccessRequestStatus = onCall(
@@ -1568,6 +1612,7 @@ export const submitAccessRequest = onCall(
         fullName: payload.fullName,
         phone: payload.phone,
         requestedRole: payload.requestedRole,
+        approvedRole: null,
         status: "pending" as AccessRequestStatus,
         requestedAt: now,
         updatedAt: now,
@@ -1614,6 +1659,260 @@ export const listAccessRequests = onCall(
       .map(({ id, data }) => accessRequestResponse(id, data));
 
     return { requests };
+  },
+);
+
+export const listAccessRequestHistory = onCall(
+  { ...appCheckOptions, timeoutSeconds: 15, memory: "256MiB", maxInstances: 10 },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentication is required");
+    }
+    const { user } = await requireCurrentRole(
+      request.auth.uid,
+      request.auth.token.role,
+      request.auth.token.authorizationGrantId,
+      request.auth.token.auth_time,
+      ["admin"],
+    );
+    await enforceRateLimit(user.uid, "listAccessRequestHistory");
+
+    const firestore = getFirestore();
+    const [historySnapshot, approvedSnapshot, rejectedSnapshot] = await Promise.all([
+      firestore.collection("accessRequestHistory").orderBy("reviewedAt", "desc").limit(200).get(),
+      firestore.collection("accessRequests").where("status", "==", "approved").orderBy("reviewedAt", "desc").limit(200).get(),
+      firestore.collection("accessRequests").where("status", "==", "rejected").orderBy("reviewedAt", "desc").limit(200).get(),
+    ]);
+    const history = historySnapshot.docs
+      .map((document) => ({ id: document.id, data: document.data() }))
+      .filter(({ data }) => (
+        data.schemaVersion === ACCESS_REQUEST_SCHEMA_VERSION
+        && typeof data.requestId === "string"
+        && typeof data.email === "string"
+        && typeof data.fullName === "string"
+        && isAppRole(data.requestedRole)
+        && (data.status === "approved" || data.status === "rejected")
+      ));
+    const historicalVersions = new Set(history.map(({ data }) => (
+      `${data.requestId}:${data.requestedAt instanceof Timestamp ? data.requestedAt.toMillis() : 0}`
+    )));
+    const legacyCurrent = [...approvedSnapshot.docs, ...rejectedSnapshot.docs]
+      .map((document) => ({ id: document.id, data: document.data() }))
+      .filter(({ id, data }) => (
+        accessRequestIsCurrent(data, id)
+        && !historicalVersions.has(
+          `${id}:${data.requestedAt instanceof Timestamp ? data.requestedAt.toMillis() : 0}`,
+        )
+      ));
+    const records = [...history, ...legacyCurrent]
+      .sort((left, right) => {
+        const leftMillis = left.data.reviewedAt instanceof Timestamp ? left.data.reviewedAt.toMillis() : 0;
+        const rightMillis = right.data.reviewedAt instanceof Timestamp ? right.data.reviewedAt.toMillis() : 0;
+        return rightMillis - leftMillis;
+      })
+      .slice(0, 200)
+      .map(({ id, data }) => accessRequestResponse(id, data));
+
+    return { requests: records };
+  },
+);
+
+export const clearAccessRequestHistory = onCall(
+  { ...appCheckOptions, timeoutSeconds: 30, memory: "256MiB", maxInstances: 5 },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentication is required");
+    }
+    const { user } = await requireCurrentRole(
+      request.auth.uid,
+      request.auth.token.role,
+      request.auth.token.authorizationGrantId,
+      request.auth.token.auth_time,
+      ["admin"],
+    );
+    if (!hasRecentAuthentication(request.auth.token.auth_time)) {
+      throw new HttpsError("permission-denied", "Sign in again before clearing access history");
+    }
+    await enforceRateLimit(user.uid, "clearAccessRequestHistory");
+
+    const firestore = getFirestore();
+    const [historySnapshot, approvedSnapshot, rejectedSnapshot] = await Promise.all([
+      firestore.collection("accessRequestHistory").get(),
+      firestore.collection("accessRequests").where("status", "==", "approved").get(),
+      firestore.collection("accessRequests").where("status", "==", "rejected").get(),
+    ]);
+    const references = [
+      ...historySnapshot.docs.map((document) => document.ref),
+      ...approvedSnapshot.docs.map((document) => document.ref),
+      ...rejectedSnapshot.docs.map((document) => document.ref),
+    ];
+    let deletedCount = 0;
+    for (let offset = 0; offset < references.length; offset += 400) {
+      const batch = firestore.batch();
+      references.slice(offset, offset + 400).forEach((reference) => batch.delete(reference));
+      await batch.commit();
+      deletedCount += Math.min(400, references.length - offset);
+    }
+    return { deletedCount };
+  },
+);
+
+const normalizePlatformUserId = (value: unknown): string => {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value.trim())) {
+    throw new HttpsError("invalid-argument", "User id is invalid");
+  }
+  return value.trim();
+};
+
+const normalizePlatformUserRole = (value: unknown): AppRole => {
+  if (!isAppRole(value)) throw new HttpsError("invalid-argument", "A valid role is required");
+  return value;
+};
+
+const platformUserResponse = (user: UserRecord) => ({
+  id: user.uid,
+  email: user.email ?? null,
+  displayName: user.displayName?.trim() || null,
+  role: isAppRole(user.customClaims?.role) ? user.customClaims.role : null,
+  disabled: user.disabled,
+  emailVerified: user.emailVerified,
+  createdAt: user.metadata.creationTime ?? null,
+  lastSignInAt: user.metadata.lastSignInTime ?? null,
+});
+
+const firestoreGrantReference = (userId: string) =>
+  getFirestore().collection("authorizationGrants").doc(userId);
+
+const assignManagedUserRole = async (userId: string, role: AppRole): Promise<void> => {
+  const target = await getUserWithRetry(userId);
+  if (target.disabled) throw new HttpsError("failed-precondition", "The account is disabled");
+  const previousClaims = JSON.parse(JSON.stringify(target.customClaims ?? {})) as Record<string, unknown>;
+  const grantReference = firestoreGrantReference(userId);
+  const previousGrantSnapshot = await grantReference.get();
+  const previousGrant = previousGrantSnapshot.exists ? previousGrantSnapshot.data() ?? null : null;
+  const grantId = randomBytes(AUTHORIZATION_GRANT_ID_BYTES).toString("hex");
+  const updatedAt = Timestamp.now();
+  const nextGrant = { active: true, role, grantId, updatedAt };
+
+  const nextClaims: Record<string, unknown> = { ...previousClaims, role, authorizationGrantId: grantId };
+  delete nextClaims.invitationEnrollmentId;
+  try {
+    await getAuth().setCustomUserClaims(userId, nextClaims);
+    await getFirestore().runTransaction(async (transaction) => {
+      transaction.set(grantReference, nextGrant);
+    });
+    const verified = await getUserWithRetry(userId);
+    const verifiedGrant = await grantReference.get();
+    if (
+      verified.disabled
+      || verified.customClaims?.role !== role
+      || getAuthorizationGrantId(verified) !== grantId
+      || !verifiedGrant.exists
+      || !authorizationGrantMatches(verifiedGrant.data() ?? {}, role, grantId)
+    ) {
+      throw new Error("Managed role assignment could not be verified");
+    }
+    await getAuth().revokeRefreshTokens(userId);
+  } catch (error) {
+    await getAuth().setCustomUserClaims(userId, previousClaims).catch(() => undefined);
+    await getFirestore().runTransaction(async (transaction) => {
+      if (previousGrantSnapshot.exists && previousGrant) transaction.set(grantReference, previousGrant);
+      else transaction.delete(grantReference);
+    }).catch(() => undefined);
+    if (error instanceof HttpsError) throw error;
+    throw new HttpsError("internal", "The user role could not be assigned safely");
+  }
+};
+
+export const listPlatformUsers = onCall(
+  { ...appCheckOptions, timeoutSeconds: 30, memory: "256MiB", maxInstances: 5 },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication is required");
+    const { user } = await requireCurrentRole(
+      request.auth.uid,
+      request.auth.token.role,
+      request.auth.token.authorizationGrantId,
+      request.auth.token.auth_time,
+      ["admin"],
+    );
+    await enforceRateLimit(user.uid, "listPlatformUsers");
+    const users: UserRecord[] = [];
+    let pageToken: string | undefined;
+    do {
+      const page = await getAuth().listUsers(1_000, pageToken);
+      users.push(...page.users);
+      pageToken = page.pageToken;
+    } while (pageToken && users.length < 5_000);
+    return { users: users.map(platformUserResponse) };
+  },
+);
+
+export const updatePlatformUserRole = onCall(
+  { ...appCheckOptions, timeoutSeconds: 30, memory: "256MiB", maxInstances: 10 },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication is required");
+    const { user: reviewer } = await requireCurrentRole(
+      request.auth.uid,
+      request.auth.token.role,
+      request.auth.token.authorizationGrantId,
+      request.auth.token.auth_time,
+      ["admin"],
+    );
+    if (!hasRecentAuthentication(request.auth.token.auth_time)) {
+      throw new HttpsError("permission-denied", "Sign in again before changing user roles");
+    }
+    if (!isRecord(request.data)) throw new HttpsError("invalid-argument", "User role details are required");
+    const userId = normalizePlatformUserId(request.data.userId);
+    const role = normalizePlatformUserRole(request.data.role);
+    if (userId === reviewer.uid) throw new HttpsError("failed-precondition", "You cannot change your own role");
+    await enforceRateLimit(reviewer.uid, "updatePlatformUserRole");
+    await assignManagedUserRole(userId, role);
+    return platformUserResponse(await getUserWithRetry(userId));
+  },
+);
+
+export const revokePlatformUserAccess = onCall(
+  { ...appCheckOptions, timeoutSeconds: 30, memory: "256MiB", maxInstances: 10 },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication is required");
+    const { user: reviewer } = await requireCurrentRole(
+      request.auth.uid,
+      request.auth.token.role,
+      request.auth.token.authorizationGrantId,
+      request.auth.token.auth_time,
+      ["admin"],
+    );
+    if (!hasRecentAuthentication(request.auth.token.auth_time)) {
+      throw new HttpsError("permission-denied", "Sign in again before revoking user access");
+    }
+    if (!isRecord(request.data)) throw new HttpsError("invalid-argument", "User details are required");
+    const userId = normalizePlatformUserId(request.data.userId);
+    if (userId === reviewer.uid) throw new HttpsError("failed-precondition", "You cannot revoke your own access");
+    await enforceRateLimit(reviewer.uid, "revokePlatformUserAccess");
+    const target = await getUserWithRetry(userId);
+    const claims = { ...(target.customClaims ?? {}) };
+    delete claims.role;
+    delete claims.authorizationGrantId;
+    const grantReference = firestoreGrantReference(userId);
+    const previousGrantSnapshot = await grantReference.get();
+    const previousGrant = previousGrantSnapshot.exists ? previousGrantSnapshot.data() ?? null : null;
+    const currentRole = isAppRole(target.customClaims?.role) ? target.customClaims.role : "builder";
+    try {
+      await getAuth().setCustomUserClaims(userId, claims);
+      await grantReference.set({
+        active: false,
+        role: currentRole,
+        grantId: randomBytes(AUTHORIZATION_GRANT_ID_BYTES).toString("hex"),
+        updatedAt: Timestamp.now(),
+      });
+      await getAuth().revokeRefreshTokens(userId);
+    } catch {
+      await getAuth().setCustomUserClaims(userId, target.customClaims ?? {}).catch(() => undefined);
+      if (previousGrantSnapshot.exists && previousGrant) await grantReference.set(previousGrant).catch(() => undefined);
+      else await grantReference.delete().catch(() => undefined);
+      throw new HttpsError("internal", "The user access could not be revoked safely");
+    }
+    return platformUserResponse(await getUserWithRetry(userId));
   },
 );
 
@@ -1706,8 +2005,22 @@ export const reviewAccessRequest = onCall(
         if (latest.data()?.status !== "pending") {
           throw new HttpsError("failed-precondition", "The access request is already being reviewed");
         }
+        const latestData = latest.data() ?? {};
+        transaction.set(
+          accessRequestHistoryReference(payload.requestId, latestData.requestedAt),
+          accessRequestHistoryRecord(
+            payload.requestId,
+            latestData,
+            "rejected",
+            now,
+            reviewer.uid,
+            payload.reason,
+            null,
+          ),
+        );
         transaction.update(reference, {
           status: "rejected" as AccessRequestStatus,
+          approvedRole: null,
           reviewedAt: now,
           reviewedBy: reviewer.uid,
           decisionReason: payload.reason,
@@ -1720,6 +2033,7 @@ export const reviewAccessRequest = onCall(
         reviewedAt: now,
         reviewedBy: reviewer.uid,
         decisionReason: payload.reason,
+        approvedRole: null,
       });
     }
 
@@ -1731,7 +2045,7 @@ export const reviewAccessRequest = onCall(
     if (targetUser.customClaims?.invitationEnrollmentId !== undefined) {
       throw new HttpsError("failed-precondition", "The account belongs to the invitation enrollment flow");
     }
-    const targetRole = current.requestedRole as AccessRequestRole;
+    const targetRole = payload.approvedRole as AccessRequestRole;
     const previousClaims = JSON.parse(JSON.stringify(targetUser.customClaims ?? {})) as Record<string, unknown>;
     const previousGrantReference = getFirestore().collection("authorizationGrants").doc(payload.requestId);
     const previousGrantSnapshot = await previousGrantReference.get();
@@ -1743,14 +2057,34 @@ export const reviewAccessRequest = onCall(
     const existingGrantId = getAuthorizationGrantId(targetUser);
     if (previousRole === targetRole && existingGrantId && authorizationGrantMatches(previousGrant ?? {}, targetRole, existingGrantId)) {
       const now = Timestamp.now();
-      await reference.update({
-        status: "approved" as AccessRequestStatus,
-        reviewedAt: now,
-        reviewedBy: reviewer.uid,
-        decisionReason: null,
-        updatedAt: now,
+      await getFirestore().runTransaction(async (transaction) => {
+        const latest = await transaction.get(reference);
+        if (latest.data()?.status !== "pending") {
+          throw new HttpsError("failed-precondition", "The access request is already being reviewed");
+        }
+        const latestData = latest.data() ?? {};
+        transaction.set(
+          accessRequestHistoryReference(payload.requestId, latestData.requestedAt),
+          accessRequestHistoryRecord(
+            payload.requestId,
+            latestData,
+            "approved",
+            now,
+            reviewer.uid,
+            null,
+            targetRole,
+          ),
+        );
+        transaction.update(reference, {
+          status: "approved" as AccessRequestStatus,
+          reviewedAt: now,
+          reviewedBy: reviewer.uid,
+          decisionReason: null,
+          approvedRole: targetRole,
+          updatedAt: now,
+        });
       });
-      return accessRequestResponse(payload.requestId, { ...current, status: "approved", reviewedAt: now, reviewedBy: reviewer.uid, decisionReason: null });
+      return accessRequestResponse(payload.requestId, { ...current, status: "approved", reviewedAt: now, reviewedBy: reviewer.uid, decisionReason: null, approvedRole: targetRole });
     }
     if (current.status !== "pending") {
       throw new HttpsError("failed-precondition", "The access request is already being reviewed");
@@ -1813,10 +2147,23 @@ export const reviewAccessRequest = onCall(
           reviewedAt: completedAt,
           reviewedBy: reviewer.uid,
           decisionReason: null,
+          approvedRole: targetRole,
           updatedAt: completedAt,
         });
+        transaction.set(
+          accessRequestHistoryReference(payload.requestId, current.requestedAt),
+          accessRequestHistoryRecord(
+            payload.requestId,
+            current,
+            "approved",
+            completedAt,
+            reviewer.uid,
+            null,
+            targetRole,
+          ),
+        );
       });
-      return accessRequestResponse(payload.requestId, { ...current, status: "approved", reviewedAt: completedAt, reviewedBy: reviewer.uid, decisionReason: null });
+      return accessRequestResponse(payload.requestId, { ...current, status: "approved", reviewedAt: completedAt, reviewedBy: reviewer.uid, decisionReason: null, approvedRole: targetRole });
     } catch (error) {
       await restoreAccessRequestAuthorization({
         requestId: payload.requestId,

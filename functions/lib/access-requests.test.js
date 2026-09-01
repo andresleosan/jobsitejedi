@@ -23,10 +23,12 @@ const access_requests_js_1 = require("./access-requests.js");
     strict_1.default.throws(() => (0, access_requests_js_1.normalizeAccessRequestInput)({ requestedRole: "admin", fullName: "Someone", phone: "x".repeat(21) }), /phone/i);
 });
 (0, node_test_1.default)("accepts only approve or reject review decisions", () => {
-    strict_1.default.deepEqual((0, access_requests_js_1.normalizeAccessRequestReviewInput)({ requestId: "user-12345", decision: "approve" }), { requestId: "user-12345", decision: "approve", reason: null });
-    strict_1.default.deepEqual((0, access_requests_js_1.normalizeAccessRequestReviewInput)({ requestId: "user-12345", decision: "reject", reason: "  Not enough detail  " }), { requestId: "user-12345", decision: "reject", reason: "Not enough detail" });
+    strict_1.default.deepEqual((0, access_requests_js_1.normalizeAccessRequestReviewInput)({ requestId: "user-12345", decision: "approve", approvedRole: "builder" }), { requestId: "user-12345", decision: "approve", reason: null, approvedRole: "builder" });
+    strict_1.default.deepEqual((0, access_requests_js_1.normalizeAccessRequestReviewInput)({ requestId: "user-12345", decision: "reject", reason: "  Not enough detail  " }), { requestId: "user-12345", decision: "reject", reason: "Not enough detail", approvedRole: null });
     strict_1.default.throws(() => (0, access_requests_js_1.normalizeAccessRequestReviewInput)({ requestId: "", decision: "approve" }), /request id/i);
     strict_1.default.throws(() => (0, access_requests_js_1.normalizeAccessRequestReviewInput)({ requestId: "user-12345", decision: "pending" }), /decision/i);
+    strict_1.default.throws(() => (0, access_requests_js_1.normalizeAccessRequestReviewInput)({ requestId: "user-12345", decision: "approve" }), /approved role/i);
+    strict_1.default.throws(() => (0, access_requests_js_1.normalizeAccessRequestReviewInput)({ requestId: "user-12345", decision: "reject" }), /rejection reason/i);
 });
 (0, node_test_1.default)("keeps the role contract limited to the three application roles", () => {
     const roles = ["admin", "manager", "builder"];

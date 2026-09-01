@@ -84,10 +84,12 @@ export type AccessRequestStatus = "pending" | "approving" | "approved" | "reject
 
 export interface AccessRequestRecord {
   id: string;
+  requestId: string;
   email: string;
   fullName: string;
   phone: string | null;
   requestedRole: AppRole | null;
+  approvedRole: AppRole | null;
   status: AccessRequestStatus;
   requestedAt: Date | null;
   reviewedAt: Date | null;
@@ -115,9 +117,45 @@ const listAccessRequestsCallable = httpsCallable<
 >(firebaseFunctions, "listAccessRequests");
 
 const reviewAccessRequestCallable = httpsCallable<
-  { requestId: string; decision: "approve" | "reject"; reason?: string | null },
+  { requestId: string; decision: "approve" | "reject"; reason?: string | null; approvedRole?: AppRole | null },
   AccessRequestCallableRecord
 >(firebaseFunctions, "reviewAccessRequest");
+
+const listAccessRequestHistoryCallable = httpsCallable<
+  Record<string, never>,
+  { requests: AccessRequestCallableRecord[] }
+>(firebaseFunctions, "listAccessRequestHistory");
+
+const clearAccessRequestHistoryCallable = httpsCallable<
+  Record<string, never>,
+  { deletedCount: number }
+>(firebaseFunctions, "clearAccessRequestHistory");
+
+export interface PlatformUserRecord {
+  id: string;
+  email: string | null;
+  displayName: string | null;
+  role: AppRole | null;
+  disabled: boolean;
+  emailVerified: boolean;
+  createdAt: string | null;
+  lastSignInAt: string | null;
+}
+
+const listPlatformUsersCallable = httpsCallable<
+  Record<string, never>,
+  { users: PlatformUserRecord[] }
+>(firebaseFunctions, "listPlatformUsers");
+
+const updatePlatformUserRoleCallable = httpsCallable<
+  { userId: string; role: AppRole },
+  PlatformUserRecord
+>(firebaseFunctions, "updatePlatformUserRole");
+
+const revokePlatformUserAccessCallable = httpsCallable<
+  { userId: string },
+  PlatformUserRecord
+>(firebaseFunctions, "revokePlatformUserAccess");
 
 const toAccessRequestRecord = (record: AccessRequestCallableRecord): AccessRequestRecord => ({
   ...record,
@@ -246,7 +284,24 @@ export const accessRequestOperations = {
     requestId: string;
     decision: "approve" | "reject";
     reason?: string | null;
+    approvedRole?: AppRole | null;
   }): Promise<AccessRequestRecord> {
     return toAccessRequestRecord((await reviewAccessRequestCallable(input)).data);
+  },
+  async listAccessRequestHistory(): Promise<AccessRequestRecord[]> {
+    const result = await listAccessRequestHistoryCallable({});
+    return result.data.requests.map(toAccessRequestRecord);
+  },
+  async clearAccessRequestHistory(): Promise<number> {
+    return (await clearAccessRequestHistoryCallable({})).data.deletedCount;
+  },
+  async listPlatformUsers(): Promise<PlatformUserRecord[]> {
+    return (await listPlatformUsersCallable({})).data.users;
+  },
+  async updatePlatformUserRole(input: { userId: string; role: AppRole }): Promise<PlatformUserRecord> {
+    return (await updatePlatformUserRoleCallable(input)).data;
+  },
+  async revokePlatformUserAccess(userId: string): Promise<PlatformUserRecord> {
+    return (await revokePlatformUserAccessCallable({ userId })).data;
   },
 };

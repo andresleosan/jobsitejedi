@@ -405,11 +405,17 @@ describe("Firebase invitation Functions", () => {
     await expect(accessRequestOperations.reviewAccessRequest({
       requestId: applicant.uid,
       decision: "approve",
-    })).resolves.toMatchObject({ id: applicant.uid, status: "approved", requestedRole: "manager" });
+      approvedRole: "builder",
+    })).resolves.toMatchObject({
+      id: applicant.uid,
+      status: "approved",
+      requestedRole: "manager",
+      approvedRole: "builder",
+    });
     await signOut();
 
     const approvedSession = await signIn(applicantCredentials.email, applicantCredentials.password);
-    expect(approvedSession.role).toBe("manager");
+    expect(approvedSession.role).toBe("builder");
     await signOut();
 
     const rejectedCredentials = credentials("access-rejected");
@@ -431,6 +437,49 @@ describe("Firebase invitation Functions", () => {
       reason: "Perfil no requerido en este momento",
     })).resolves.toMatchObject({ id: rejected.uid, status: "rejected", requestedRole: "builder" });
     expect(await readEmulatorRole(rejected.uid)).toBeUndefined();
+
+    await signIn(rejectedCredentials.email, rejectedCredentials.password);
+    await expect(accessRequestOperations.submitAccessRequest({
+      requestedRole: "admin",
+      fullName: rejectedCredentials.fullName,
+    })).resolves.toMatchObject({ status: "pending", requestedRole: "admin" });
+    await signOut();
+
+    await signIn(adminCredentials.email, adminCredentials.password);
+    await expect(accessRequestOperations.listAccessRequestHistory()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ status: "approved", requestedRole: "manager", approvedRole: "builder" }),
+        expect.objectContaining({ status: "rejected", requestedRole: "builder", decisionReason: "Perfil no requerido en este momento" }),
+      ]),
+    );
+    await expect(accessRequestOperations.clearAccessRequestHistory()).resolves.toBeGreaterThanOrEqual(2);
+    await expect(accessRequestOperations.listAccessRequestHistory()).resolves.toEqual([]);
+  }, 30_000);
+
+  test("lets an admin change or revoke another user's access without self-lockout", async () => {
+    const adminCredentials = credentials("user-admin");
+    const admin = await provisionEmulatorUser({
+      email: adminCredentials.email,
+      password: adminCredentials.password,
+      displayName: adminCredentials.fullName,
+      role: "admin",
+    });
+    const targetCredentials = credentials("managed-user");
+    const target = await provisionEmulatorUser({
+      email: targetCredentials.email,
+      password: targetCredentials.password,
+      displayName: targetCredentials.fullName,
+      role: "builder",
+    });
+
+    await signIn(adminCredentials.email, adminCredentials.password);
+    await expect(accessRequestOperations.updatePlatformUserRole({ userId: target.uid, role: "manager" })).resolves.toMatchObject({ id: target.uid, role: "manager" });
+    expect(await readEmulatorRole(target.uid)).toBe("manager");
+    await expect(accessRequestOperations.revokePlatformUserAccess(target.uid)).resolves.toMatchObject({ id: target.uid, role: null });
+    expect(await readEmulatorRole(target.uid)).toBeUndefined();
+    await expect(readAuthorizationGrant(target.uid)).resolves.toMatchObject({ active: false });
+    await expect(accessRequestOperations.updatePlatformUserRole({ userId: admin.uid, role: "builder" })).rejects.toThrow();
+    await signOut();
   }, 30_000);
 
   test("creates, validates, consumes once and accepts an idempotent retry", async () => {

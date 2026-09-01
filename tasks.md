@@ -1209,3 +1209,22 @@ T-030 y T-031 siguen como mejoras posteriores y no bloquean el release ya desple
 - Rediseño visual amplio.
 - Optimización especulativa.
 - Migraciones destructivas o limpieza irreversible del historial.
+
+## T-037 — Administración de solicitudes y usuarios
+
+- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-036
+- Conservar cada decisión de acceso en un historial separado del estado operativo actual.
+- Exigir motivo al rechazar y permitir que el administrador seleccione el rol final al aprobar,
+  conservando también el rol que la persona solicitó.
+- Mostrar historial aprobado/rechazado con una acción explícita para limpiarlo; la limpieza no
+  debe afectar solicitudes pendientes.
+- Añadir una sección de personas para cambiar roles o revocar el acceso sin borrar la cuenta.
+- Mantener todas las mutaciones detrás de Functions, con sesión administrativa reciente, límites
+  de uso y protección contra auto-revocación o auto-degradación.
+- **Rollback:** retirar la interfaz/Functions nuevas y conservar los documentos existentes; la
+  limpieza del historial es una acción administrativa explícita y elimina únicamente estados
+  terminales, nunca solicitudes pendientes.
+- **Evidencia local:** contrato de Functions (14/14), prueba focalizada de emulador para acceso,
+  historial, limpieza y gestión de usuarios (2/2), guard de proveedor (9/9), typecheck, build de
+  Functions, build de desarrollo y lint sin errores. Lint conserva siete warnings preexistentes de
+  Fast Refresh. No se desplegó producción.
