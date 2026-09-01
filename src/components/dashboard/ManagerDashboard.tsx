@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { BriefcaseBusiness, Building2, FileSpreadsheet, LogOut, Plus, ReceiptText, Trash2, Truck, Users, Warehouse } from "lucide-react";
+import { ArrowUpRight, BriefcaseBusiness, Building2, FileSpreadsheet, LogOut, Plus, ReceiptText, ShieldCheck, Trash2, Truck, Users, Warehouse } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
@@ -144,14 +144,15 @@ const ManagerDashboard = ({ userId, email, role }: ManagerDashboardProps) => {
               <h2 id="admin-overview-title">Keep every account in the right hands.</h2>
               <p>Review access, manage roles, and keep project operations moving from one place.</p>
             </div>
-            <div className="admin-overview-note-copy">
+            <div className="admin-overview-note">
+              <ShieldCheck aria-hidden="true" />
               <span><strong>Permissions stay explicit</strong><small>Every account has a clear role and an auditable decision.</small></span>
             </div>
           </section>
           <nav className="admin-section-nav" aria-label="Admin sections">
-            <a href="#access-requests"><span><strong>Access requests</strong><small>Review incoming access</small></span></a>
-            <a href="#people-permissions"><span><strong>People &amp; permissions</strong><small>Manage active accounts</small></span></a>
-            <a href="#projects"><span><strong>Projects</strong><small>Keep the work moving</small></span></a>
+            <a href="#access-requests"><ShieldCheck aria-hidden="true" /><span><strong>Access requests</strong><small>Review incoming access</small></span><ArrowUpRight aria-hidden="true" /></a>
+            <a href="#people-permissions"><Users aria-hidden="true" /><span><strong>People &amp; permissions</strong><small>Manage active accounts</small></span><ArrowUpRight aria-hidden="true" /></a>
+            <a href="#projects"><BriefcaseBusiness aria-hidden="true" /><span><strong>Projects</strong><small>Keep the work moving</small></span><ArrowUpRight aria-hidden="true" /></a>
           </nav>
         </>
       )}

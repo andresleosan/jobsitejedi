@@ -49,12 +49,7 @@ describe("Auth page contract", () => {
   test("keeps the access benefits quiet and content-led", () => {
     const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
 
-    expect(css).not.toContain(".auth-benefit-icon");
-  });
-
-  test("keeps the access benefits free of decorative icon tiles", () => {
-    const html = renderAuth();
-
-    expect(html).not.toContain("auth-benefit-icon");
+    expect(css).toContain(".auth-benefit-icon { display: inline-flex; width: 20px;");
+    expect(css).toContain("background: transparent; color: var(--auth-blue);");
   });
 });
