@@ -45,7 +45,7 @@ test("admin reviews a requested profile and the user reaches the approved dashbo
   const request = page.locator('[data-testid="access-request"]').filter({ hasText: applicantEmail });
   await expect(request).toContainText(applicantName);
   await expect(request).toContainText("Manager");
-  await request.getByRole("button", { name: "Aprobar", exact: true }).click();
+  await request.getByRole("button", { name: /Aprobar como Manager/ }).click();
   await expect(request).toHaveCount(0);
 
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
