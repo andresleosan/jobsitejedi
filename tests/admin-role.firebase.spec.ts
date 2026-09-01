@@ -80,3 +80,36 @@ test("manager sees that only an administrator reviews access requests", async ({
   await expect(page.getByText("Las solicitudes las aprueba un administrador", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Aprobar", exact: true })).toHaveCount(0);
 });
+
+test("admin dashboard stays usable on a narrow mobile viewport", async ({ page }) => {
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const password = "AdminMobileE2E9!";
+  const adminEmail = `admin-mobile-${suffix}@example.test`;
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await provisionEmulatorUser({
+    email: adminEmail,
+    password,
+    displayName: "Admin Mobile E2E",
+    role: "admin",
+  });
+
+  await signIn(page, adminEmail, password);
+  await expect(page).toHaveURL(/\/admins$/);
+  await expect(page.getByRole("button", { name: "Instalar app", exact: true })).toBeVisible();
+
+  const layout = await page.evaluate(() => ({
+    documentWidth: document.documentElement.scrollWidth,
+    viewportWidth: window.innerWidth,
+    clippedControls: [...document.querySelectorAll<HTMLElement>("button, a[href], input, select, textarea")]
+      .filter((element) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0
+          && (rect.left < -1 || rect.right > window.innerWidth + 1);
+      }).length,
+  }));
+
+  expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth + 1);
+  expect(layout.clippedControls).toBe(0);
+});

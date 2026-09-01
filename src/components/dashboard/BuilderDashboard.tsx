@@ -22,6 +22,7 @@ import MaterialDeliveryDialog from "./MaterialDeliveryDialog";
 import RubbishCollectionDialog from "./RubbishCollectionDialog";
 import InvoiceSubmissionDialog from "./InvoiceSubmissionDialog";
 import ReportsRiskPanel from "./ReportsRiskPanel";
+import { PwaInstallAction } from "../PwaInstallAction";
 
 interface BuilderDashboardProps {
   userId: string;
@@ -183,16 +184,17 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
   return (
     <div className="min-h-screen bg-muted/30">
       <header className="bg-card border-b shadow-sm sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="container mx-auto flex items-center justify-between gap-3 px-3 py-3 sm:px-4 sm:py-4">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="rounded-lg bg-secondary p-2">
               <Clock className="h-5 w-5 text-secondary-foreground" />
             </div>
             <div>
-              <h1 className="text-xl font-bold">Builder Dashboard</h1>
-              <p className="text-sm text-muted-foreground">BuildTrack Pro</p>
+              <h1 className="truncate text-lg font-bold sm:text-xl">Builder Dashboard</h1>
+              <p className="text-xs text-muted-foreground sm:text-sm">BuildTrack Pro</p>
             </div>
           </div>
+          <div className="hidden sm:block"><PwaInstallAction /></div>
           <Button variant="outline" size="sm" onClick={handleSignOut}>
             <LogOut className="h-4 w-4 mr-2" />
             Sign Out
@@ -200,7 +202,9 @@ const BuilderDashboard = ({ userId }: BuilderDashboardProps) => {
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-6 space-y-6">
+      <div className="border-b bg-card px-3 py-2 sm:hidden"><PwaInstallAction /></div>
+
+      <main className="container mx-auto space-y-4 px-3 py-4 sm:space-y-6 sm:px-4 sm:py-6">
         {/* Project Selection */}
         <Card>
           <CardHeader>

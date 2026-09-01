@@ -19,6 +19,7 @@ import ReportsRiskPanel from "./ReportsRiskPanel";
 import AccessRequestsPanel from "./AccessRequestsPanel";
 import AdminUsersPanel from "./AdminUsersPanel";
 import { runActiveSessionTask } from "./active-session-task";
+import { PwaInstallAction } from "../PwaInstallAction";
 
 interface ManagerDashboardProps {
   userId: string;
@@ -109,21 +110,22 @@ const ManagerDashboard = ({ userId, email, role }: ManagerDashboardProps) => {
   return (
     <div className="min-h-screen bg-muted/30">
       <header className="sticky top-0 z-10 border-b bg-card shadow-sm">
-        <div className="container mx-auto flex items-center justify-between px-4 py-4">
-          <div className="flex items-center gap-3">
+        <div className="container mx-auto flex items-center justify-between gap-3 px-3 py-3 sm:px-4 sm:py-4">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="rounded-lg bg-primary p-2">
               <Users className="h-5 w-5 text-primary-foreground" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-xl font-bold">{role === "admin" ? "Admin Dashboard" : "Manager Dashboard"}</h1>
-              <p className="text-sm text-muted-foreground">BuildTrack Pro · {role} workspace</p>
+              <h1 className="truncate text-lg font-bold sm:text-xl">{role === "admin" ? "Admin Dashboard" : "Manager Dashboard"}</h1>
+              <p className="truncate text-xs text-muted-foreground sm:text-sm">BuildTrack Pro · {role} workspace</p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-4">
             <div className="hidden text-right text-xs sm:block">
               <p className="text-muted-foreground">Rol: <span className="font-semibold text-foreground">{roleLabel[role]}</span></p>
               <p className="max-w-[18rem] truncate text-muted-foreground" title={email}>Correo: <span className="font-medium text-foreground">{email}</span></p>
             </div>
+            <div className="hidden sm:block"><PwaInstallAction /></div>
             <Button variant="outline" size="sm" onClick={handleSignOut} disabled={isSigningOut}>
               <LogOut className="h-4 w-4" />
               Sign out
@@ -132,7 +134,9 @@ const ManagerDashboard = ({ userId, email, role }: ManagerDashboardProps) => {
         </div>
       </header>
 
-      <main className="container mx-auto space-y-6 px-4 py-6">
+      <div className="border-b bg-card px-3 py-2 sm:hidden"><PwaInstallAction /></div>
+
+      <main className="container mx-auto space-y-4 px-3 py-4 sm:space-y-6 sm:px-4 sm:py-6">
         {role === "admin" && <AccessRequestsPanel isSessionActive={ownsActiveSession} />}
         {role === "admin" && <AdminUsersPanel adminId={userId} isSessionActive={ownsActiveSession} />}
 

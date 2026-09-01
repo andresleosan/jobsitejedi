@@ -323,3 +323,16 @@ Confirmado explícitamente por el operador:
 - [x] Clasificación Nivel 3.
 - [x] Migración incremental sin nueva ruta híbrida.
 - [x] Testing con Emulator Suite + Vitest + Playwright.
+
+## Criterio visual para dashboard móvil y PWA (T-038)
+
+- **Layout:** el panel de solicitudes usa una columna en pantallas estrechas y una grilla de
+  información/acciones en pantallas anchas; se reducen paddings y separaciones para que la decisión
+  quede visible sin espacio vertical desperdiciado.
+- **Instalación Android:** después del login, cada dashboard con rol muestra `Instalar app` cuando el
+  navegador ofrece `beforeinstallprompt`. En Android sin prompt disponible se muestran instrucciones
+  para Chrome. La instalación es una PWA autenticada, no un APK nativo.
+- **Elemento firma:** el favicon de BuildTrack Pro se reutiliza como icono PWA en PNG de 192/512 px,
+  manteniendo la identidad del casco azul en la pantalla de inicio.
+- **Piso de calidad:** manifest, service worker, `viewport-fit=cover`, targets táctiles existentes,
+  sin overflow horizontal a 390 px y fallback de navegación al shell cacheado.
