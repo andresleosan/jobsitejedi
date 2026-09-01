@@ -16,6 +16,7 @@ import ManagerInvoicesDialog from "./ManagerInvoicesDialog";
 import JobImportDialog from "./JobImportDialog";
 import SupplierCatalogDialog from "./SupplierCatalogDialog";
 import ReportsRiskPanel from "./ReportsRiskPanel";
+import AccessRequestsPanel from "./AccessRequestsPanel";
 import { runActiveSessionTask } from "./active-session-task";
 
 interface ManagerDashboardProps {
@@ -183,12 +184,6 @@ const ManagerDashboard = ({ userId, role }: ManagerDashboardProps) => {
                   <FileSpreadsheet className="h-4 w-4" />
                   Import jobs
                 </Button>
-                <Button variant="outline" asChild>
-                  <Link to="/invite">
-                    <Users className="h-4 w-4" />
-                    Invite member
-                  </Link>
-                </Button>
               </div>
             </div>
           </CardHeader>
@@ -200,6 +195,8 @@ const ManagerDashboard = ({ userId, role }: ManagerDashboardProps) => {
             />
           </CardContent>
         </Card>
+
+        {role === "admin" && <AccessRequestsPanel isSessionActive={ownsActiveSession} />}
 
         <ManagerJobReviewPanel isSessionActive={ownsActiveSession} />
 

@@ -27,6 +27,7 @@ let registerWithInvitation: typeof import("@/lib/firebase/auth").registerWithInv
 let signIn: typeof import("@/lib/firebase/auth").signIn;
 let signOut: typeof import("@/lib/firebase/auth").signOut;
 let invitationOperations: typeof import("@/lib/firebase/functions").invitationOperations;
+let accessRequestOperations: typeof import("@/lib/firebase/functions").accessRequestOperations;
 let submitInvoiceRecord: typeof import("@/lib/firebase/functions").submitInvoiceRecord;
 let reviewInvoiceRecord: typeof import("@/lib/firebase/functions").reviewInvoiceRecord;
 let extractJobsFromExcelRecord: typeof import("@/lib/firebase/functions").extractJobsFromExcelRecord;
@@ -346,7 +347,7 @@ describe("Firebase invitation Functions", () => {
       return reference.id;
     };
     ({ registerWithInvitation, signIn, signOut } = await import("@/lib/firebase/auth"));
-    ({ invitationOperations, submitInvoiceRecord, reviewInvoiceRecord, extractJobsFromExcelRecord } =
+    ({ invitationOperations, accessRequestOperations, submitInvoiceRecord, reviewInvoiceRecord, extractJobsFromExcelRecord } =
       await import("@/lib/firebase/functions"));
     ({ createProject } = await import("@/lib/firebase/repositories/projects"));
     ({ uploadPrivateFile, buildPrivateStoragePath } = await import("@/lib/firebase/storage"));
@@ -368,6 +369,69 @@ describe("Firebase invitation Functions", () => {
     await signOut();
     vi.unstubAllEnvs();
   });
+
+  test("creates an access request and lets an admin approve or reject it", async () => {
+    const applicantCredentials = credentials("access-applicant");
+    const applicant = await provisionEmulatorUser({
+      email: applicantCredentials.email,
+      password: applicantCredentials.password,
+      displayName: applicantCredentials.fullName,
+      role: null,
+    });
+    await signIn(applicantCredentials.email, applicantCredentials.password);
+    await expect(accessRequestOperations.submitAccessRequest({
+      requestedRole: "manager",
+      fullName: applicantCredentials.fullName,
+      phone: " +57 300 123 4567 ",
+    })).resolves.toMatchObject({ status: "pending", requestedRole: "manager" });
+    await signOut();
+
+    const adminCredentials = credentials("access-admin");
+    await provisionEmulatorUser({
+      email: adminCredentials.email,
+      password: adminCredentials.password,
+      displayName: adminCredentials.fullName,
+      role: "admin",
+    });
+    await signIn(adminCredentials.email, adminCredentials.password);
+    const pending = await accessRequestOperations.listAccessRequests();
+    const applicantRequest = pending.find((request) => request.id === applicant.uid);
+    expect(applicantRequest).toMatchObject({
+      email: applicantCredentials.email,
+      requestedRole: "manager",
+      status: "pending",
+      phone: "+57 300 123 4567",
+    });
+    await expect(accessRequestOperations.reviewAccessRequest({
+      requestId: applicant.uid,
+      decision: "approve",
+    })).resolves.toMatchObject({ id: applicant.uid, status: "approved", requestedRole: "manager" });
+    await signOut();
+
+    const approvedSession = await signIn(applicantCredentials.email, applicantCredentials.password);
+    expect(approvedSession.role).toBe("manager");
+    await signOut();
+
+    const rejectedCredentials = credentials("access-rejected");
+    const rejected = await provisionEmulatorUser({
+      email: rejectedCredentials.email,
+      password: rejectedCredentials.password,
+      displayName: rejectedCredentials.fullName,
+      role: null,
+    });
+    await signIn(rejectedCredentials.email, rejectedCredentials.password);
+    await accessRequestOperations.submitAccessRequest({
+      requestedRole: "builder",
+      fullName: rejectedCredentials.fullName,
+    });
+    await signIn(adminCredentials.email, adminCredentials.password);
+    await expect(accessRequestOperations.reviewAccessRequest({
+      requestId: rejected.uid,
+      decision: "reject",
+      reason: "Perfil no requerido en este momento",
+    })).resolves.toMatchObject({ id: rejected.uid, status: "rejected", requestedRole: "builder" });
+    expect(await readEmulatorRole(rejected.uid)).toBeUndefined();
+  }, 30_000);
 
   test("creates, validates, consumes once and accepts an idempotent retry", async () => {
     const managerCredentials = credentials("manager");

@@ -1,13 +1,15 @@
 import {
   GoogleAuthProvider,
+  createUserWithEmailAndPassword,
   onIdTokenChanged,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut as firebaseSignOut,
+  updateProfile,
   type User,
 } from "firebase/auth";
 import { firebaseAuth } from "./client";
-import { invitationOperations } from "./functions";
+import { accessRequestOperations, invitationOperations } from "./functions";
 import { isAppRole, type AppRole, type SessionUser } from "./types";
 
 export const MISSING_ROLE_MESSAGE =
@@ -76,7 +78,9 @@ export const normalizeAuthError = (error: unknown): Error => {
       return new Error("Invalid request");
     case "functions/failed-precondition":
     case "functions/not-found":
-      return new Error("Invitation is invalid, expired, or already used");
+      return new Error("Invitation is invalid, expired, or does not match this email");
+    case "functions/already-exists":
+      return new Error("You already have a pending access request");
     default:
       return new Error("Authentication failed. Please try again");
   }
@@ -146,7 +150,7 @@ export const signIn = async (
       email.trim().toLowerCase(),
       password,
     );
-    return await toAuthorizedSessionUser(credential.user);
+    return await toSessionUser(credential.user);
   } catch (error) {
     throw normalizeAuthError(error);
   }
@@ -155,7 +159,7 @@ export const signIn = async (
 export const signInWithGoogle = async (): Promise<SessionUser> => {
   try {
     const credential = await signInWithPopup(firebaseAuth, googleProvider);
-    return await toAuthorizedSessionUser(credential.user);
+    return await toSessionUser(credential.user);
   } catch (error) {
     throw normalizeAuthError(error);
   }
@@ -211,6 +215,57 @@ export const registerWithInvitation = async (input: {
     await invitationOperations.consumeInvitation({ code: normalizedCode });
     await registrationUser.getIdToken(true);
     return { status: "complete", user: await toAuthorizedSessionUser(registrationUser) };
+  } catch (error) {
+    throw normalizeAuthError(error);
+  }
+};
+
+export const registerForAccess = async (input: {
+  email: string;
+  password: string;
+  fullName: string;
+  phone?: string | null;
+  requestedRole: AppRole;
+}): Promise<{ status: "pending" | "approving"; requestedRole: AppRole }> => {
+  validateRegistrationInput(input);
+  if (!isAppRole(input.requestedRole)) throw new Error("A valid role is required");
+
+  const normalizedEmail = input.email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    throw new Error("Please enter a valid email address");
+  }
+
+  try {
+    if (firebaseAuth.currentUser) await firebaseSignOut(firebaseAuth);
+    const credential = await createUserWithEmailAndPassword(
+      firebaseAuth,
+      normalizedEmail,
+      input.password,
+    );
+    await updateProfile(credential.user, { displayName: input.fullName.trim() });
+    const result = await accessRequestOperations.submitAccessRequest({
+      requestedRole: input.requestedRole,
+      fullName: input.fullName.trim(),
+      phone: input.phone?.trim() || null,
+    });
+    await firebaseSignOut(firebaseAuth);
+    return result;
+  } catch (error) {
+    await firebaseSignOut(firebaseAuth).catch(() => undefined);
+    throw normalizeAuthError(error);
+  }
+};
+
+export const submitAccessRequest = async (input: {
+  requestedRole: AppRole;
+  fullName: string;
+  phone?: string | null;
+}) => {
+  if (!firebaseAuth.currentUser) throw new Error("Sign in before requesting access");
+  try {
+    const result = await accessRequestOperations.submitAccessRequest(input);
+    await firebaseSignOut(firebaseAuth);
+    return result;
   } catch (error) {
     throw normalizeAuthError(error);
   }

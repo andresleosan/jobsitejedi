@@ -620,6 +620,25 @@ describe("Firestore authorization rules", () => {
     await assertFails(deleteDoc(doc(managerDb(), path)));
   });
 
+  test("keeps access requests server-only", async () => {
+    const path = "accessRequests/access-request-rules-1";
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), path), {
+        schemaVersion: 1,
+        uid: "access-request-rules-1",
+        email: "requester@example.com",
+        requestedRole: "builder",
+        status: "pending",
+      });
+    });
+
+    await assertFails(getDoc(doc(adminDb(), path)));
+    await assertFails(getDocs(collection(adminDb(), "accessRequests")));
+    await assertFails(getDoc(doc(anonymousDb(), path)));
+    await assertFails(setDoc(doc(adminDb(), "accessRequests/admin-forged"), { status: "approved" }));
+    await assertFails(deleteDoc(doc(adminDb(), path)));
+  });
+
   test("keeps daily reports and risk signatures scoped to the project owner", async () => {
     await seedProject("report-rules-project", "builder-1", "Report rules project");
     await assertSucceeds(setDoc(doc(builderDb(), "dailyReports/report-rules-1"), {

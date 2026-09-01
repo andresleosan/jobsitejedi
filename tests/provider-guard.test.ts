@@ -192,12 +192,13 @@ describe("provider migration guard", () => {
 });
 
 describe("authorization surface guard", () => {
-  test("keeps Firebase Auth identity creation out of browser runtime code", () => {
+  test("keeps Firebase Auth identity creation limited to access-request registration", () => {
     const provisioningReferences = clientAuthProvisioningReferences();
     expect(
-      provisioningReferences,
-      `Client-side Firebase Auth provisioning was reintroduced:\n${provisioningReferences.join("\n")}`,
-    ).toEqual([]);
+      provisioningReferences.every((reference) => reference.replaceAll("\\", "/").startsWith("src/lib/firebase/auth.ts:")),
+      `Unexpected Firebase Auth provisioning surface:\n${provisioningReferences.join("\n")}`,
+    ).toBe(true);
+    expect(provisioningReferences.length).toBeGreaterThan(0);
   });
 
   test("keeps direct role-assignment callables out of runtime code", () => {
@@ -208,7 +209,7 @@ describe("authorization surface guard", () => {
     ).toEqual([]);
   });
 
-  test("keeps invitation consumption as the runtime role-assignment path", () => {
+  test("keeps access-request role assignment on the server", () => {
     const backend = readFileSync(resolve(process.cwd(), "functions/src/index.ts"), "utf8");
     const client = readFileSync(resolve(process.cwd(), "src/lib/firebase/auth.ts"), "utf8");
     const functionsClient = readFileSync(resolve(process.cwd(), "src/lib/firebase/functions.ts"), "utf8");
@@ -231,6 +232,9 @@ describe("authorization surface guard", () => {
     );
 
     expect(backend).toContain("export const consumeInvitation");
+    expect(backend).toContain("export const submitAccessRequest");
+    expect(backend).toContain("export const listAccessRequests");
+    expect(backend).toContain("export const reviewAccessRequest");
     expect(backend).toContain("export const activateInvitation");
     expect(backend).toContain("normalizeInvitationActivationPassword");
     expect(backend).toContain("emailVerified: true");
@@ -256,9 +260,10 @@ describe("authorization surface guard", () => {
     expect(client).not.toContain("sendPasswordResetEmail");
     expect(client).not.toContain("completeInvitationRegistration");
     expect(client).toContain("token.claims.authorizationGrantId");
-    expect(authPage).toContain("validationSequenceRef");
-    expect(authPage).toContain("validatedInvitationCode !== normalizedInvitationCode");
-    expect(authPage).toContain("buildtrack.pendingInvitation");
+    expect(authPage).toContain("registerForAccess");
+    expect(authPage).toContain("Solicitar acceso");
+    expect(authPage).not.toContain("QRScannerDialog");
+    expect(authPage).not.toContain("QrCode");
     expect(roleSafety).toContain("user.emailVerified !== true");
     expect(roleSafety).toContain("user.customClaims?.invitationEnrollmentId !== undefined");
     expect(roleOperation).toContain("assertRoleAssignmentTarget");

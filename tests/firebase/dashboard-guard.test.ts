@@ -19,15 +19,15 @@ describe("Firebase route auth guards", () => {
     expect(dashboardSource).not.toContain("onAuthStateChange");
   });
 
-  test("routes missing-role sessions once and exposes Google as an accessible option", () => {
+  test("keeps roleless sessions available to request an approved profile", () => {
     expect(dashboardSource).toContain('/auth?reason=missing-role');
-    expect(authSource).toContain('user?.role');
+    expect(authSource).toContain('Boolean(user && !user.role)');
+    expect(authSource).toContain('registerForAccess');
+    expect(authSource).toContain('submitAccessRequest');
     expect(authSource).toContain('Continue with Google');
-    expect(authSource).toContain('La cuenta no tiene un rol asignado');
-    expect(authSource).toContain('Cerrar sesi\\u00f3n');
-    expect(authSource).toContain('Reintentar');
-    expect(authSource).toContain(
-      'if (message === MISSING_ROLE_MESSAGE) setAccessError(message)',
-    );
+    expect(authSource).toContain('perfil aprobado');
+    expect(authSource).toContain('Cerrar sesi');
+    expect(authSource).toContain('Solicitar acceso');
+    expect(authSource).toContain('No se env');
   });
 });
