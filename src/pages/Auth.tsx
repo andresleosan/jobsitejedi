@@ -63,6 +63,7 @@ const Auth = () => {
   const [accessRequestView, setAccessRequestView] = useState<AccessRequestViewState>({ status: "none", userId: null });
   const [pendingAction, setPendingAction] = useState<"password" | "google" | "request" | "signout" | null>(null);
   const emailInputRef = useRef<HTMLInputElement>(null);
+  const lastUserIdRef = useRef<string | null>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
   const { user, isLoading: isAuthLoading, signIn, signInWithGoogle, signOut, getAccessRequestStatus, submitAccessRequest } = useAuth();
@@ -70,6 +71,20 @@ const Auth = () => {
   const hasMissingRole = searchParams.get("reason") === "missing-role"
     || Boolean(user && !user.role)
     || accessError === MISSING_ROLE_MESSAGE;
+
+  useEffect(() => {
+    const currentUserId = user?.id ?? null;
+    if (currentUserId === lastUserIdRef.current) return;
+
+    lastUserIdRef.current = currentUserId;
+    if (!user) return;
+
+    setFullName(user.fullName);
+    setPhone("");
+    setRequestedRole("builder");
+    setRequestSubmitted(false);
+    setAccessError(null);
+  }, [user]);
 
   useEffect(() => {
     if (!user || user.role) {
