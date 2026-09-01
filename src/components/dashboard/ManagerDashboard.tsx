@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { BriefcaseBusiness, Building2, FileSpreadsheet, LogOut, Plus, ReceiptText, Trash2, Truck, Users, Warehouse } from "lucide-react";
+import { ArrowUpRight, BriefcaseBusiness, Building2, FileSpreadsheet, LogOut, Plus, ReceiptText, ShieldCheck, Trash2, Truck, Users, Warehouse } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
@@ -108,11 +108,11 @@ const ManagerDashboard = ({ userId, email, role }: ManagerDashboardProps) => {
   const activeProjects = projects.filter((project) => project.status === "active").length;
 
   return (
-    <div className="min-h-screen bg-muted/30">
-      <header className="sticky top-0 z-10 border-b bg-card shadow-sm">
+    <div className={role === "admin" ? "admin-dashboard" : "min-h-screen bg-muted/30"}>
+      <header className={`sticky top-0 z-10 border-b bg-card shadow-sm ${role === "admin" ? "admin-dashboard-header" : ""}`}>
         <div className="container mx-auto flex items-center justify-between gap-3 px-3 py-3 sm:px-4 sm:py-4">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="rounded-lg bg-primary p-2">
+            <div className={`rounded-lg bg-primary p-2 ${role === "admin" ? "admin-brand-mark" : ""}`}>
               <Users className="h-5 w-5 text-primary-foreground" />
             </div>
             <div className="min-w-0">
@@ -136,9 +136,30 @@ const ManagerDashboard = ({ userId, email, role }: ManagerDashboardProps) => {
 
       <div className="border-b bg-card px-3 py-2 sm:hidden"><PwaInstallAction /></div>
 
-      <main className="container mx-auto space-y-4 px-3 py-4 sm:space-y-6 sm:px-4 sm:py-6">
-        {role === "admin" && <AccessRequestsPanel isSessionActive={ownsActiveSession} />}
-        {role === "admin" && <AdminUsersPanel adminId={userId} isSessionActive={ownsActiveSession} />}
+      {role === "admin" && (
+        <>
+          <section className="admin-overview" aria-labelledby="admin-overview-title">
+            <div>
+              <p className="admin-kicker">Admin workspace</p>
+              <h2 id="admin-overview-title">Keep every account in the right hands.</h2>
+              <p>Review access, manage roles, and keep project operations moving from one place.</p>
+            </div>
+            <div className="admin-overview-note">
+              <ShieldCheck aria-hidden="true" />
+              <span><strong>Permissions stay explicit</strong><small>Every account has a clear role and an auditable decision.</small></span>
+            </div>
+          </section>
+          <nav className="admin-section-nav" aria-label="Admin sections">
+            <a href="#access-requests"><ShieldCheck aria-hidden="true" /><span><strong>Access requests</strong><small>Review incoming access</small></span><ArrowUpRight aria-hidden="true" /></a>
+            <a href="#people-permissions"><Users aria-hidden="true" /><span><strong>People &amp; permissions</strong><small>Manage active accounts</small></span><ArrowUpRight aria-hidden="true" /></a>
+            <a href="#projects"><BriefcaseBusiness aria-hidden="true" /><span><strong>Projects</strong><small>Keep the work moving</small></span><ArrowUpRight aria-hidden="true" /></a>
+          </nav>
+        </>
+      )}
+
+      <main className={`container mx-auto space-y-4 px-3 py-4 sm:space-y-6 sm:px-4 sm:py-6 ${role === "admin" ? "admin-dashboard-main" : ""}`}>
+        {role === "admin" && <div id="access-requests" className="admin-section"><AccessRequestsPanel isSessionActive={ownsActiveSession} /></div>}
+        {role === "admin" && <div id="people-permissions" className="admin-section"><AdminUsersPanel adminId={userId} isSessionActive={ownsActiveSession} /></div>}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Card>
@@ -163,7 +184,7 @@ const ManagerDashboard = ({ userId, email, role }: ManagerDashboardProps) => {
           </Card>
         </div>
 
-        <Card>
+        <Card id={role === "admin" ? "projects" : undefined} className={role === "admin" ? "admin-projects-card" : undefined}>
           <CardHeader>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>

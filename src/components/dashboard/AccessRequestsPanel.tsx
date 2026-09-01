@@ -106,8 +106,8 @@ const AccessRequestsPanel = ({ isSessionActive }: { isSessionActive: () => boole
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      <Card>
-        <CardHeader className="px-4 py-4 sm:p-6">
+      <Card className="admin-panel-card admin-access-card">
+        <CardHeader className="admin-panel-header px-4 py-4 sm:p-6">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" />Solicitudes de acceso</CardTitle><CardDescription>Revisa quién solicita acceso y decide el rol final que tendrá.</CardDescription></div>
             <Badge variant="secondary">{requests.length} pendientes</Badge>
@@ -138,8 +138,8 @@ const AccessRequestsPanel = ({ isSessionActive }: { isSessionActive: () => boole
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="px-4 py-4 sm:p-6">
+      <Card className="admin-panel-card admin-history-card">
+        <CardHeader className="admin-panel-header px-4 py-4 sm:p-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div><CardTitle className="flex items-center gap-2"><History className="h-5 w-5 text-primary" />Historial de decisiones</CardTitle><CardDescription>Consulta aprobaciones y rechazos anteriores, incluidos sus motivos.</CardDescription></div>
             <div className="flex flex-wrap items-center justify-end gap-2">
