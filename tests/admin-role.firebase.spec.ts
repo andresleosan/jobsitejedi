@@ -48,6 +48,15 @@ test("admin reviews a requested profile and the user reaches the approved dashbo
   await request.getByRole("button", { name: /Aprobar como Manager/ }).click();
   await expect(request).toHaveCount(0);
 
+  const historyRecord = page.getByTestId("access-history-record").filter({ hasText: applicantEmail });
+  await expect(historyRecord).toContainText("Aprobado como Manager");
+  await historyRecord.getByRole("checkbox", { name: `Seleccionar historial de ${applicantName}` }).click();
+  const clearSelectedButton = page.getByRole("button", { name: "Limpiar seleccionados (1)", exact: true });
+  await expect(clearSelectedButton).toBeEnabled();
+  page.once("dialog", (dialog) => dialog.accept());
+  await clearSelectedButton.click();
+  await expect(historyRecord).toHaveCount(0);
+
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await signIn(page, applicantEmail, password);
   await expect(page).toHaveURL(/\/managers$/);

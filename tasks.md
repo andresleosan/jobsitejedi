@@ -1212,7 +1212,7 @@ T-030 y T-031 siguen como mejoras posteriores y no bloquean el release ya desple
 
 ## T-037 — Administración de solicitudes y usuarios
 
-- **Prioridad:** P0 · **Estado:** desplegada · **Depende de:** T-036
+- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-036
 - Conservar cada decisión de acceso en un historial separado del estado operativo actual.
 - Exigir motivo al rechazar y permitir que el administrador seleccione el rol final al aprobar,
   conservando también el rol que la persona solicitó.
@@ -1233,3 +1233,5 @@ T-030 y T-031 siguen como mejoras posteriores y no bloquean el release ya desple
   `updatePlatformUserRole` y `revokePlatformUserAccess`. El preflight CORS de la aplicación
   respondió `204` con el origen autorizado. El índice `status + reviewedAt` quedó solicitado y
   puede tardar unos minutos en pasar de `INITIALIZING` a `READY`.
+- **Ajuste pendiente de despliegue:** limpieza individual por `recordIds`, además de “Limpiar todo”,
+  con prueba E2E del flujo de selección individual (1/1).

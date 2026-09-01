@@ -20,7 +20,8 @@ revocarse a sí mismo.
 
 ## Limpieza y reversión
 
-“Limpiar historial” requiere confirmación y elimina documentos terminales de
-`accessRequestHistory` y sus estados terminales operativos; nunca elimina solicitudes pendientes.
+“Limpiar seleccionados” y “Limpiar todo” requieren confirmación. La primera elimina únicamente
+los registros elegidos; la segunda elimina documentos terminales de `accessRequestHistory` y sus
+estados terminales operativos. Ninguna acción elimina solicitudes pendientes.
 No hay migración destructiva automática. Si la funcionalidad nueva se retira, se puede revertir el
 código y dejar los datos intactos; una limpieza ya confirmada no es recuperable desde la aplicación.

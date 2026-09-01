@@ -1529,6 +1529,39 @@ const accessRequestHistoryRecord = (
   createdAt: reviewedAt,
 });
 
+const normalizeAccessRequestHistoryRecordIds = (value: unknown): string[] | null => {
+  if (value == null) return null;
+  if (!isRecord(value)) {
+    throw new HttpsError("invalid-argument", "History cleanup details are invalid");
+  }
+  if (value.recordIds === undefined) return null;
+  if (!Array.isArray(value.recordIds)) {
+    throw new HttpsError("invalid-argument", "History record ids must be an array");
+  }
+  if (value.recordIds.length > 200) {
+    throw new HttpsError("invalid-argument", "Too many history records selected");
+  }
+  return [...new Set(value.recordIds.map((recordId) => {
+    if (typeof recordId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(recordId.trim())) {
+      throw new HttpsError("invalid-argument", "History record id is invalid");
+    }
+    return recordId.trim();
+  }))];
+};
+
+const isTerminalAccessRequest = (
+  data: Record<string, unknown>,
+  requestId: string,
+): boolean => accessRequestIsCurrent(data, requestId)
+  && (data.status === "approved" || data.status === "rejected");
+
+const isSameAccessRequestVersion = (
+  historyData: Record<string, unknown>,
+  currentData: Record<string, unknown>,
+): boolean => historyData.requestedAt instanceof Timestamp
+  && currentData.requestedAt instanceof Timestamp
+  && historyData.requestedAt.toMillis() === currentData.requestedAt.toMillis();
+
 export const getAccessRequestStatus = onCall(
   { ...appCheckOptions, timeoutSeconds: 15, memory: "256MiB", maxInstances: 10 },
   async (request) => {
@@ -1736,6 +1769,49 @@ export const clearAccessRequestHistory = onCall(
     await enforceRateLimit(user.uid, "clearAccessRequestHistory");
 
     const firestore = getFirestore();
+    const selectedRecordIds = normalizeAccessRequestHistoryRecordIds(request.data);
+    if (selectedRecordIds !== null) {
+      let deletedCount = 0;
+      for (const recordId of selectedRecordIds) {
+        const deleted = await firestore.runTransaction(async (transaction) => {
+          const historyReference = firestore.collection("accessRequestHistory").doc(recordId);
+          const historySnapshot = await transaction.get(historyReference);
+          if (historySnapshot.exists) {
+            const historyData = historySnapshot.data() ?? {};
+            const requestId = typeof historyData.requestId === "string" ? historyData.requestId : null;
+            if (
+              !requestId
+              || !isAppRole(historyData.requestedRole)
+              || (historyData.status !== "approved" && historyData.status !== "rejected")
+            ) {
+              return false;
+            }
+            const currentReference = accessRequestReference(requestId);
+            const currentSnapshot = await transaction.get(currentReference);
+            transaction.delete(historyReference);
+            if (
+              currentSnapshot.exists
+              && isTerminalAccessRequest(currentSnapshot.data() ?? {}, requestId)
+              && isSameAccessRequestVersion(historyData, currentSnapshot.data() ?? {})
+            ) {
+              transaction.delete(currentReference);
+            }
+            return true;
+          }
+
+          const currentReference = accessRequestReference(recordId);
+          const currentSnapshot = await transaction.get(currentReference);
+          if (!currentSnapshot.exists || !isTerminalAccessRequest(currentSnapshot.data() ?? {}, recordId)) {
+            return false;
+          }
+          transaction.delete(currentReference);
+          return true;
+        });
+        if (deleted) deletedCount += 1;
+      }
+      return { deletedCount };
+    }
+
     const [historySnapshot, approvedSnapshot, rejectedSnapshot] = await Promise.all([
       firestore.collection("accessRequestHistory").get(),
       firestore.collection("accessRequests").where("status", "==", "approved").get(),

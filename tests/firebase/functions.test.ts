@@ -39,6 +39,7 @@ let firebaseAuth: typeof import("@/lib/firebase/client").firebaseAuth;
 let clearPublicInvitationRateLimits: () => Promise<void>;
 let callConsumeInvitationRaw: (payload: unknown) => Promise<unknown>;
 let callValidateInvitationRaw: (payload: unknown) => Promise<unknown>;
+let callClearAccessRequestHistoryRaw: (payload: unknown) => Promise<unknown>;
 let readEmulatorRole: (uid: string) => Promise<unknown>;
 let readEmulatorClaims: (uid: string) => Promise<Record<string, unknown>>;
 let readAuthorizationGrant: (uid: string) => Promise<AuthorizationGrantRecord | null>;
@@ -363,6 +364,11 @@ describe("Firebase invitation Functions", () => {
       "validateInvitationCode",
     );
     callValidateInvitationRaw = async (payload) => (await rawValidateInvitation(payload)).data;
+    const rawClearAccessRequestHistory = httpsCallable<unknown, unknown>(
+      firebaseClient.firebaseFunctions,
+      "clearAccessRequestHistory",
+    );
+    callClearAccessRequestHistoryRaw = async (payload) => (await rawClearAccessRequestHistory(payload)).data;
   });
 
   afterAll(async () => {
@@ -446,11 +452,20 @@ describe("Firebase invitation Functions", () => {
     await signOut();
 
     await signIn(adminCredentials.email, adminCredentials.password);
+    const historyBeforeClear = await accessRequestOperations.listAccessRequestHistory();
+    const rejectedHistory = historyBeforeClear.find((request) => request.requestId === rejected.uid);
+    const approvedHistory = historyBeforeClear.find((request) => request.requestId === applicant.uid);
+    expect(rejectedHistory).toMatchObject({ status: "rejected", requestedRole: "builder", decisionReason: "Perfil no requerido en este momento" });
+    expect(approvedHistory).toMatchObject({ status: "approved", requestedRole: "manager", approvedRole: "builder" });
+    await expect(callClearAccessRequestHistoryRaw({ recordIds: [rejectedHistory?.id] })).resolves.toMatchObject({ deletedCount: 1 });
     await expect(accessRequestOperations.listAccessRequestHistory()).resolves.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ status: "approved", requestedRole: "manager", approvedRole: "builder" }),
-        expect.objectContaining({ status: "rejected", requestedRole: "builder", decisionReason: "Perfil no requerido en este momento" }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ requestId: applicant.uid, status: "approved" })]),
+    );
+    await expect(accessRequestOperations.listAccessRequestHistory()).resolves.not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ requestId: rejected.uid })]),
+    );
+    await expect(accessRequestOperations.listAccessRequests()).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: rejected.uid, status: "pending", requestedRole: "admin" })]),
     );
     await expect(accessRequestOperations.clearAccessRequestHistory()).resolves.toBeGreaterThanOrEqual(2);
     await expect(accessRequestOperations.listAccessRequestHistory()).resolves.toEqual([]);

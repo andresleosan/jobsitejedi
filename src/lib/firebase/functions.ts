@@ -127,7 +127,7 @@ const listAccessRequestHistoryCallable = httpsCallable<
 >(firebaseFunctions, "listAccessRequestHistory");
 
 const clearAccessRequestHistoryCallable = httpsCallable<
-  Record<string, never>,
+  { recordIds?: string[] },
   { deletedCount: number }
 >(firebaseFunctions, "clearAccessRequestHistory");
 
@@ -292,8 +292,8 @@ export const accessRequestOperations = {
     const result = await listAccessRequestHistoryCallable({});
     return result.data.requests.map(toAccessRequestRecord);
   },
-  async clearAccessRequestHistory(): Promise<number> {
-    return (await clearAccessRequestHistoryCallable({})).data.deletedCount;
+  async clearAccessRequestHistory(input?: { recordIds?: string[] }): Promise<number> {
+    return (await clearAccessRequestHistoryCallable(input ?? {})).data.deletedCount;
   },
   async listPlatformUsers(): Promise<PlatformUserRecord[]> {
     return (await listPlatformUsersCallable({})).data.users;

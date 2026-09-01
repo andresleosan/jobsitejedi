@@ -3,6 +3,7 @@ import { Check, Clock3, History, Loader2, ShieldCheck, UserRound, X } from "luci
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { accessRequestOperations, type AccessRequestRecord } from "@/lib/firebase/functions";
@@ -21,6 +22,7 @@ const AccessRequestsPanel = ({ isSessionActive }: { isSessionActive: () => boole
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
   const [isClearingHistory, setIsClearingHistory] = useState(false);
+  const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
   const { toast } = useToast();
 
   const loadRequests = useCallback(async () => {
@@ -41,7 +43,9 @@ const AccessRequestsPanel = ({ isSessionActive }: { isSessionActive: () => boole
     if (!isSessionActive()) return;
     setIsLoadingHistory(true);
     try {
-      setHistory(await accessRequestOperations.listAccessRequestHistory());
+      const nextHistory = await accessRequestOperations.listAccessRequestHistory();
+      setHistory(nextHistory);
+      setSelectedHistoryIds((current) => new Set([...current].filter((id) => nextHistory.some((item) => item.id === id))));
     } catch (error) {
       if (isSessionActive()) toast({ title: "No se cargó el historial", description: error instanceof Error ? error.message : "Inténtalo de nuevo.", variant: "destructive" });
     } finally {
@@ -76,12 +80,22 @@ const AccessRequestsPanel = ({ isSessionActive }: { isSessionActive: () => boole
     }
   };
 
-  const clearHistory = async () => {
-    if (!history.length || isClearingHistory || !window.confirm("Se eliminará el historial aprobado y rechazado. Las solicitudes pendientes no se tocarán. ¿Continuar?")) return;
+  const clearHistory = async (recordIds?: string[]) => {
+    const idsToClear = recordIds ?? history.map((item) => item.id);
+    if (!idsToClear.length || isClearingHistory) return;
+    const isClearingAll = recordIds === undefined;
+    const confirmation = isClearingAll
+      ? "Se eliminará todo el historial aprobado y rechazado. Las solicitudes pendientes no se tocarán. ¿Continuar?"
+      : `Se eliminarán ${idsToClear.length} registro${idsToClear.length === 1 ? "" : "s"} seleccionado${idsToClear.length === 1 ? "" : "s"}. Las solicitudes pendientes no se tocarán. ¿Continuar?`;
+    if (!window.confirm(confirmation)) return;
     setIsClearingHistory(true);
     try {
-      const deletedCount = await accessRequestOperations.clearAccessRequestHistory();
-      setHistory([]);
+      const deletedCount = await accessRequestOperations.clearAccessRequestHistory(isClearingAll ? undefined : { recordIds: idsToClear });
+      setHistory((current) => isClearingAll ? [] : current.filter((item) => !idsToClear.includes(item.id)));
+      setSelectedHistoryIds((current) => {
+        if (isClearingAll) return new Set();
+        return new Set([...current].filter((id) => !idsToClear.includes(id)));
+      });
       toast({ title: "Historial limpiado", description: `${deletedCount} registro${deletedCount === 1 ? "" : "s"} eliminado${deletedCount === 1 ? "" : "s"}.` });
     } catch (error) {
       toast({ title: "No se pudo limpiar el historial", description: error instanceof Error ? error.message : "Inténtalo de nuevo.", variant: "destructive" });
@@ -125,8 +139,25 @@ const AccessRequestsPanel = ({ isSessionActive }: { isSessionActive: () => boole
       </Card>
 
       <Card>
-        <CardHeader><div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><CardTitle className="flex items-center gap-2"><History className="h-5 w-5 text-primary" />Historial de decisiones</CardTitle><CardDescription>Consulta aprobaciones y rechazos anteriores, incluidos sus motivos.</CardDescription></div><Button variant="outline" size="sm" onClick={() => void clearHistory()} disabled={!history.length || isClearingHistory}>{isClearingHistory ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Limpiar historial</Button></div></CardHeader>
-        <CardContent>{isLoadingHistory ? <div className="flex items-center justify-center py-6 text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Cargando historial…</div> : history.length === 0 ? <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Aún no hay decisiones guardadas.</div> : <div className="space-y-3">{history.map((item) => <div key={item.id} className="flex flex-col gap-2 rounded-lg border p-4 sm:flex-row sm:items-start sm:justify-between"><div><p className="font-medium">{item.fullName}</p><p className="break-all text-sm text-muted-foreground">{item.email}{item.phone ? ` · ${item.phone}` : ""}</p><p className="text-xs text-muted-foreground">{item.reviewedAt?.toLocaleString() ?? "Sin fecha"}</p>{item.decisionReason && <p className="mt-2 text-sm">Motivo: {item.decisionReason}</p>}</div><div className="flex flex-wrap gap-2"><Badge variant={item.status === "approved" ? "default" : "destructive"}>{item.status === "approved" ? `Aprobado como ${item.approvedRole ? roleLabel[item.approvedRole] : "—"}` : "Rechazado"}</Badge><Badge variant="outline">Solicitó: {item.requestedRole ? roleLabel[item.requestedRole] : "—"}</Badge></div></div>)}</div>}</CardContent>
+        <CardHeader>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div><CardTitle className="flex items-center gap-2"><History className="h-5 w-5 text-primary" />Historial de decisiones</CardTitle><CardDescription>Consulta aprobaciones y rechazos anteriores, incluidos sus motivos.</CardDescription></div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Checkbox
+                  aria-label="Seleccionar todo el historial"
+                  checked={history.length > 0 && selectedHistoryIds.size === history.length}
+                  onCheckedChange={(checked) => setSelectedHistoryIds(checked === true ? new Set(history.map((item) => item.id)) : new Set())}
+                  disabled={!history.length || isClearingHistory}
+                />
+                Seleccionar todo
+              </label>
+              <Button variant="outline" size="sm" onClick={() => void clearHistory([...selectedHistoryIds])} disabled={!selectedHistoryIds.size || isClearingHistory}>{isClearingHistory ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Limpiar seleccionados ({selectedHistoryIds.size})</Button>
+              <Button variant="outline" size="sm" onClick={() => void clearHistory()} disabled={!history.length || isClearingHistory}>{isClearingHistory ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Limpiar todo</Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>{isLoadingHistory ? <div className="flex items-center justify-center py-6 text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Cargando historial…</div> : history.length === 0 ? <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Aún no hay decisiones guardadas.</div> : <div className="space-y-3">{history.map((item) => <div key={item.id} data-testid="access-history-record" className={`flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-start sm:justify-between ${selectedHistoryIds.has(item.id) ? "border-primary bg-primary/5" : ""}`}><div className="flex min-w-0 items-start gap-3"><Checkbox aria-label={`Seleccionar historial de ${item.fullName}`} checked={selectedHistoryIds.has(item.id)} onCheckedChange={(checked) => setSelectedHistoryIds((current) => { const next = new Set(current); if (checked === true) next.add(item.id); else next.delete(item.id); return next; })} disabled={isClearingHistory} /><div><p className="font-medium">{item.fullName}</p><p className="break-all text-sm text-muted-foreground">{item.email}{item.phone ? ` · ${item.phone}` : ""}</p><p className="text-xs text-muted-foreground">{item.reviewedAt?.toLocaleString() ?? "Sin fecha"}</p>{item.decisionReason && <p className="mt-2 text-sm">Motivo: {item.decisionReason}</p>}</div></div><div className="flex flex-wrap gap-2"><Badge variant={item.status === "approved" ? "default" : "destructive"}>{item.status === "approved" ? `Aprobado como ${item.approvedRole ? roleLabel[item.approvedRole] : "—"}` : "Rechazado"}</Badge><Badge variant="outline">Solicitó: {item.requestedRole ? roleLabel[item.requestedRole] : "—"}</Badge></div></div>)}</div>}</CardContent>
       </Card>
     </div>
   );
