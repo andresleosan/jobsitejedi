@@ -34,6 +34,11 @@ const validateInvitationCodeCallable = httpsCallable<
   InvitationValidationResponse
 >(firebaseFunctions, "validateInvitationCode");
 
+const activateInvitationCallable = httpsCallable<
+  { code: string; targetEmail: string; password: string; fullName: string },
+  { activated: true; role: AppRole }
+>(firebaseFunctions, "activateInvitation");
+
 const consumeInvitationCallable = httpsCallable<
   { code: string },
   { role: AppRole }
@@ -138,6 +143,14 @@ export const invitationOperations: InvitationOperations = {
       if (!isRetryableCallableError(error)) pendingInvitationRequestKeys.delete(requestScope);
       throw error;
     }
+  },
+  async activateInvitation(input) {
+    await activateInvitationCallable({
+      code: input.code.trim().toUpperCase(),
+      targetEmail: input.targetEmail.trim().toLowerCase(),
+      password: input.password,
+      fullName: input.fullName.trim(),
+    });
   },
   async consumeInvitation(input) {
     await consumeInvitationCallable(input);

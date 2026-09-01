@@ -97,6 +97,22 @@ migración podrán coexistir artefactos históricos, pero no una nueva ruta híb
 - Cuentas preexistentes sin marcador no se adoptan, v1-v3 fallan cerrado y el marcador jamás concede
   acceso por sí solo. El contrato y rollback están en `docs/auth-role-operations.md`.
 
+## Contrato de activación directa sin correo (T-036)
+
+- La invitación sigue siendo emitida por una Function protegida y compartida como QR/código de un
+  solo uso; el navegador nunca crea identidades ni asigna roles.
+- El alta directa valida en servidor el código, el correo exacto y el enrolamiento placeholder,
+  aplica rate limit y fija la contraseña elegida en esa identidad. El código es el factor de
+  posesión que reemplaza el enlace de correo para este flujo operativo.
+- La cuenta se marca como email verificado exclusivamente al activar una invitación v4 pendiente;
+  esto no se usa para cuentas normales ni concede rol por sí solo. Después del login, el consumo
+  único crea el grant server-only y elimina el marcador como en T-033.
+- El cliente solo recibe una respuesta de activación sin contraseña, código, token o claims; el
+  password reset y el envío de correos no forman parte de este recorrido.
+- Invitaciones antiguas v1-v3 siguen fallando cerrado. El rollback seguro es dejar de exponer el
+  callable de activación directa y conservar el contrato v4 vigente; no se borran usuarios ni
+  documentos.
+
 ## Contrato de autenticación Google (T-020)
 
 - Firebase Authentication conserva un solo contrato de sesión para email/contraseña y Google.

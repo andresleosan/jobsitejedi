@@ -1,12 +1,9 @@
 import {
   GoogleAuthProvider,
   onIdTokenChanged,
-  sendEmailVerification,
-  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut as firebaseSignOut,
-  updateProfile,
   type User,
 } from "firebase/auth";
 import { firebaseAuth } from "./client";
@@ -15,10 +12,6 @@ import { isAppRole, type AppRole, type SessionUser } from "./types";
 
 export const MISSING_ROLE_MESSAGE =
   "This account has no assigned BuildTrack role. Contact an administrator";
-export const EMAIL_VERIFICATION_MESSAGE =
-  "Verify your email before accepting the invitation";
-export const INVITATION_ACTIVATION_MESSAGE =
-  "Use the secure activation email before choosing your invitation password";
 
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: "select_account" });
@@ -41,24 +34,7 @@ const getErrorCode = (error: unknown) => {
   return "";
 };
 
-const getErrorReason = (error: unknown) => {
-  if (
-    typeof error === "object"
-    && error !== null
-    && "details" in error
-    && typeof error.details === "object"
-    && error.details !== null
-    && "reason" in error.details
-  ) {
-    return String(error.details.reason);
-  }
-  return "";
-};
-
 export const normalizeAuthError = (error: unknown): Error => {
-  if (getErrorReason(error) === "email-not-verified") {
-    return new Error(EMAIL_VERIFICATION_MESSAGE);
-  }
   switch (getErrorCode(error)) {
     case "auth/invalid-credential":
     case "auth/invalid-login-credentials":
@@ -86,20 +62,12 @@ export const normalizeAuthError = (error: unknown): Error => {
       return new Error("Google sign-in is not enabled for this application");
     case "auth/unauthorized-domain":
       return new Error("This domain is not authorized for Google sign-in");
-    case "auth/invalid-continue-uri":
-    case "auth/missing-continue-uri":
-    case "auth/unauthorized-continue-uri":
-      return new Error("Secure invitation activation is not configured for this domain");
     case "auth/user-disabled":
       return new Error("This account has been disabled");
     case "app/missing-role":
       return new Error(MISSING_ROLE_MESSAGE);
     case "app/invalid-invitation":
       return new Error("Invitation is invalid, expired, or does not match this email");
-    case "app/email-not-verified":
-      return new Error(EMAIL_VERIFICATION_MESSAGE);
-    case "app/invitation-session-required":
-      return new Error("Sign in again from the invitation link to finish registration");
     case "functions/permission-denied":
       return new Error("You do not have permission to perform this action");
     case "functions/unauthenticated":
@@ -198,10 +166,7 @@ export const registerWithInvitation = async (input: {
   password: string;
   fullName: string;
   invitationCode: string;
-}): Promise<
-  | { status: "verification-required"; email: string }
-  | { status: "complete"; user: SessionUser }
-> => {
+}): Promise<{ status: "complete"; user: SessionUser }> => {
   validateRegistrationInput(input);
   if (!input.invitationCode.trim()) throw new Error("Invitation is required");
 
@@ -221,6 +186,12 @@ export const registerWithInvitation = async (input: {
     if (firebaseAuth.currentUser) {
       await firebaseSignOut(firebaseAuth);
     }
+    await invitationOperations.activateInvitation({
+      code: normalizedCode,
+      targetEmail: normalizedEmail,
+      password: input.password,
+      fullName: input.fullName,
+    });
     const registrationUser = (
       await signInWithEmailAndPassword(firebaseAuth, normalizedEmail, input.password)
     ).user;
@@ -237,15 +208,9 @@ export const registerWithInvitation = async (input: {
       );
     }
 
-    await updateProfile(registrationUser, { displayName: input.fullName.trim() });
-    await registrationUser.reload();
-    if (!registrationUser.emailVerified) {
-      await sendEmailVerification(registrationUser);
-      return { status: "verification-required", email: normalizedEmail };
-    }
-
-    const user = await completeInvitationRegistration({ invitationCode: normalizedCode });
-    return { status: "complete", user };
+    await invitationOperations.consumeInvitation({ code: normalizedCode });
+    await registrationUser.getIdToken(true);
+    return { status: "complete", user: await toAuthorizedSessionUser(registrationUser) };
   } catch (error) {
     throw normalizeAuthError(error);
   }
@@ -268,63 +233,6 @@ const validateInvitationIdentity = (input: {
     );
   }
   return { normalizedEmail, normalizedCode };
-};
-
-export const requestInvitationActivation = async (input: {
-  email: string;
-  invitationCode: string;
-}): Promise<{ email: string }> => {
-  try {
-    const { normalizedEmail, normalizedCode } = validateInvitationIdentity(input);
-    const invitation = await invitationOperations.validateInvitationCode(
-      normalizedCode,
-      normalizedEmail,
-    );
-    if (!invitation.valid) {
-      throw new AuthAdapterError(
-        "app/invalid-invitation",
-        "Invitation validation failed for the requested account",
-      );
-    }
-
-    const continueUrl = new URL("/auth", window.location.origin);
-    await sendPasswordResetEmail(firebaseAuth, normalizedEmail, {
-      url: continueUrl.toString(),
-      handleCodeInApp: false,
-    });
-    return { email: normalizedEmail };
-  } catch (error) {
-    throw normalizeAuthError(error);
-  }
-};
-
-export const completeInvitationRegistration = async (input: {
-  invitationCode: string;
-}): Promise<SessionUser> => {
-  const normalizedCode = input.invitationCode.trim().toUpperCase();
-  if (!normalizedCode) throw new Error("Invitation is required");
-  const user = firebaseAuth.currentUser;
-  if (!user) {
-    throw normalizeAuthError(new AuthAdapterError(
-      "app/invitation-session-required",
-      "Invitation registration session is missing",
-    ));
-  }
-
-  try {
-    await user.reload();
-    if (!user.emailVerified) {
-      throw new AuthAdapterError(
-        "app/email-not-verified",
-        "Invitation email has not been verified",
-      );
-    }
-    await invitationOperations.consumeInvitation({ code: normalizedCode });
-    await user.getIdToken(true);
-    return await toAuthorizedSessionUser(user);
-  } catch (error) {
-    throw normalizeAuthError(error);
-  }
 };
 
 export const signOut = async (): Promise<void> => {

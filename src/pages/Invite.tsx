@@ -163,7 +163,7 @@ const Invite = () => {
               Generate Invitation QR Code
             </CardTitle>
             <CardDescription>
-              Create a secure, single-use invitation that expires in 30 minutes
+              Create a single-use invitation code that expires in 30 minutes
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -181,7 +181,7 @@ const Invite = () => {
                 required
               />
               <p className="text-xs text-muted-foreground">
-                Only a new server-created enrollment for this exact email can redeem the invitation.
+                The invited person will use this exact email, the code and a password they choose.
               </p>
             </div>
 
@@ -294,8 +294,8 @@ const Invite = () => {
                     <li>Select the role for the new team member</li>
                     <li>Generate a QR code invitation</li>
                     <li>Share the QR code with the new member</li>
-                    <li>They scan it and request the secure Firebase activation email</li>
-                    <li>They set a password, verify the email if requested, and finish within 30 minutes</li>
+                    <li>They scan it or enter the code in the sign-up screen</li>
+                    <li>They confirm the email, choose a password and finish within 30 minutes</li>
                     <li>Each code can only be used once</li>
                   </ol>
                 </div>

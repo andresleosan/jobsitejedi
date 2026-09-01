@@ -13,7 +13,7 @@ import { QRScannerDialog } from "@/components/auth/QRScannerDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { invitationOperations } from "@/lib/firebase/functions";
 import type { InvitationValidation } from "@/lib/firebase/types";
-import { EMAIL_VERIFICATION_MESSAGE, MISSING_ROLE_MESSAGE } from "@/lib/firebase/auth";
+import { MISSING_ROLE_MESSAGE } from "@/lib/firebase/auth";
 
 // Validation schemas
 const signInSchema = z.object({
@@ -102,13 +102,8 @@ const Auth = () => {
   const [codeError, setCodeError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(invitationCodeFromUrl ? "signup" : "signin");
   const [showQRScanner, setShowQRScanner] = useState(false);
-  const [verificationPending, setVerificationPending] = useState(false);
-  const [activationContext, setActivationContext] = useState<{
-    code: string;
-    email: string;
-  } | null>(null);
   const [accessError, setAccessError] = useState<string | null>(null);
-  const [pendingAction, setPendingAction] = useState<"password" | "google" | "activate" | "signup" | "verify" | "signout" | null>(null);
+  const [pendingAction, setPendingAction] = useState<"password" | "google" | "signup" | "signout" | null>(null);
   const emailInputRef = useRef<HTMLInputElement>(null);
   const invitationUrlHandledRef = useRef<string | null>(null);
   const validationSequenceRef = useRef(0);
@@ -120,14 +115,12 @@ const Auth = () => {
     signIn,
     signInWithGoogle,
     signOut,
-    completeInvitationRegistration,
     registerWithInvitation,
-    requestInvitationActivation,
   } = useAuth();
 
   const hasMissingRole =
     searchParams.get("reason") === "missing-role" ||
-    Boolean(user && !user.role && !verificationPending) ||
+    Boolean(user && !user.role) ||
     accessError === MISSING_ROLE_MESSAGE;
 
   useEffect(() => {
@@ -141,7 +134,6 @@ const Auth = () => {
     if (normalizedCode && invitationUrlHandledRef.current !== normalizedCode) {
       invitationUrlHandledRef.current = normalizedCode;
       setInvitationCode(normalizedCode);
-      setActivationContext(null);
       setActiveTab("signup");
       if (
         invitationCodeFromLocation
@@ -169,14 +161,6 @@ const Auth = () => {
     navigate,
     searchParams,
   ]);
-
-  useEffect(() => {
-    if (user && !user.role && invitationCode) {
-      setEmail(user.email);
-      setVerificationPending(true);
-      setActiveTab("signup");
-    }
-  }, [invitationCode, user]);
 
   const validateInvitationCode = async (code: string) => {
     const normalizedCode = code.trim().toUpperCase();
@@ -227,12 +211,10 @@ const Auth = () => {
       isValidatingCode
       || !invitationData?.valid
       || validatedInvitationCode !== normalizedInvitationCode
-      || activationContext?.code !== normalizedInvitationCode
-      || activationContext.email !== normalizedEmail
     ) {
       toast({
-        title: "Secure activation required",
-        description: "Use the activation email for this invitation before setting the account password.",
+        title: "Valid invitation required",
+        description: "Enter a valid invitation code before creating the account.",
         variant: "destructive",
       });
       return;
@@ -262,16 +244,6 @@ const Auth = () => {
         invitationCode: normalizedInvitationCode,
       });
 
-      if (result.status === "verification-required") {
-        rememberPendingInvitation(normalizedInvitationCode, invitationData.expiresAt);
-        setVerificationPending(true);
-        toast({
-          title: "Verify your email",
-          description: `We sent a verification link to ${result.email}. Return here after opening it.`,
-        });
-        return;
-      }
-
       toast({
         title: "Account created!",
         description: `Welcome to BuildTrack Pro as a ${result.user.role}`,
@@ -282,86 +254,6 @@ const Auth = () => {
       toast({
         title: "Sign up failed",
         description: error instanceof Error ? error.message : "Unable to create account",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-      setPendingAction(null);
-    }
-  };
-
-  const prepareInvitationActivation = async (sendActivationEmail: boolean) => {
-    const normalizedInvitationCode = invitationCode.trim().toUpperCase();
-    const normalizedEmail = email.trim().toLowerCase();
-    const emailValidation = z.string().email().max(255).safeParse(normalizedEmail);
-    if (
-      !emailValidation.success
-      || isValidatingCode
-      || !invitationData?.valid
-      || validatedInvitationCode !== normalizedInvitationCode
-    ) {
-      toast({
-        title: "Invalid invitation details",
-        description: "Enter the exact invited email and a valid invitation code.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setIsLoading(true);
-    setPendingAction("activate");
-    try {
-      if (sendActivationEmail) {
-        await requestInvitationActivation({
-          email: normalizedEmail,
-          invitationCode: normalizedInvitationCode,
-        });
-      } else {
-        const validation = await invitationOperations.validateInvitationCode(
-          normalizedInvitationCode,
-          normalizedEmail,
-        );
-        if (!validation.valid) throw new Error("Invitation is invalid or does not match this email");
-      }
-      rememberPendingInvitation(normalizedInvitationCode, invitationData.expiresAt);
-      setActivationContext({ code: normalizedInvitationCode, email: normalizedEmail });
-      toast({
-        title: sendActivationEmail ? "Secure activation email sent" : "Continue secure activation",
-        description: sendActivationEmail
-          ? `Open the password link sent to ${normalizedEmail}, set your password, then return here.`
-          : "Enter the password you set from the secure email.",
-      });
-    } catch (error) {
-      toast({
-        title: "Activation failed",
-        description: error instanceof Error ? error.message : "Unable to prepare secure activation",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-      setPendingAction(null);
-    }
-  };
-
-  const handleCompleteInvitation = async () => {
-    setIsLoading(true);
-    setPendingAction("verify");
-    try {
-      const completedUser = await completeInvitationRegistration({
-        invitationCode: invitationCode.trim().toUpperCase(),
-      });
-      setVerificationPending(false);
-      forgetPendingInvitation();
-      toast({
-        title: "Email verified",
-        description: `Your invitation was accepted and the ${completedUser.role} role is now active.`,
-      });
-      navigate("/dashboard");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to finish registration";
-      toast({
-        title: message === EMAIL_VERIFICATION_MESSAGE ? "Verification still pending" : "Sign up failed",
-        description: message,
         variant: "destructive",
       });
     } finally {
@@ -450,7 +342,6 @@ const Auth = () => {
       setPassword("");
       setAccessError(null);
       navigate("/auth", { replace: true });
-      if (focusForm) requestAnimationFrame(() => emailInputRef.current?.focus());
     } catch {
       toast({
         title: "No se pudo cerrar la sesión",
@@ -460,11 +351,11 @@ const Auth = () => {
     } finally {
       setIsLoading(false);
       setPendingAction(null);
+      if (focusForm) {
+        requestAnimationFrame(() => requestAnimationFrame(() => emailInputRef.current?.focus()));
+      }
     }
   };
-
-  const activationReady = activationContext?.code === invitationCode.trim().toUpperCase()
-    && activationContext.email === email.trim().toLowerCase();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-secondary/5 flex items-center justify-center p-4">
@@ -588,7 +479,6 @@ const Auth = () => {
                       onChange={(e) => {
                         const nextCode = e.target.value.toUpperCase();
                         setInvitationCode(nextCode);
-                        setActivationContext(null);
                         if (nextCode.length >= 12) {
                           validateInvitationCode(nextCode);
                         } else {
@@ -600,7 +490,7 @@ const Auth = () => {
                         }
                       }}
                       onBlur={() => validateInvitationCode(invitationCode)}
-                      disabled={isLoading || verificationPending}
+                      disabled={isLoading}
                       required
                       maxLength={12}
                       className="font-mono tracking-wider uppercase"
@@ -631,26 +521,7 @@ const Auth = () => {
                   )}
                 </div>
 
-                {verificationPending && (
-                  <div role="status" className="space-y-3 rounded-md border border-primary/30 bg-primary/5 p-4 text-sm">
-                    <p className="font-medium text-foreground">Check your inbox before we assign the role</p>
-                    <p className="text-muted-foreground">
-                      Open the Firebase verification link for {email}, then return to this tab. The invitation is not consumed until the address is verified.
-                    </p>
-                    <Button
-                      type="button"
-                      className="w-full"
-                      disabled={isLoading}
-                      onClick={() => void handleCompleteInvitation()}
-                    >
-                      {pendingAction === "verify" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      I verified my email
-                    </Button>
-                  </div>
-                )}
-
-                {/* Secure enrollment is split from password ownership proof. */}
-                {invitationData?.valid && !verificationPending && (
+                {invitationData?.valid && (
                   <>
                     <div className="space-y-2">
                       <Label htmlFor="signup-email">Email *</Label>
@@ -666,96 +537,55 @@ const Auth = () => {
                       />
                     </div>
 
-                    {!activationReady ? (
-                      <div role="status" className="space-y-3 rounded-md border border-primary/30 bg-primary/5 p-4 text-sm">
-                        <p className="font-medium text-foreground">Prove ownership of the invited inbox</p>
-                        <p className="text-muted-foreground">
-                          Firebase will send a secure password link. The invitation code and email are never placed in that link.
-                        </p>
-                        <Button
-                          type="button"
-                          className="w-full"
-                          disabled={isLoading || isValidatingCode}
-                          onClick={() => void prepareInvitationActivation(true)}
-                        >
-                          {pendingAction === "activate" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                          Send secure activation email
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="w-full"
-                          disabled={isLoading || isValidatingCode}
-                          onClick={() => void prepareInvitationActivation(false)}
-                        >
-                          I already set my password
-                        </Button>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm text-muted-foreground">
-                          Use the password you set from the Firebase email. If you have not opened it yet, do that before continuing.
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="signup-name">Full Name *</Label>
-                          <Input
-                            id="signup-name"
-                            type="text"
-                            placeholder="John Doe"
-                            value={fullName}
-                            onChange={(e) => setFullName(e.target.value)}
-                            disabled={isLoading}
-                            required
-                            maxLength={100}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="signup-phone">Phone</Label>
-                          <Input
-                            id="signup-phone"
-                            type="tel"
-                            placeholder="+1 (555) 000-0000"
-                            value={phone}
-                            onChange={(e) => setPhone(e.target.value)}
-                            disabled={isLoading}
-                            maxLength={20}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="signup-password">Password *</Label>
-                          <Input
-                            id="signup-password"
-                            type="password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            disabled={isLoading}
-                            required
-                            maxLength={72}
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            Min 8 characters with uppercase, lowercase, and number
-                          </p>
-                        </div>
-                        <Button type="submit" className="w-full" disabled={isLoading || isValidatingCode}>
-                          {pendingAction === "signup" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                          Activate Account as {invitationData.role.charAt(0).toUpperCase() + invitationData.role.slice(1)}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          className="w-full"
-                          disabled={isLoading}
-                          onClick={() => void prepareInvitationActivation(true)}
-                        >
-                          Resend activation email
-                        </Button>
-                      </>
-                    )}
+                    <div className="space-y-2">
+                      <Label htmlFor="signup-name">Full Name *</Label>
+                      <Input
+                        id="signup-name"
+                        type="text"
+                        placeholder="John Doe"
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                        disabled={isLoading}
+                        required
+                        maxLength={100}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="signup-phone">Phone</Label>
+                      <Input
+                        id="signup-phone"
+                        type="tel"
+                        placeholder="+1 (555) 000-0000"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        disabled={isLoading}
+                        maxLength={20}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="signup-password">Password *</Label>
+                      <Input
+                        id="signup-password"
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        disabled={isLoading}
+                        required
+                        maxLength={72}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Min 8 characters with uppercase, lowercase and number
+                      </p>
+                    </div>
+                    <Button type="submit" className="w-full" disabled={isLoading || isValidatingCode}>
+                      {pendingAction === "signup" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Create Account as {invitationData.role.charAt(0).toUpperCase() + invitationData.role.slice(1)}
+                    </Button>
                   </>
                 )}
 
                 {/* QR Scanner Button */}
-                {!invitationData?.valid && !isValidatingCode && !verificationPending && (
+                {!invitationData?.valid && !isValidatingCode && (
                   <Button
                     type="button"
                     variant="outline"
@@ -782,7 +612,6 @@ const Auth = () => {
                   onClose={() => setShowQRScanner(false)}
                   onScan={(code) => {
                     setInvitationCode(code.toUpperCase());
-                    setActivationContext(null);
                     validateInvitationCode(code);
                   }}
                 />

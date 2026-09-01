@@ -451,6 +451,98 @@ const invalidInvitation = () => ({
 const invalidInvitationError = () =>
   new HttpsError("failed-precondition", "Invitation code is invalid or expired");
 
+const getDirectInvitationActivation = async (
+  code: string,
+  targetEmail: string,
+): Promise<{ targetUid: string; role: AppRole }> => {
+  const firestore = getFirestore();
+  const codeHash = hashInvitationCode(code);
+  const invitations = await firestore
+    .collection("invitations")
+    .where("codeHash", "==", codeHash)
+    .limit(2)
+    .get();
+  if (invitations.size !== 1) throw invalidInvitationError();
+
+  const invitationReference = invitations.docs[0].ref;
+  const invitationSnapshot = await invitationReference.get();
+  const data = invitationSnapshot.data() ?? {};
+  const targetLockId = hashInvitationTargetKey(targetEmail);
+  const targetReference = firestore.collection("invitationTargets").doc(targetLockId);
+  const targetSnapshot = await targetReference.get();
+  const target = targetSnapshot.data() ?? {};
+  const expiresAt = data.expiresAt instanceof Timestamp ? data.expiresAt.toMillis() : 0;
+  const targetExpiresAt = target.expiresAt instanceof Timestamp
+    ? target.expiresAt.toMillis()
+    : 0;
+  const targetEmailSalt = typeof data.targetEmailSalt === "string" ? data.targetEmailSalt : "";
+  const targetEmailHash = targetEmailSalt
+    ? hashInvitationEmail(targetEmail, targetEmailSalt)
+    : "";
+
+  if (
+    data.schemaVersion !== INVITATION_SCHEMA_VERSION
+    || data.codeHash !== codeHash
+    || !/^[a-f0-9]{32}$/.test(targetEmailSalt)
+    || data.targetEmailHash !== targetEmailHash
+    || data.targetLockId !== targetLockId
+    || typeof data.targetUid !== "string"
+    || !data.targetUid
+    || typeof data.targetEnrollmentHash !== "string"
+    || !/^[a-f0-9]{64}$/.test(data.targetEnrollmentHash)
+    || typeof data.requestKeyHash !== "string"
+    || !/^[a-f0-9]{64}$/.test(data.requestKeyHash)
+    || !Number.isSafeInteger(data.generation)
+    || Number(data.generation) <= 0
+    || !isEncryptedInvitationCode(data)
+    || !isAppRole(data.role)
+    || data.status !== "pending"
+    || data.claimAssignmentState !== "not_started"
+    || expiresAt <= Date.now()
+    || !targetSnapshot.exists
+    || target.invitationId !== invitationReference.id
+    || target.requestKeyHash !== data.requestKeyHash
+    || target.generation !== data.generation
+    || target.status !== "pending"
+    || targetExpiresAt !== expiresAt
+  ) {
+    throw invalidInvitationError();
+  }
+
+  let targetUser: UserRecord;
+  try {
+    targetUser = await getAuth().getUser(data.targetUid);
+  } catch {
+    throw invalidInvitationError();
+  }
+  const enrollmentId = getInvitationEnrollmentId(targetUser);
+  if (
+    targetUser.disabled
+    || normalizeInvitationEmail(targetUser.email) !== targetEmail
+    || targetUser.customClaims?.role !== undefined
+    || !enrollmentId
+    || hashInvitationEnrollmentId(enrollmentId) !== data.targetEnrollmentHash
+  ) {
+    throw invalidInvitationError();
+  }
+
+  return { targetUid: data.targetUid, role: data.role };
+};
+
+const normalizeInvitationActivationPassword = (value: unknown): string => {
+  if (
+    typeof value !== "string"
+    || value.length < 8
+    || value.length > 72
+    || !/[A-Z]/.test(value)
+    || !/[a-z]/.test(value)
+    || !/[0-9]/.test(value)
+  ) {
+    throw new HttpsError("invalid-argument", "Password does not meet the minimum requirements");
+  }
+  return value;
+};
+
 const getJobImportPayload = (value: unknown, managerId: string): JobImportPayload => {
   if (!isRecord(value)) {
     throw new HttpsError("invalid-argument", "Spreadsheet import details are required");
@@ -527,6 +619,7 @@ type RateLimitOperation =
   | "createManagerInvitation"
   | "validateInvitationCodeRequester"
   | "validateInvitationCodeGlobal"
+  | "activateInvitation"
   | "consumeInvitation"
   | "listAssignableBuilders"
   | "createAssignedProject"
@@ -538,6 +631,7 @@ const RATE_LIMITS: Record<RateLimitOperation, { maxRequests: number; windowMs: n
   createManagerInvitation: { maxRequests: 10, windowMs: 60 * 1000 },
   validateInvitationCodeRequester: { maxRequests: 30, windowMs: 60 * 1000 },
   validateInvitationCodeGlobal: { maxRequests: 300, windowMs: 60 * 1000 },
+  activateInvitation: { maxRequests: 5, windowMs: 15 * 60 * 1000 },
   consumeInvitation: { maxRequests: 5, windowMs: 15 * 60 * 1000 },
   listAssignableBuilders: { maxRequests: 30, windowMs: 60 * 1000 },
   createAssignedProject: { maxRequests: 20, windowMs: 60 * 1000 },
@@ -1110,6 +1204,38 @@ export const validateInvitationCode = onCall(
     };
   },
 );
+
+export const activateInvitation = onCall(appCheckOptions, async (request) => {
+  await enforceRateLimit(
+    anonymizedRequesterId(request.rawRequest.ip),
+    "activateInvitation",
+  );
+  if (!isRecord(request.data)) {
+    throw new HttpsError("invalid-argument", "Invitation activation details are required");
+  }
+
+  const code = normalizeInvitationCode(request.data.code);
+  const targetEmail = normalizeInvitationEmail(request.data.targetEmail);
+  const fullName = requireText(request.data.fullName, "Full name", 100);
+  const password = normalizeInvitationActivationPassword(request.data.password);
+  if (!code || !targetEmail) {
+    throw invalidInvitationError();
+  }
+
+  const activation = await getDirectInvitationActivation(code, targetEmail);
+  await enforceRateLimit(activation.targetUid, "activateInvitation");
+  try {
+    await getAuth().updateUser(activation.targetUid, {
+      password,
+      displayName: fullName,
+      emailVerified: true,
+    });
+  } catch {
+    throw new HttpsError("internal", "Unable to activate the invited account");
+  }
+
+  return { activated: true, role: activation.role };
+});
 
 export const consumeInvitation = onCall(appCheckOptions, async (request) => {
   if (!request.auth) {
