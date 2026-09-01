@@ -19,7 +19,7 @@ const Invite = () => {
       return;
     }
     if (!isManagementRole(user.role)) {
-      if (user.role) navigate(roleHomePath(user.role), { replace: true });
+      navigate(user.role ? roleHomePath(user.role) : "/auth?reason=missing-role", { replace: true });
     }
   }, [isLoading, navigate, user]);
 

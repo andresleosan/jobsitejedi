@@ -1572,10 +1572,14 @@ export const listAccessRequests = onCall(
     );
     await enforceRateLimit(user.uid, "listAccessRequests");
 
-    const snapshot = await getFirestore().collection("accessRequests").get();
-    const requests = snapshot.docs
+    const firestore = getFirestore();
+    const snapshots = await Promise.all([
+      firestore.collection("accessRequests").where("status", "==", "pending").orderBy("requestedAt", "desc").limit(100).get(),
+      firestore.collection("accessRequests").where("status", "==", "approving").orderBy("requestedAt", "desc").limit(100).get(),
+    ]);
+    const requests = snapshots.flatMap((snapshot) => snapshot.docs)
       .map((document) => ({ id: document.id, data: document.data() }))
-      .filter(({ id, data }) => accessRequestIsCurrent(data, id) && (data.status === "pending" || data.status === "approving"))
+      .filter(({ id, data }) => accessRequestIsCurrent(data, id))
       .sort((left, right) => {
         const leftMillis = left.data.requestedAt instanceof Timestamp ? left.data.requestedAt.toMillis() : 0;
         const rightMillis = right.data.requestedAt instanceof Timestamp ? right.data.requestedAt.toMillis() : 0;

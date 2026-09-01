@@ -78,7 +78,7 @@ const AccessRequestsPanel = ({ isSessionActive }: { isSessionActive: () => boole
         ) : (
           <div className="space-y-3">
             {requests.map((request) => (
-              <div key={request.id} className="flex flex-col gap-4 rounded-lg border p-4 lg:flex-row lg:items-center lg:justify-between">
+              <div key={request.id} data-testid="access-request" className="flex flex-col gap-4 rounded-lg border p-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="min-w-0 space-y-1">
                   <p className="flex items-center gap-2 font-medium"><UserRound className="h-4 w-4 shrink-0 text-primary" />{request.fullName}</p>
                   <p className="break-all text-sm text-muted-foreground">{request.email}{request.phone ? ` · ${request.phone}` : ""}</p>
