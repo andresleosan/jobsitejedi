@@ -38,4 +38,11 @@ describe("Public landing page contract", () => {
     expect(css).toContain(".landing-nav a.landing-nav-cta { color: white; }");
     expect(css).toContain(".landing-nav a.landing-nav-cta:hover { color: white; }");
   });
+
+  test("uses restrained icon treatment instead of colorful icon tiles", () => {
+    const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+
+    expect(css).toContain(".landing-activity-icon, .landing-strip-icon, .landing-capability-icon { background: transparent;");
+    expect(css).toContain(".landing-activity-icon svg, .landing-strip-icon svg, .landing-capability-icon svg { width: 15px;");
+  });
 });

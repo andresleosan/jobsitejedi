@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, test, vi } from "vitest";
@@ -43,5 +44,12 @@ describe("Auth page contract", () => {
     expect(html).toContain('for="signin-email"');
     expect(html).toContain('for="signin-password"');
     expect(html).toContain("Sign In");
+  });
+
+  test("keeps the access benefits quiet and content-led", () => {
+    const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+
+    expect(css).toContain(".auth-benefit-icon { display: inline-flex; width: 20px;");
+    expect(css).toContain("background: transparent; color: var(--auth-blue);");
   });
 });

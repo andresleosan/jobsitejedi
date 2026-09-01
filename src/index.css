@@ -236,6 +236,10 @@ All colors MUST be HSL.
   .landing-capability-icon svg { width: 19px; height: 19px; }
   .landing-capability-icon.blue { background: var(--landing-blue-soft); color: var(--landing-blue); }
   .landing-capability-icon.orange { background: var(--landing-orange-soft); color: var(--landing-orange); }
+  .landing-activity-icon, .landing-strip-icon, .landing-capability-icon { background: transparent; color: var(--landing-muted); }
+  .landing-activity-icon.blue, .landing-activity-icon.orange, .landing-activity-icon.green, .landing-capability-icon.blue, .landing-capability-icon.orange { background: transparent; color: var(--landing-muted); }
+  .landing-activity-icon, .landing-strip-icon, .landing-capability-icon { display: inline-flex; width: auto; height: auto; align-items: center; border-radius: 0; }
+  .landing-activity-icon svg, .landing-strip-icon svg, .landing-capability-icon svg { width: 15px; height: 15px; stroke-width: 1.7; }
   .landing-capability-row h3 { margin: 5px 0 5px; font-size: 1rem; letter-spacing: -0.02em; }
   .landing-capability-row > div > p:last-child { max-width: 430px; margin: 0; color: var(--landing-muted); font-size: 0.78rem; line-height: 1.55; }
   .landing-capability-arrow { width: 17px; height: 17px; color: var(--landing-orange); }
@@ -390,6 +394,11 @@ All colors MUST be HSL.
     .auth-card > div:last-child { padding: 0 20px 22px; }
     .auth-card { box-shadow: 8px 8px 0 #e1e8e8, 0 18px 34px rgb(23 33 43 / 10%); }
   }
+
+  .auth-benefits > div { grid-template-columns: 24px 1fr; }
+  .auth-benefit-icon { display: inline-flex; width: 20px; height: 20px; align-items: center; justify-content: center; border-radius: 0; background: transparent; color: var(--auth-blue); }
+  .auth-benefit-icon.orange, .auth-benefit-icon.green { background: transparent; color: var(--auth-muted); }
+  .auth-benefit-icon svg { width: 16px; height: 16px; stroke-width: 1.7; }
 
   .admin-dashboard {
     --admin-ink: #17212b;
