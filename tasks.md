@@ -1212,7 +1212,7 @@ T-030 y T-031 siguen como mejoras posteriores y no bloquean el release ya desple
 
 ## T-037 — Administración de solicitudes y usuarios
 
-- **Prioridad:** P0 · **Estado:** revisión · **Depende de:** T-036
+- **Prioridad:** P0 · **Estado:** desplegada · **Depende de:** T-036
 - Conservar cada decisión de acceso en un historial separado del estado operativo actual.
 - Exigir motivo al rechazar y permitir que el administrador seleccione el rol final al aprobar,
   conservando también el rol que la persona solicitó.
@@ -1227,4 +1227,9 @@ T-030 y T-031 siguen como mejoras posteriores y no bloquean el release ya desple
 - **Evidencia local:** contrato de Functions (14/14), prueba focalizada de emulador para acceso,
   historial, limpieza y gestión de usuarios (2/2), guard de proveedor (9/9), typecheck, build de
   Functions, build de desarrollo y lint sin errores. Lint conserva siete warnings preexistentes de
-  Fast Refresh. No se desplegó producción.
+  Fast Refresh.
+- **Evidencia de producción (2026-09-01 UTC):** 19 Functions desplegadas sin errores; activos
+  `listAccessRequestHistory`, `clearAccessRequestHistory`, `listPlatformUsers`,
+  `updatePlatformUserRole` y `revokePlatformUserAccess`. El preflight CORS de la aplicación
+  respondió `204` con el origen autorizado. El índice `status + reviewedAt` quedó solicitado y
+  puede tardar unos minutos en pasar de `INITIALIZING` a `READY`.
