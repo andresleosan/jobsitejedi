@@ -37,7 +37,7 @@ test("admin reviews a requested profile and the user reaches the approved dashbo
   await expect(page.getByText("La cuenta aún no tiene un perfil aprobado", { exact: true })).toBeVisible();
   await page.getByRole("combobox", { name: "Perfil solicitado", exact: true }).selectOption("manager");
   await page.getByRole("button", { name: "Solicitar acceso", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Solicitud registrada");
+  await expect(page.locator('[role="status"]').filter({ hasText: "Solicitud registrada" }).first()).toBeVisible();
 
   await signIn(page, adminEmail, password);
   await expect(page).toHaveURL(/\/admins$/);

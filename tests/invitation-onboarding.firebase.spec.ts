@@ -34,7 +34,7 @@ test("a new user requests builder access and an admin approves it without email 
   await page.getByRole("combobox", { name: "Perfil solicitado", exact: true }).selectOption("builder");
   await page.getByLabel("Contraseña", { exact: true }).fill(applicantPassword);
   await page.getByRole("button", { name: "Enviar solicitud como Builder", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Solicitud registrada");
+  await expect(page.locator('[role="status"]').filter({ hasText: "Solicitud registrada" }).first()).toBeVisible();
 
   await signIn(page, adminEmail, adminPassword);
   const request = page.locator('[data-testid="access-request"]').filter({ hasText: applicantEmail });

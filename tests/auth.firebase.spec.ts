@@ -31,7 +31,7 @@ test("a roleless account can request a profile without redirect loops", async ({
   await expect(page.getByRole("combobox", { name: "Perfil solicitado", exact: true })).toHaveValue("builder");
 
   await page.getByRole("button", { name: "Solicitar acceso", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Solicitud registrada");
+  await expect(page.locator('[role="status"]').filter({ hasText: "Solicitud registrada" }).first()).toBeVisible();
   expect(transitions.some((url) => /\/dashboard(?:\?|$)/.test(url))).toBe(false);
   expect(transitions.filter((url) => /\/auth(?:\?|$)/.test(url)).length).toBeLessThanOrEqual(2);
 });
