@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AlertTriangle, HardHat, Loader2 } from "lucide-react";
 import { z } from "zod";
@@ -15,6 +15,12 @@ const signInSchema = z.object({
   email: z.string().trim().toLowerCase().email("Please enter a valid email address").max(255, "Email is too long"),
   password: z.string().min(1, "Password is required").max(72, "Password is too long"),
 });
+
+const roleLabel: Record<AppRole, string> = { admin: "Admin", manager: "Manager", builder: "Builder" };
+
+type AccessRequestViewState =
+  | { status: "loading" | "none" | "unavailable"; userId: string | null }
+  | { status: "pending" | "approving"; requestedRole: AppRole; userId: string };
 
 const GoogleMark = () => (
   <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4">
@@ -54,15 +60,42 @@ const Auth = () => {
   const [requestedRole, setRequestedRole] = useState<AppRole>("builder");
   const [accessError, setAccessError] = useState<string | null>(null);
   const [requestSubmitted, setRequestSubmitted] = useState(false);
+  const [accessRequestView, setAccessRequestView] = useState<AccessRequestViewState>({ status: "none", userId: null });
   const [pendingAction, setPendingAction] = useState<"password" | "google" | "request" | "signout" | null>(null);
   const emailInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
-  const { user, isLoading: isAuthLoading, signIn, signInWithGoogle, signOut, submitAccessRequest } = useAuth();
+  const { user, isLoading: isAuthLoading, signIn, signInWithGoogle, signOut, getAccessRequestStatus, submitAccessRequest } = useAuth();
 
   const hasMissingRole = searchParams.get("reason") === "missing-role"
     || Boolean(user && !user.role)
     || accessError === MISSING_ROLE_MESSAGE;
+
+  useEffect(() => {
+    if (!user || user.role) {
+      setAccessRequestView({ status: "none", userId: null });
+      return;
+    }
+
+    let cancelled = false;
+    setAccessRequestView({ status: "loading", userId: user.id });
+    void getAccessRequestStatus()
+      .then((request) => {
+        if (cancelled) return;
+        if ((request.status === "pending" || request.status === "approving") && request.requestedRole) {
+          setAccessRequestView({ status: request.status, requestedRole: request.requestedRole, userId: user.id });
+        } else {
+          setAccessRequestView({ status: "none", userId: user.id });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAccessRequestView({ status: "unavailable", userId: user.id });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [getAccessRequestStatus, user]);
 
   const handleSignIn = async (event: FormEvent) => {
     event.preventDefault();
@@ -134,6 +167,12 @@ const Auth = () => {
       setPassword("");
       toast({ title: "Solicitud enviada", description: "Tu acceso quedará pendiente de aprobación." });
     } catch (error) {
+      if (error instanceof Error && error.message === "You already have a pending access request") {
+        const currentRequest = await getAccessRequestStatus().catch(() => null);
+        if (currentRequest && (currentRequest.status === "pending" || currentRequest.status === "approving") && currentRequest.requestedRole) {
+          setAccessRequestView({ status: currentRequest.status, requestedRole: currentRequest.requestedRole, userId: user?.id ?? "" });
+        }
+      }
       toast({ title: "No se pudo enviar la solicitud", description: error instanceof Error ? error.message : "Inténtalo de nuevo.", variant: "destructive" });
     } finally {
       setIsLoading(false);
@@ -176,7 +215,24 @@ const Auth = () => {
         <CardContent>
           <div className="space-y-4">
               {requestSubmitted && <div role="status" className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm"><p className="font-medium">Solicitud registrada</p><p className="text-muted-foreground">Podrás ingresar cuando un administrador apruebe el perfil solicitado.</p></div>}
-              {hasMissingRole && user && (
+              {hasMissingRole && user && accessRequestView.userId === user.id && accessRequestView.status === "loading" && (
+                <div role="status" className="rounded-md border border-muted bg-muted/40 p-3 text-sm text-muted-foreground">
+                  Verificando si ya existe una solicitud pendiente…
+                </div>
+              )}
+              {hasMissingRole && user && accessRequestView.userId === user.id && (accessRequestView.status === "pending" || accessRequestView.status === "approving") && (
+                <div role="status" className="space-y-3 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+                  <div className="flex gap-3"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" /><div><p className="font-medium">Solicitud de acceso pendiente</p><p className="text-muted-foreground">Ya solicitaste el perfil {roleLabel[accessRequestView.requestedRole]}. Espera a que un administrador revise la solicitud; no puedes enviar otra mientras siga pendiente.</p></div></div>
+                  <Button type="button" size="sm" variant="outline" onClick={() => void clearBlockedSession()} disabled={isLoading}>{pendingAction === "signout" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Cerrar sesión</Button>
+                </div>
+              )}
+              {hasMissingRole && user && accessRequestView.userId === user.id && accessRequestView.status === "unavailable" && (
+                <div role="alert" className="space-y-3 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+                  <p>No se pudo verificar el estado de tu solicitud. Por seguridad, vuelve a intentarlo más tarde.</p>
+                  <Button type="button" size="sm" variant="outline" onClick={() => void clearBlockedSession()} disabled={isLoading}>Cerrar sesión</Button>
+                </div>
+              )}
+              {hasMissingRole && user && accessRequestView.userId === user.id && accessRequestView.status === "none" && (
                 <form onSubmit={handlePendingRequest} className="space-y-3 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
                   <div className="flex gap-3"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" /><div><p className="font-medium">La cuenta aún no tiene un perfil aprobado</p><p className="text-muted-foreground">Solicita el nivel de acceso que necesitas. Un administrador revisará la solicitud.</p></div></div>
                   <div className="space-y-2"><Label htmlFor="pending-name">Nombre completo</Label><Input id="pending-name" value={fullName} onChange={(event) => setFullName(event.target.value)} disabled={isLoading} maxLength={100} required /></div>

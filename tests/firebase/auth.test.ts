@@ -145,6 +145,26 @@ describe("Firebase Auth adapter", () => {
     await signOut();
   });
 
+  test("reports a pending request and prevents requesting another role", async () => {
+    const credentials = makeCredentials("pending-request");
+    await provisionEmulatorUser({ ...credentials, role: null });
+
+    await signIn(credentials.email, credentials.password);
+    await expect(accessRequestOperations.submitAccessRequest({
+      requestedRole: "admin",
+      fullName: credentials.fullName,
+    })).resolves.toMatchObject({ status: "pending", requestedRole: "admin" });
+    await expect(accessRequestOperations.getAccessRequestStatus()).resolves.toEqual({
+      status: "pending",
+      requestedRole: "admin",
+    });
+    await expect(accessRequestOperations.submitAccessRequest({
+      requestedRole: "builder",
+      fullName: credentials.fullName,
+    })).rejects.toThrow("An access request is already pending");
+    await signOut();
+  });
+
   test("registers an identity as roleless and creates an access request", async () => {
     const credentials = makeCredentials("access-registration");
     await expect(registerForAccess({

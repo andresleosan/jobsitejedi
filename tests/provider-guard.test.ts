@@ -233,6 +233,7 @@ describe("authorization surface guard", () => {
 
     expect(backend).toContain("export const consumeInvitation");
     expect(backend).toContain("export const submitAccessRequest");
+    expect(backend).toContain("export const getAccessRequestStatus");
     expect(backend).toContain("export const listAccessRequests");
     expect(backend).toContain("export const reviewAccessRequest");
     expect(backend).toContain("export const activateInvitation");

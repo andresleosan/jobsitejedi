@@ -27,6 +27,7 @@ describe("Firebase route auth guards", () => {
     expect(dashboardSource).toContain('/auth?reason=missing-role');
     expect(authSource).toContain('Boolean(user && !user.role)');
     expect(authSource).toContain('submitAccessRequest');
+    expect(authSource).toContain('getAccessRequestStatus');
     expect(authSource).toContain('Continue with Google');
     expect(authSource).toContain('perfil aprobado');
     expect(authSource).toContain('Cerrar sesi');

@@ -271,6 +271,15 @@ export const submitAccessRequest = async (input: {
   }
 };
 
+export const getAccessRequestStatus = async () => {
+  if (!firebaseAuth.currentUser) throw new Error("Sign in before checking access request status");
+  try {
+    return await accessRequestOperations.getAccessRequestStatus();
+  } catch (error) {
+    throw normalizeAuthError(error);
+  }
+};
+
 const validateInvitationIdentity = (input: {
   email: string;
   invitationCode: string;

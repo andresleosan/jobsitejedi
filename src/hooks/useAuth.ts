@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   registerForAccess,
   registerWithInvitation,
+  getAccessRequestStatus,
   submitAccessRequest,
   signIn,
   signInWithGoogle,
@@ -29,6 +30,7 @@ export const useAuth = () => {
     signIn,
     signInWithGoogle,
     registerForAccess,
+    getAccessRequestStatus,
     submitAccessRequest,
     registerWithInvitation,
     signOut,

@@ -640,6 +640,7 @@ type RateLimitOperation =
   | "submitInvoice"
   | "reviewInvoice"
   | "submitAccessRequest"
+  | "getAccessRequestStatus"
   | "listAccessRequests"
   | "reviewAccessRequest";
 
@@ -655,6 +656,7 @@ const RATE_LIMITS: Record<RateLimitOperation, { maxRequests: number; windowMs: n
   submitInvoice: { maxRequests: 10, windowMs: 10 * 60 * 1000 },
   reviewInvoice: { maxRequests: 30, windowMs: 60 * 1000 },
   submitAccessRequest: { maxRequests: 3, windowMs: 15 * 60 * 1000 },
+  getAccessRequestStatus: { maxRequests: 30, windowMs: 60 * 1000 },
   listAccessRequests: { maxRequests: 30, windowMs: 60 * 1000 },
   reviewAccessRequest: { maxRequests: 30, windowMs: 60 * 1000 },
 };
@@ -1482,6 +1484,29 @@ const accessRequestResponse = (
   reviewedAt: data.reviewedAt instanceof Timestamp ? data.reviewedAt.toDate().toISOString() : null,
   decisionReason: typeof data.decisionReason === "string" ? data.decisionReason : null,
 });
+
+export const getAccessRequestStatus = onCall(
+  { ...appCheckOptions, timeoutSeconds: 15, memory: "256MiB", maxInstances: 10 },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentication is required");
+    }
+
+    await enforceRateLimit(request.auth.uid, "getAccessRequestStatus");
+    const snapshot = await accessRequestReference(request.auth.uid).get();
+    if (!snapshot.exists) return { status: null, requestedRole: null };
+
+    const data = snapshot.data() ?? {};
+    if (!accessRequestIsCurrent(data, request.auth.uid)) {
+      return { status: null, requestedRole: null };
+    }
+
+    return {
+      status: data.status,
+      requestedRole: data.requestedRole,
+    };
+  },
+);
 
 export const submitAccessRequest = onCall(
   { ...appCheckOptions, timeoutSeconds: 15, memory: "256MiB", maxInstances: 10 },

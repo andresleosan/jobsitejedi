@@ -104,6 +104,11 @@ const submitAccessRequestCallable = httpsCallable<
   { status: "pending" | "approving"; requestedRole: AppRole }
 >(firebaseFunctions, "submitAccessRequest");
 
+const getAccessRequestStatusCallable = httpsCallable<
+  Record<string, never>,
+  { status: AccessRequestStatus | null; requestedRole: AppRole | null }
+>(firebaseFunctions, "getAccessRequestStatus");
+
 const listAccessRequestsCallable = httpsCallable<
   Record<string, never>,
   { requests: AccessRequestCallableRecord[] }
@@ -226,6 +231,12 @@ export const accessRequestOperations = {
     phone?: string | null;
   }) {
     return (await submitAccessRequestCallable(input)).data;
+  },
+  async getAccessRequestStatus(): Promise<{
+    status: AccessRequestStatus | null;
+    requestedRole: AppRole | null;
+  }> {
+    return (await getAccessRequestStatusCallable({})).data;
   },
   async listAccessRequests(): Promise<AccessRequestRecord[]> {
     const result = await listAccessRequestsCallable({});

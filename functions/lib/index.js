@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.cleanupOldProjects = exports.reviewInvoice = exports.extractJobsFromExcel = exports.submitInvoice = exports.createAssignedProject = exports.listAssignableBuilders = exports.reviewAccessRequest = exports.listAccessRequests = exports.submitAccessRequest = exports.consumeInvitation = exports.activateInvitation = exports.validateInvitationCode = exports.createManagerInvitation = void 0;
+exports.cleanupOldProjects = exports.reviewInvoice = exports.extractJobsFromExcel = exports.submitInvoice = exports.createAssignedProject = exports.listAssignableBuilders = exports.reviewAccessRequest = exports.listAccessRequests = exports.submitAccessRequest = exports.getAccessRequestStatus = exports.consumeInvitation = exports.activateInvitation = exports.validateInvitationCode = exports.createManagerInvitation = void 0;
 const node_crypto_1 = require("node:crypto");
 const app_1 = require("firebase-admin/app");
 const auth_1 = require("firebase-admin/auth");
@@ -448,6 +448,7 @@ const RATE_LIMITS = {
     submitInvoice: { maxRequests: 10, windowMs: 10 * 60 * 1000 },
     reviewInvoice: { maxRequests: 30, windowMs: 60 * 1000 },
     submitAccessRequest: { maxRequests: 3, windowMs: 15 * 60 * 1000 },
+    getAccessRequestStatus: { maxRequests: 30, windowMs: 60 * 1000 },
     listAccessRequests: { maxRequests: 30, windowMs: 60 * 1000 },
     reviewAccessRequest: { maxRequests: 30, windowMs: 60 * 1000 },
 };
@@ -1093,6 +1094,23 @@ const accessRequestResponse = (requestId, data) => ({
     requestedAt: data.requestedAt instanceof firestore_1.Timestamp ? data.requestedAt.toDate().toISOString() : null,
     reviewedAt: data.reviewedAt instanceof firestore_1.Timestamp ? data.reviewedAt.toDate().toISOString() : null,
     decisionReason: typeof data.decisionReason === "string" ? data.decisionReason : null,
+});
+exports.getAccessRequestStatus = (0, https_1.onCall)({ ...appCheckOptions, timeoutSeconds: 15, memory: "256MiB", maxInstances: 10 }, async (request) => {
+    if (!request.auth) {
+        throw new https_1.HttpsError("unauthenticated", "Authentication is required");
+    }
+    await enforceRateLimit(request.auth.uid, "getAccessRequestStatus");
+    const snapshot = await accessRequestReference(request.auth.uid).get();
+    if (!snapshot.exists)
+        return { status: null, requestedRole: null };
+    const data = snapshot.data() ?? {};
+    if (!accessRequestIsCurrent(data, request.auth.uid)) {
+        return { status: null, requestedRole: null };
+    }
+    return {
+        status: data.status,
+        requestedRole: data.requestedRole,
+    };
 });
 exports.submitAccessRequest = (0, https_1.onCall)({ ...appCheckOptions, timeoutSeconds: 15, memory: "256MiB", maxInstances: 10 }, async (request) => {
     if (!request.auth) {
