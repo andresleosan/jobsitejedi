@@ -51,4 +51,14 @@ describe("Admin dashboard contract", () => {
     expect(html).toContain("Admin Dashboard");
     expect(html).toContain("admin@example.com");
   });
+
+  test("keeps the admin overview free of repeated decorative icon tiles", () => {
+    const html = renderAdminDashboard();
+    const navStart = html.indexOf('<nav class="admin-section-nav"');
+    const navEnd = html.indexOf("</nav>", navStart);
+    const sectionNav = html.slice(navStart, navEnd);
+
+    expect(html).not.toContain('class="admin-overview-note"');
+    expect(sectionNav).not.toContain("<svg");
+  });
 });

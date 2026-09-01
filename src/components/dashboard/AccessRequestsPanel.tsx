@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, Clock3, History, Loader2, ShieldCheck, UserRound, X } from "lucide-react";
+import { Check, Loader2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -109,12 +109,12 @@ const AccessRequestsPanel = ({ isSessionActive }: { isSessionActive: () => boole
       <Card className="admin-panel-card admin-access-card">
         <CardHeader className="admin-panel-header px-4 py-4 sm:p-6">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" />Solicitudes de acceso</CardTitle><CardDescription>Revisa quién solicita acceso y decide el rol final que tendrá.</CardDescription></div>
+            <div><CardTitle>Solicitudes de acceso</CardTitle><CardDescription>Revisa quién solicita acceso y decide el rol final que tendrá.</CardDescription></div>
             <Badge variant="secondary">{requests.length} pendientes</Badge>
           </div>
         </CardHeader>
         <CardContent className="px-4 pb-4 sm:px-6 sm:pb-6">
-          {isLoading ? <div className="flex items-center justify-center py-8 text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Cargando solicitudes…</div> : requests.length === 0 ? <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground"><Clock3 className="mx-auto mb-2 h-6 w-6" />No hay solicitudes pendientes.</div> : (
+          {isLoading ? <div className="flex items-center justify-center py-8 text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Cargando solicitudes…</div> : requests.length === 0 ? <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">No hay solicitudes pendientes.</div> : (
             <div className="space-y-3">
               {requests.map((request) => {
                 const selectedRole = selectedRoles[request.id] ?? request.requestedRole ?? "builder";
@@ -122,7 +122,7 @@ const AccessRequestsPanel = ({ isSessionActive }: { isSessionActive: () => boole
                 return (
                   <div key={request.id} data-testid="access-request" className="rounded-lg border p-3 sm:p-4">
                     <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_28rem] lg:items-start">
-                      <div className="min-w-0 space-y-1"><p className="flex items-center gap-2 font-medium"><UserRound className="h-4 w-4 shrink-0 text-primary" />{request.fullName}</p><p className="break-all text-sm text-muted-foreground">{request.email}{request.phone ? ` · ${request.phone}` : ""}</p><p className="text-xs text-muted-foreground">Solicitado {request.requestedAt?.toLocaleString() ?? "recientemente"}</p></div>
+                      <div className="min-w-0 space-y-1"><p className="font-medium">{request.fullName}</p><p className="break-all text-sm text-muted-foreground">{request.email}{request.phone ? ` · ${request.phone}` : ""}</p><p className="text-xs text-muted-foreground">Solicitado {request.requestedAt?.toLocaleString() ?? "recientemente"}</p></div>
                       <div className="flex flex-col gap-2 lg:pl-2">
                         <label className="text-xs font-medium text-muted-foreground" htmlFor={`role-${request.id}`}>Rol que se asignará</label>
                         <select id={`role-${request.id}`} value={selectedRole} onChange={(event) => setSelectedRoles((current) => ({ ...current, [request.id]: event.target.value as AppRole }))} disabled={processingId !== null} className="h-10 rounded-md border border-input bg-background px-3 text-sm">{roles.map((role) => <option key={role} value={role}>{roleLabel[role]}{role === request.requestedRole ? " (solicitado)" : ""}</option>)}</select>
@@ -141,7 +141,7 @@ const AccessRequestsPanel = ({ isSessionActive }: { isSessionActive: () => boole
       <Card className="admin-panel-card admin-history-card">
         <CardHeader className="admin-panel-header px-4 py-4 sm:p-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div><CardTitle className="flex items-center gap-2"><History className="h-5 w-5 text-primary" />Historial de decisiones</CardTitle><CardDescription>Consulta aprobaciones y rechazos anteriores, incluidos sus motivos.</CardDescription></div>
+            <div><CardTitle>Historial de decisiones</CardTitle><CardDescription>Consulta aprobaciones y rechazos anteriores, incluidos sus motivos.</CardDescription></div>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <label className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Checkbox

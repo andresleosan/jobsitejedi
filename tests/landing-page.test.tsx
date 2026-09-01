@@ -42,7 +42,16 @@ describe("Public landing page contract", () => {
   test("uses restrained icon treatment instead of colorful icon tiles", () => {
     const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
 
-    expect(css).toContain(".landing-activity-icon, .landing-strip-icon, .landing-capability-icon { background: transparent;");
-    expect(css).toContain(".landing-activity-icon svg, .landing-strip-icon svg, .landing-capability-icon svg { width: 15px;");
+    expect(css).not.toContain(".landing-activity-icon");
+    expect(css).not.toContain(".landing-strip-icon");
+    expect(css).not.toContain(".landing-capability-icon");
+  });
+
+  test("keeps the public story content-led instead of repeating decorative icons", () => {
+    const html = renderLanding();
+
+    expect(html).not.toContain("landing-activity-icon");
+    expect(html).not.toContain("landing-strip-icon");
+    expect(html).not.toContain("landing-capability-icon");
   });
 });

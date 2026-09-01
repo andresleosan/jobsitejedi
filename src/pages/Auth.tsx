@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { AlertTriangle, ArrowLeft, BriefcaseBusiness, HardHat, Loader2, MapPin, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ArrowLeft, HardHat, Loader2 } from "lucide-react";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -237,15 +237,12 @@ const Auth = () => {
             <p className="auth-intro-copy">Sign in to see the projects, tasks, and records that belong to your role.</p>
             <div className="auth-benefits">
               <div>
-                <span className="auth-benefit-icon"><BriefcaseBusiness aria-hidden="true" /></span>
                 <span><strong>One project view</strong><small>Time, materials, and costs stay in context.</small></span>
               </div>
               <div>
-                <span className="auth-benefit-icon orange"><MapPin aria-hidden="true" /></span>
                 <span><strong>Ready for the field</strong><small>Keep the next handoff close to the work.</small></span>
               </div>
               <div>
-                <span className="auth-benefit-icon green"><ShieldCheck aria-hidden="true" /></span>
                 <span><strong>Access by role</strong><small>Everyone sees the work they are meant to manage.</small></span>
               </div>
             </div>

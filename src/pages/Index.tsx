@@ -1,50 +1,35 @@
 import { Link } from "react-router-dom";
 import {
-  Activity,
   ArrowUpRight,
-  CalendarDays,
-  Check,
   CheckCircle2,
   Clock,
-  FileText,
   HardHat,
   MapPin,
   MoreHorizontal,
-  Package,
   ShieldCheck,
-  TrendingUp,
-  Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const capabilities = [
   {
-    icon: Clock,
     label: "Time on site",
     title: "Capture the day while it is happening.",
     description: "Clock in, record location, and keep the work log tied to the right project.",
-    tone: "blue",
   },
   {
-    icon: Package,
     label: "Materials",
     title: "Know what arrived, moved, and got used.",
     description: "Keep inventory and material movements clear across every active project.",
-    tone: "orange",
   },
   {
-    icon: TrendingUp,
     label: "Costs",
     title: "See the budget before it becomes a surprise.",
     description: "Bring invoices and expenses into the same view as project progress.",
-    tone: "blue",
   },
   {
-    icon: Users,
     label: "Team access",
     title: "Give every role the right view.",
     description: "Managers, builders, and admins get focused access to the work they own.",
-    tone: "orange",
   },
 ];
 
@@ -143,9 +128,6 @@ const Index = () => {
 
                 <div className="landing-activity-list">
                   <div className="landing-activity-row">
-                    <span className="landing-activity-icon blue" aria-hidden="true">
-                      <Users />
-                    </span>
                     <span>
                       <strong>12 people on site</strong>
                       <small>Updated by the field team</small>
@@ -153,9 +135,6 @@ const Index = () => {
                     <span className="landing-activity-time">Now</span>
                   </div>
                   <div className="landing-activity-row">
-                    <span className="landing-activity-icon orange" aria-hidden="true">
-                      <Package />
-                    </span>
                     <span>
                       <strong>Delivery received</strong>
                       <small>24 drywall sheets · Bay 02</small>
@@ -163,9 +142,6 @@ const Index = () => {
                     <span className="landing-activity-time">18m</span>
                   </div>
                   <div className="landing-activity-row">
-                    <span className="landing-activity-icon green" aria-hidden="true">
-                      <Check />
-                    </span>
                     <span>
                       <strong>3 tasks due today</strong>
                       <small>2 complete · 1 in progress</small>
@@ -183,26 +159,20 @@ const Index = () => {
                   <ArrowUpRight aria-hidden="true" />
                 </div>
               </div>
-              <p className="landing-preview-caption">
-                <Activity aria-hidden="true" /> An illustrative view of the project signals that
-                matter today.
-              </p>
+              <p className="landing-preview-caption">An illustrative view of the project signals that matter today.</p>
             </div>
           </section>
 
           <section className="landing-workflow-strip" aria-label="BuildTrack Pro workflow">
             <div>
-              <span className="landing-strip-icon"><Activity aria-hidden="true" /></span>
               <span><strong>Capture</strong><small>the work as it happens</small></span>
             </div>
             <span className="landing-strip-arrow" aria-hidden="true">→</span>
             <div>
-              <span className="landing-strip-icon"><Users aria-hidden="true" /></span>
               <span><strong>Coordinate</strong><small>the people and materials</small></span>
             </div>
             <span className="landing-strip-arrow" aria-hidden="true">→</span>
             <div>
-              <span className="landing-strip-icon"><FileText aria-hidden="true" /></span>
               <span><strong>Close the loop</strong><small>with a useful record</small></span>
             </div>
           </section>
@@ -225,7 +195,6 @@ const Index = () => {
             <div className="landing-capability-layout">
               <article className="landing-featured-card">
                 <div className="landing-featured-card-top">
-                  <span className="landing-featured-icon"><CalendarDays aria-hidden="true" /></span>
                   <span className="landing-featured-status"><span aria-hidden="true" /> Project pulse</span>
                 </div>
                 <p className="landing-overline">Built for the daily handoff</p>
@@ -242,9 +211,8 @@ const Index = () => {
               </article>
 
               <div className="landing-capability-list">
-                {capabilities.map(({ icon: Icon, label, title, description, tone }) => (
+                {capabilities.map(({ label, title, description }) => (
                   <article className="landing-capability-row" key={label}>
-                    <span className={`landing-capability-icon ${tone}`}><Icon aria-hidden="true" /></span>
                     <div>
                       <p className="landing-overline">{label}</p>
                       <h3>{title}</h3>
