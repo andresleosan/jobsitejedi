@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, test } from "vitest";
@@ -29,5 +30,12 @@ describe("Public landing page contract", () => {
     expect((html.match(/Start your first project/g) ?? []).length).toBeGreaterThanOrEqual(1);
     expect((html.match(/Sign in/g) ?? []).length).toBeGreaterThanOrEqual(1);
     expect((html.match(/href="\/auth"/g) ?? []).length).toBeGreaterThanOrEqual(3);
+  });
+
+  test("keeps the navigation call to action readable on its blue background", () => {
+    const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+
+    expect(css).toContain(".landing-nav a.landing-nav-cta { color: white; }");
+    expect(css).toContain(".landing-nav a.landing-nav-cta:hover { color: white; }");
   });
 });

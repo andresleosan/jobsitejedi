@@ -141,6 +141,8 @@ All colors MUST be HSL.
   .landing-nav-cta, .landing-primary-action, .landing-cta-button { border: 0; background: var(--landing-blue); color: white; box-shadow: 0 4px 0 var(--landing-blue-dark); }
   .landing-nav-cta { min-height: 38px; padding-inline: 17px; font-size: 0.78rem; }
   .landing-nav-cta:hover, .landing-primary-action:hover, .landing-cta-button:hover { background: var(--landing-blue-dark); }
+  .landing-nav a.landing-nav-cta { color: white; }
+  .landing-nav a.landing-nav-cta:hover { color: white; }
 
   .landing-hero { display: grid; grid-template-columns: minmax(0, 0.88fr) minmax(440px, 1.12fr); gap: clamp(54px, 8vw, 120px); align-items: center; min-height: 620px; padding: 88px 0 82px; }
   .landing-hero-copy { max-width: 570px; }
