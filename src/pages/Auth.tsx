@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { AlertTriangle, HardHat, Loader2 } from "lucide-react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { AlertTriangle, ArrowLeft, BriefcaseBusiness, HardHat, Loader2, MapPin, ShieldCheck } from "lucide-react";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -220,15 +220,50 @@ const Auth = () => {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-primary/5 via-background to-secondary/5 p-4">
-      <Card className="w-full max-w-md shadow-lg">
-        <CardHeader className="space-y-1 text-center">
-          <div className="mb-4 flex justify-center"><div className="rounded-full bg-primary p-3"><HardHat className="h-8 w-8 text-primary-foreground" /></div></div>
-          <CardTitle className="text-2xl font-bold">BuildTrack Pro</CardTitle>
-          <CardDescription>Professional construction project management</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
+    <div className="auth-page">
+      <div className="auth-shell">
+        <header className="auth-topbar">
+          <Link className="auth-brand" to="/" aria-label="Back to BuildTrack Pro home">
+            <span className="auth-brand-mark" aria-hidden="true"><HardHat /></span>
+            <span>BuildTrack Pro</span>
+          </Link>
+          <span className="auth-topbar-note">Secure workspace access</span>
+        </header>
+
+        <main className="auth-layout">
+          <section className="auth-intro" aria-labelledby="auth-intro-title">
+            <p className="auth-kicker">BuildTrack Pro / workspace access</p>
+            <h1 id="auth-intro-title">Keep the workday moving.</h1>
+            <p className="auth-intro-copy">Sign in to see the projects, tasks, and records that belong to your role.</p>
+            <div className="auth-benefits">
+              <div>
+                <span className="auth-benefit-icon"><BriefcaseBusiness aria-hidden="true" /></span>
+                <span><strong>One project view</strong><small>Time, materials, and costs stay in context.</small></span>
+              </div>
+              <div>
+                <span className="auth-benefit-icon orange"><MapPin aria-hidden="true" /></span>
+                <span><strong>Ready for the field</strong><small>Keep the next handoff close to the work.</small></span>
+              </div>
+              <div>
+                <span className="auth-benefit-icon green"><ShieldCheck aria-hidden="true" /></span>
+                <span><strong>Access by role</strong><small>Everyone sees the work they are meant to manage.</small></span>
+              </div>
+            </div>
+            <Link className="auth-back-link" to="/">
+              <ArrowLeft aria-hidden="true" /> Back to the landing
+            </Link>
+          </section>
+
+          <Card className="auth-card">
+            <CardHeader className="auth-card-header">
+              <Link className="auth-card-mark" to="/" aria-label="Back to BuildTrack Pro home">
+                <HardHat aria-hidden="true" />
+              </Link>
+              <CardTitle className="auth-card-title">Welcome back</CardTitle>
+              <CardDescription>Access your BuildTrack Pro workspace.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="auth-form-stack">
               {requestSubmitted && <div role="status" className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm"><p className="font-medium">Solicitud registrada</p><p className="text-muted-foreground">Podrás ingresar cuando un administrador apruebe el perfil solicitado.</p></div>}
               {hasMissingRole && user && accessRequestView.userId === user.id && accessRequestView.status === "loading" && (
                 <div role="status" className="rounded-md border border-muted bg-muted/40 p-3 text-sm text-muted-foreground">
@@ -256,16 +291,20 @@ const Auth = () => {
                   <div className="flex flex-wrap gap-2"><Button type="submit" size="sm" disabled={isLoading}>{pendingAction === "request" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Solicitar acceso</Button><Button type="button" size="sm" variant="outline" onClick={() => void clearBlockedSession()} disabled={isLoading}>{pendingAction === "signout" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Cerrar sesión</Button></div>
                 </form>
               )}
-              <Button type="button" variant="outline" className="w-full" onClick={handleGoogleSignIn} disabled={isLoading}>{pendingAction === "google" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <span className="mr-2"><GoogleMark /></span>}Continue with Google</Button>
-              <div className="flex items-center gap-3" aria-hidden="true"><div className="h-px flex-1 bg-border" /><span className="text-xs text-muted-foreground">Or continue with email</span><div className="h-px flex-1 bg-border" /></div>
+              <Button type="button" variant="outline" className="auth-google-button w-full" onClick={handleGoogleSignIn} disabled={isLoading}>{pendingAction === "google" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <span className="mr-2"><GoogleMark /></span>}Continue with Google</Button>
+              <div className="auth-divider" aria-hidden="true"><div /><span>Or continue with email</span><div /></div>
               <form onSubmit={handleSignIn} className="space-y-4">
                 <div className="space-y-2"><Label htmlFor="signin-email">Email</Label><Input ref={emailInputRef} id="signin-email" type="email" placeholder="you@company.com" value={email} onChange={(event) => setEmail(event.target.value)} disabled={isLoading} required maxLength={255} /></div>
                 <div className="space-y-2"><Label htmlFor="signin-password">Password</Label><Input id="signin-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} disabled={isLoading} required maxLength={72} /></div>
-                <Button type="submit" className="w-full" disabled={isLoading}>{pendingAction === "password" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Sign In</Button>
+                <Button type="submit" className="auth-submit-button w-full" disabled={isLoading}>{pendingAction === "password" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Sign In</Button>
               </form>
-          </div>
-        </CardContent>
-      </Card>
+              </div>
+            </CardContent>
+          </Card>
+        </main>
+
+        <footer className="auth-footer">BuildTrack Pro <span aria-hidden="true">·</span> Project clarity for the people doing the work.</footer>
+      </div>
     </div>
   );
 };
