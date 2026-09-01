@@ -28,7 +28,7 @@ const Admins = () => {
     );
   }
 
-  return <ManagerDashboard userId={user.id} role="admin" />;
+  return <ManagerDashboard userId={user.id} email={user.email} role="admin" />;
 };
 
 export default Admins;

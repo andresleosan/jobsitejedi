@@ -21,10 +21,13 @@ import { runActiveSessionTask } from "./active-session-task";
 
 interface ManagerDashboardProps {
   userId: string;
+  email: string;
   role: "admin" | "manager";
 }
 
-const ManagerDashboard = ({ userId, role }: ManagerDashboardProps) => {
+const roleLabel = { admin: "Admin", manager: "Manager" } as const;
+
+const ManagerDashboard = ({ userId, email, role }: ManagerDashboardProps) => {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
@@ -110,19 +113,27 @@ const ManagerDashboard = ({ userId, role }: ManagerDashboardProps) => {
             <div className="rounded-lg bg-primary p-2">
               <Users className="h-5 w-5 text-primary-foreground" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h1 className="text-xl font-bold">{role === "admin" ? "Admin Dashboard" : "Manager Dashboard"}</h1>
               <p className="text-sm text-muted-foreground">BuildTrack Pro · {role} workspace</p>
             </div>
           </div>
-          <Button variant="outline" size="sm" onClick={handleSignOut} disabled={isSigningOut}>
-            <LogOut className="h-4 w-4" />
-            Sign out
-          </Button>
+          <div className="flex items-center gap-4">
+            <div className="hidden text-right text-xs sm:block">
+              <p className="text-muted-foreground">Rol: <span className="font-semibold text-foreground">{roleLabel[role]}</span></p>
+              <p className="max-w-[18rem] truncate text-muted-foreground" title={email}>Correo: <span className="font-medium text-foreground">{email}</span></p>
+            </div>
+            <Button variant="outline" size="sm" onClick={handleSignOut} disabled={isSigningOut}>
+              <LogOut className="h-4 w-4" />
+              Sign out
+            </Button>
+          </div>
         </div>
       </header>
 
       <main className="container mx-auto space-y-6 px-4 py-6">
+        {role === "admin" && <AccessRequestsPanel isSessionActive={ownsActiveSession} />}
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -195,8 +206,6 @@ const ManagerDashboard = ({ userId, role }: ManagerDashboardProps) => {
             />
           </CardContent>
         </Card>
-
-        {role === "admin" && <AccessRequestsPanel isSessionActive={ownsActiveSession} />}
 
         <ManagerJobReviewPanel isSessionActive={ownsActiveSession} />
 

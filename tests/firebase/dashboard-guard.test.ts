@@ -10,6 +10,10 @@ const authSource = readFileSync(
   resolve(process.cwd(), "src/pages/Auth.tsx"),
   "utf8",
 );
+const managerDashboardSource = readFileSync(
+  resolve(process.cwd(), "src/components/dashboard/ManagerDashboard.tsx"),
+  "utf8",
+);
 
 describe("Firebase route auth guards", () => {
   test("uses the Firebase auth hook for the dashboard guard", () => {
@@ -29,5 +33,21 @@ describe("Firebase route auth guards", () => {
     expect(authSource).toContain('Cerrar sesi');
     expect(authSource).toContain('Solicitar acceso');
     expect(authSource).toContain('No se env');
+  });
+
+  test("shows the signed-in role and email in the management dashboard header", () => {
+    expect(managerDashboardSource).toContain("email: string");
+    expect(managerDashboardSource).toContain("Correo");
+    expect(managerDashboardSource).toContain("Rol");
+    expect(managerDashboardSource).toContain("{email}");
+  });
+
+  test("places admin access approvals before the project workspace", () => {
+    const accessPanelPosition = managerDashboardSource.indexOf("<AccessRequestsPanel");
+    const projectsPosition = managerDashboardSource.indexOf("<CardTitle>Projects</CardTitle>");
+
+    expect(accessPanelPosition).toBeGreaterThan(-1);
+    expect(projectsPosition).toBeGreaterThan(-1);
+    expect(accessPanelPosition).toBeLessThan(projectsPosition);
   });
 });
