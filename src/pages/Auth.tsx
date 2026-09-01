@@ -1,12 +1,11 @@
 import { useRef, useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { AlertTriangle, HardHat, Loader2, ShieldCheck } from "lucide-react";
+import { AlertTriangle, HardHat, Loader2 } from "lucide-react";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { MISSING_ROLE_MESSAGE } from "@/lib/firebase/auth";
@@ -16,21 +15,6 @@ const signInSchema = z.object({
   email: z.string().trim().toLowerCase().email("Please enter a valid email address").max(255, "Email is too long"),
   password: z.string().min(1, "Password is required").max(72, "Password is too long"),
 });
-
-const signUpSchema = z.object({
-  email: z.string().trim().toLowerCase().email("Please enter a valid email address").max(255, "Email is too long"),
-  password: z.string()
-    .min(8, "Password must be at least 8 characters")
-    .max(72, "Password is too long")
-    .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
-    .regex(/[a-z]/, "Password must contain at least one lowercase letter")
-    .regex(/[0-9]/, "Password must contain at least one number"),
-  fullName: z.string().trim().min(1, "Full name is required").max(100, "Name is too long"),
-  phone: z.string().trim().regex(/^(\+?[0-9\s\-()]+)?$/, "Please enter a valid phone number").max(20, "Phone number is too long").optional().or(z.literal("")),
-  requestedRole: z.enum(["admin", "manager", "builder"]),
-});
-
-const roleLabel: Record<AppRole, string> = { admin: "Admin", manager: "Manager", builder: "Builder" };
 
 const GoogleMark = () => (
   <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4">
@@ -68,47 +52,17 @@ const Auth = () => {
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
   const [requestedRole, setRequestedRole] = useState<AppRole>("builder");
-  const [activeTab, setActiveTab] = useState("signin");
   const [accessError, setAccessError] = useState<string | null>(null);
   const [requestSubmitted, setRequestSubmitted] = useState(false);
-  const [pendingAction, setPendingAction] = useState<"password" | "google" | "signup" | "request" | "signout" | null>(null);
+  const [pendingAction, setPendingAction] = useState<"password" | "google" | "request" | "signout" | null>(null);
   const emailInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
-  const { user, isLoading: isAuthLoading, signIn, signInWithGoogle, signOut, registerForAccess, submitAccessRequest } = useAuth();
+  const { user, isLoading: isAuthLoading, signIn, signInWithGoogle, signOut, submitAccessRequest } = useAuth();
 
   const hasMissingRole = searchParams.get("reason") === "missing-role"
     || Boolean(user && !user.role)
     || accessError === MISSING_ROLE_MESSAGE;
-
-  const handleSignUp = async (event: FormEvent) => {
-    event.preventDefault();
-    const validationResult = signUpSchema.safeParse({ email, password, fullName, phone, requestedRole });
-    if (!validationResult.success) {
-      toast({ title: "Validation error", description: validationResult.error.errors[0].message, variant: "destructive" });
-      return;
-    }
-    setIsLoading(true);
-    setPendingAction("signup");
-    try {
-      await registerForAccess({
-        email: validationResult.data.email ?? email,
-        password: validationResult.data.password ?? password,
-        fullName: validationResult.data.fullName ?? fullName,
-        phone: validationResult.data.phone ?? phone,
-        requestedRole: validationResult.data.requestedRole ?? requestedRole,
-      });
-      setRequestSubmitted(true);
-      setPassword("");
-      setActiveTab("signin");
-      toast({ title: "Solicitud enviada", description: "Un administrador revisará tu solicitud antes de habilitar el acceso." });
-    } catch (error) {
-      toast({ title: "No se pudo enviar la solicitud", description: error instanceof Error ? error.message : "Inténtalo de nuevo.", variant: "destructive" });
-    } finally {
-      setIsLoading(false);
-      setPendingAction(null);
-    }
-  };
 
   const handleSignIn = async (event: FormEvent) => {
     event.preventDefault();
@@ -177,7 +131,6 @@ const Auth = () => {
       await submitAccessRequest({ requestedRole, fullName, phone: phone || null });
       setRequestSubmitted(true);
       setAccessError(null);
-      setActiveTab("signin");
       setPassword("");
       toast({ title: "Solicitud enviada", description: "Tu acceso quedará pendiente de aprobación." });
     } catch (error) {
@@ -221,9 +174,7 @@ const Auth = () => {
           <CardDescription>Professional construction project management</CardDescription>
         </CardHeader>
         <CardContent>
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-2"><TabsTrigger value="signin">Sign In</TabsTrigger><TabsTrigger value="signup">Solicitar acceso</TabsTrigger></TabsList>
-            <TabsContent value="signin" className="space-y-4">
+          <div className="space-y-4">
               {requestSubmitted && <div role="status" className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm"><p className="font-medium">Solicitud registrada</p><p className="text-muted-foreground">Podrás ingresar cuando un administrador apruebe el perfil solicitado.</p></div>}
               {hasMissingRole && user && (
                 <form onSubmit={handlePendingRequest} className="space-y-3 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
@@ -241,19 +192,7 @@ const Auth = () => {
                 <div className="space-y-2"><Label htmlFor="signin-password">Password</Label><Input id="signin-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} disabled={isLoading} required maxLength={72} /></div>
                 <Button type="submit" className="w-full" disabled={isLoading}>{pendingAction === "password" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Sign In</Button>
               </form>
-            </TabsContent>
-            <TabsContent value="signup" className="space-y-4">
-              <div className="rounded-md border bg-muted/40 p-3 text-sm"><div className="flex gap-3"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><p className="text-muted-foreground">Crea tu cuenta y solicita el perfil que necesitas. No se envían correos ni códigos QR; el acceso se habilita cuando un administrador aprueba la solicitud.</p></div></div>
-              <form onSubmit={handleSignUp} className="space-y-4">
-                <div className="space-y-2"><Label htmlFor="signup-name">Nombre completo</Label><Input id="signup-name" type="text" placeholder="John Doe" value={fullName} onChange={(event) => setFullName(event.target.value)} disabled={isLoading} required maxLength={100} /></div>
-                <div className="space-y-2"><Label htmlFor="signup-email">Email</Label><Input id="signup-email" type="email" placeholder="you@company.com" value={email} onChange={(event) => setEmail(event.target.value)} disabled={isLoading} required maxLength={255} /></div>
-                <div className="space-y-2"><Label htmlFor="signup-phone">Teléfono (opcional)</Label><Input id="signup-phone" type="tel" placeholder="+57 300 000 0000" value={phone} onChange={(event) => setPhone(event.target.value)} disabled={isLoading} maxLength={20} /></div>
-                <div className="space-y-2"><Label htmlFor="signup-role">Perfil solicitado</Label><RoleSelect id="signup-role" value={requestedRole} onChange={setRequestedRole} disabled={isLoading} /></div>
-                <div className="space-y-2"><Label htmlFor="signup-password">Contraseña</Label><Input id="signup-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} disabled={isLoading} required maxLength={72} /><p className="text-xs text-muted-foreground">Mínimo 8 caracteres, con mayúscula, minúscula y número.</p></div>
-                <Button type="submit" className="w-full" disabled={isLoading}>{pendingAction === "signup" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Enviar solicitud como {roleLabel[requestedRole]}</Button>
-              </form>
-            </TabsContent>
-          </Tabs>
+          </div>
         </CardContent>
       </Card>
     </div>

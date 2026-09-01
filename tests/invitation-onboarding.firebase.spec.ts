@@ -12,7 +12,7 @@ const signIn = async (
   await page.getByRole("button", { name: "Sign In", exact: true }).click();
 };
 
-test("a new user requests builder access and an admin approves it without email delivery", async ({ page }) => {
+test("a roleless user requests builder access and an admin approves it without email delivery", async ({ page }) => {
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const adminEmail = `request-admin-${suffix}@example.test`;
   const applicantEmail = `request-builder-${suffix}@example.test`;
@@ -25,15 +25,17 @@ test("a new user requests builder access and an admin approves it without email 
     displayName: "Request E2E Admin",
     role: "admin",
   });
+  await provisionEmulatorUser({
+    email: applicantEmail,
+    password: applicantPassword,
+    displayName: "Request E2E Builder",
+    fullName: "Request E2E Builder",
+    role: null,
+  });
 
-  await page.goto("/auth");
-  await page.getByRole("tab", { name: "Solicitar acceso", exact: true }).click();
-  await page.getByLabel("Nombre completo", { exact: true }).fill("Request E2E Builder");
-  await page.getByLabel("Email", { exact: true }).fill(applicantEmail);
-  await page.getByLabel("Teléfono (opcional)", { exact: true }).fill("+57 301 000 0000");
+  await signIn(page, applicantEmail, applicantPassword);
   await page.getByRole("combobox", { name: "Perfil solicitado", exact: true }).selectOption("builder");
-  await page.getByLabel("Contraseña", { exact: true }).fill(applicantPassword);
-  await page.getByRole("button", { name: "Enviar solicitud como Builder", exact: true }).click();
+  await page.getByRole("button", { name: "Solicitar acceso", exact: true }).click();
   await expect(page.locator('[role="status"]').filter({ hasText: "Solicitud registrada" }).first()).toBeVisible();
 
   await signIn(page, adminEmail, adminPassword);

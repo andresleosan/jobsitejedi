@@ -20,6 +20,7 @@ test("a roleless account can request a profile without redirect loops", async ({
 
   await page.goto("/auth");
   await expect(page.getByRole("button", { name: "Continue with Google", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Solicitar acceso", exact: true })).toHaveCount(0);
   await page.getByLabel("Email", { exact: true }).fill(email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign In", exact: true }).click();

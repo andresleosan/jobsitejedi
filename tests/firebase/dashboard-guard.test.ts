@@ -26,13 +26,15 @@ describe("Firebase route auth guards", () => {
   test("keeps roleless sessions available to request an approved profile", () => {
     expect(dashboardSource).toContain('/auth?reason=missing-role');
     expect(authSource).toContain('Boolean(user && !user.role)');
-    expect(authSource).toContain('registerForAccess');
     expect(authSource).toContain('submitAccessRequest');
     expect(authSource).toContain('Continue with Google');
     expect(authSource).toContain('perfil aprobado');
     expect(authSource).toContain('Cerrar sesi');
     expect(authSource).toContain('Solicitar acceso');
-    expect(authSource).toContain('No se env');
+  });
+
+  test("uses sign in as the only authentication entry point", () => {
+    expect(authSource).not.toContain("TabsTrigger");
   });
 
   test("shows the signed-in role and email in the management dashboard header", () => {

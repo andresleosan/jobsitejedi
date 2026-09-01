@@ -260,7 +260,8 @@ describe("authorization surface guard", () => {
     expect(client).not.toContain("sendPasswordResetEmail");
     expect(client).not.toContain("completeInvitationRegistration");
     expect(client).toContain("token.claims.authorizationGrantId");
-    expect(authPage).toContain("registerForAccess");
+    expect(authPage).toContain("submitAccessRequest");
+    expect(authPage).not.toContain("registerForAccess");
     expect(authPage).toContain("Solicitar acceso");
     expect(authPage).not.toContain("QRScannerDialog");
     expect(authPage).not.toContain("QrCode");
