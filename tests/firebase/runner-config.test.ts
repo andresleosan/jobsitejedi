@@ -36,7 +36,7 @@ describe("Firebase test runners", () => {
   });
 
   test("pins the supported Firebase runtime and fails fast on toolchain drift", () => {
-    expect(packageJson.engines.node).toBe("22");
+    expect(packageJson.engines.node).toBe(">=22.23.4 <23");
     expect(functionsPackageJson.engines.node).toBe("22");
     expect(firebaseJson.functions.runtime).toBe("nodejs22");
     expect(runnerSource).toContain("const REQUIRED_NODE_MAJOR = 22");

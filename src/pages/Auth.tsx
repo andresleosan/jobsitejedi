@@ -117,7 +117,7 @@ const Auth = () => {
     setAccessError(null);
     const validationResult = signInSchema.safeParse({ email, password });
     if (!validationResult.success) {
-      toast({ title: "Validation error", description: validationResult.error.errors[0].message, variant: "destructive" });
+      toast({ title: "Validation error", description: validationResult.error.issues[0].message, variant: "destructive" });
       return;
     }
     setIsLoading(true);

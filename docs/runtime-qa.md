@@ -2,7 +2,7 @@
 
 ## Versiones soportadas
 
-- Node.js `22.23.2` (`.nvmrc` y `.node-version`).
+- Node.js `22.23.4` (`.nvmrc` y `.node-version`).
 - JDK `21` (`.java-version`).
 - Timeout de descubrimiento de Functions: `30000` ms.
 - Runtime de Cloud Functions: `nodejs22` en `firebase.json` y Node `22` en

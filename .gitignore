@@ -31,3 +31,10 @@ graphify-out/
 *.njsproj
 *.sln
 *.sw?
+
+# Local configuration and generated build state
+!.env.*.example
+*.pem
+*.key
+*serviceAccount*.json
+*.tsbuildinfo

@@ -193,7 +193,7 @@ npm.cmd --prefix functions run build
 La suite Firebase debe ejecutarse contra emuladores. La suite E2E debe cubrir como mínimo
 login, roles, proyectos, trabajos, fotos, inventario, facturas y reportes.
 
-El runtime reproducible de QA es Node 22.23.2 + JDK 21, con descubrimiento de Functions limitado
+El runtime reproducible de QA es Node 22.23.4 + JDK 21, con descubrimiento de Functions limitado
 a 30 segundos. Los comandos con emuladores pasan por `scripts/firebase-emulator-runner.mjs`, que
 valida esas versiones antes de iniciar. Node 20 no se adopta porque termino su soporte en marzo de
 2026; la instalacion y operacion quedan documentadas en `docs/runtime-qa.md`.

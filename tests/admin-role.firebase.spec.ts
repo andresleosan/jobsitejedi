@@ -75,10 +75,12 @@ test("manager sees that only an administrator reviews access requests", async ({
 
   await signIn(page, managerEmail, password);
   await expect(page).toHaveURL(/\/managers$/);
+  // Finish the dashboard read before a document navigation closes its transport.
+  await expect(page.getByText("No projects yet. Create your first project to get started.", { exact: true })).toBeVisible();
   await page.goto("/invite");
   await expect(page.getByRole("heading", { name: "Solicitudes de acceso" })).toBeVisible();
   await expect(page.getByText("Las solicitudes las aprueba un administrador", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Aprobar", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Aprobar(?: como .+)?$/ })).toHaveCount(0);
 });
 
 test("admin dashboard stays usable on a narrow mobile viewport", async ({ page }) => {
